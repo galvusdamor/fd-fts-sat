@@ -520,6 +520,14 @@ fast_downward_plugin(
 )
 
 fast_downward_plugin(
+	NAME PLUGIN_SAT_SEARCH
+	HELP "SAT based search"
+    SOURCES
+        search_engines/plugin_sat
+		DEPENDS SAT_SEARCH SEARCH_COMMON
+)
+
+fast_downward_plugin(
     NAME ENFORCED_HILL_CLIMBING_SEARCH
     HELP "Lazy enforced hill-climbing search algorithm"
     SOURCES
@@ -542,6 +550,18 @@ fast_downward_plugin(
     DEPENDS ORDERED_SET SUCCESSOR_GENERATOR
     DEPENDENCY_ONLY
 )
+
+fast_downward_plugin(
+    NAME SAT_SEARCH
+        HELP "SAT search"
+    SOURCES
+        search_algorithms/sat_search
+		#search_algorithms/sat_encoder
+    DEPENDENCY_ONLY
+)
+
+
+
 
 fast_downward_plugin(
     NAME LP_SOLVER

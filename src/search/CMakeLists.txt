@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 2.8.3...3.13)
 
+option(USE_KISSAT "Compile with the kissat SAT solver" OFF)
+message("Link dir: ${SAT_DIR}")
+link_directories(${SAT_DIR})
+
 if(NOT FAST_DOWNWARD_MAIN_CMAKELISTS_READ)
     message(
         FATAL_ERROR
