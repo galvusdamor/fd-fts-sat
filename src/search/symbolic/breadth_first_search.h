@@ -10,7 +10,8 @@
 namespace symbolic {
 
 class BreadthFirstSearch : public UnidirectionalSearch  {  
-    Bucket open;   // States in open 
+	using UnidirectionalSearch::getPlan;
+	Bucket open;   // States in open 
     //Bucket closed; // States in closed
     BDD closedTotal;
     
