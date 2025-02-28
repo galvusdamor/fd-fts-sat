@@ -119,6 +119,7 @@ def build(config_name, cmake_parameters, make_parameters):
 def main():
     config_names = set()
     make_parameters = []
+    configure_parameters = []
     for arg in sys.argv[1:]:
         if arg == "--help" or arg == "-h":
             print_usage()
@@ -140,7 +141,7 @@ def main():
     if not config_names:
         config_names.add(DEFAULT_CONFIG_NAME)
     for config_name in config_names:
-        build(config_name, CONFIGS[config_name], make_parameters)
+        build(config_name, CONFIGS[config_name] + configure_parameters, make_parameters)
 
 
 if __name__ == "__main__":
