@@ -524,7 +524,7 @@ fast_downward_plugin(
 	HELP "SAT based search"
     SOURCES
         search_engines/plugin_sat
-		DEPENDS SAT_SEARCH SEARCH_COMMON
+	DEPENDS SAT_SEARCH SEARCH_COMMON
 )
 
 fast_downward_plugin(
@@ -555,8 +555,9 @@ fast_downward_plugin(
     NAME SAT_SEARCH
         HELP "SAT search"
     SOURCES
-        search_algorithms/sat_search
-		#search_algorithms/sat_encoder
+        search_engines/sat_search
+        search_engines/sat_encoder
+		#search_engines/sat_encoder
     DEPENDENCY_ONLY
 )
 

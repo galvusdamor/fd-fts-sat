@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 2.8.3...3.13)
 option(USE_KISSAT "Compile with the kissat SAT solver" OFF)
 message("Link dir: ${SAT_DIR}")
 link_directories(${SAT_DIR})
+option(USE_SAT "Compile with support for SAT solvers. Building is only possible against a single SAT solver" TRUE)
 
 if(NOT FAST_DOWNWARD_MAIN_CMAKELISTS_READ)
     message(
@@ -31,7 +32,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ext)
 
 # On Linux, find the rt library for clock_gettime().
 if(UNIX AND NOT APPLE)
-    target_link_libraries(downward rt)
+	target_link_libraries(downward PUBLIC rt)
 endif()
 
 # On Windows, find the psapi library for determining peak memory.
@@ -77,6 +78,24 @@ if(PLUGIN_LP_SOLVER_ENABLED AND USE_LP)
     endif()
 endif()
 
+
+
+if (USE_SAT)
+        if (USE_KISSAT)
+                message("Build against kissat")
+                target_sources(downward PRIVATE search_engines/kissat.h search_engines/kissat.cpp)
+				target_link_libraries(downward PUBLIC kissat)
+        else (USE_KISSAT)
+                message("Build against regular ipasir solver")
+                target_link_libraries(sat_search INTERFACE ipasircryptominisat5)
+                target_link_libraries(sat_search INTERFACE gmp)
+                target_link_libraries(sat_search INTERFACE cadiback)
+                target_link_libraries(sat_search INTERFACE cadical)
+        endif()
+endif()
+
+
+
 if(PLUGIN_SYMBOLIC_ENABLED)
     include(ExternalProject)
     if(${CMAKE_SIZEOF_VOID_P} EQUAL 4)
@@ -103,6 +122,6 @@ if(PLUGIN_SYMBOLIC_ENABLED)
     endif()
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/cudd-3.0.0/cudd)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/cudd-3.0.0/cplusplus)
-    target_link_libraries(downward ${CMAKE_CURRENT_SOURCE_DIR}/cudd-3.0.0/cudd/.libs/libcudd.a)
+	target_link_libraries(downward PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cudd-3.0.0/cudd/.libs/libcudd.a)
     add_dependencies(downward libcudd.a)
 endif()
