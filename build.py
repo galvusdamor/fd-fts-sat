@@ -125,6 +125,12 @@ def main():
             sys.exit(0)
         elif arg == "--debug":
             config_names.add(DEBUG_CONFIG_NAME)
+        elif arg.startswith("-s"):
+            configure_parameters.append("-DSAT_DIR="+arg[2:])
+        elif arg == "--kissat":
+            configure_parameters.append("-DUSE_KISSAT=ON")
+        elif arg == "--ipasir":
+            configure_parameters.append("-DUSE_KISSAT=OFF")
         elif arg == "--all":
             config_names |= set(CONFIGS.keys())
         elif arg in CONFIGS:
