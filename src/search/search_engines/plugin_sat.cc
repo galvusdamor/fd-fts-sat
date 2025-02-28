@@ -1,41 +1,49 @@
 #include "sat_search.h"
 #include "search_common.h"
 
-#include "../plugins/plugin.h"
+#include "../option_parser.h"
+#include "../plugin.h"
 
 using namespace std;
 
 namespace plugin_sat {
-class SATSearchFeature : public plugins::TypedFeature<SearchAlgorithm, sat_search::SATSearch> {
-public:
-    SATSearchFeature() : TypedFeature("sat") {
-        document_title("SAT search");
-        document_synopsis("");
-                
-                add_option<int>(
+static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
+    parser.document_synopsis("SAT Search", "");
+
+
+                parser.add_option<int>(
             "plan_length",
             "run the search for a single plan length only. -1 if length should not be fixed.",
             "-1");
-                add_option<int>(
+                parser.add_option<int>(
             "encoding",
             "set the encoding. Currently supported are OneStep: 0 and ExistsStep: 2",
             "2");
-                add_option<int>(
+                parser.add_option<int>(
             "length_iteration",
             "run the search for a single plan length only. -1 if length should not be fixed. This options run's Rintanen's algorithm C in the round specified by length_iteration",
             "-1");
-                add_option<int>(
+                parser.add_option<int>(
             "start_length",
             "only if length_iteration != -1. Start value for C.",
             "5");
-                add_option<double>(
+                parser.add_option<double>(
             "multiplier",
             "only if length_iteration != -1. Multiplier for C.",
             "1.41");
-     sat_search::add_options_to_feature(*this);
-    }
-};
 
-static plugins::FeaturePlugin<SATSearchFeature> _plugin;
+    SearchEngine::add_succ_order_options(parser);
+    SearchEngine::add_options_to_parser(parser);
+    Options opts = parser.parse();
+
+
+	shared_ptr<sat_search::SATSearch> engine;
+    if (!parser.dry_run())
+        engine = make_shared<sat_search::SATSearch>(opts);
+
+    return engine;
 }
+static PluginShared<SearchEngine> _plugin("sat", _parse);
+}
+
 
