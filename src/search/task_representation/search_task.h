@@ -214,6 +214,7 @@ namespace task_representation {
 
         // Expensive method due to looking up which Operators match reduced labels.
         void dump_op(OperatorID op) const;
+        std::string operator_names(LabelID label) const;
 
         LabelID get_label(OperatorID op) const {
             assert(std::find(label_to_info[operators[op.get_index()].get_label()].fts_operators.begin(),

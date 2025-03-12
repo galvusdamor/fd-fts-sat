@@ -2,6 +2,21 @@
 #include "kissat.h"
 #include <stdio.h>
 #include <cstdlib>
+#include <vector>
+
+int clauseCount = 0;
+
+
+#include <iostream>
+#include <fstream>
+
+std::string dmacsfilepath = "formula.cnf";
+std::ofstream dmacsfile;
+std::vector<std::vector<int>> formula;
+std::vector<int> curclause;
+int maxVar = -1;
+
+//#undef NDEBUG
 
 extern "C" {
 
@@ -22,6 +37,8 @@ IPASIR_API const char * ipasir_signature (){
  * State after: INPUT
  */
 IPASIR_API void * ipasir_init (){
+	formula.clear();
+	maxVar = -1;
 	return kissat_init();
 }
 
@@ -53,6 +70,20 @@ IPASIR_API void ipasir_release (void * solver){
  * arguments in API functions.
  */
 IPASIR_API void ipasir_add (void * solver, int lit_or_zero){
+#ifndef NDEBUG
+	curclause.push_back(lit_or_zero);
+	if (lit_or_zero > maxVar) maxVar = lit_or_zero;
+#endif
+	if (lit_or_zero == 0){
+		clauseCount++;
+#ifndef NDEBUG
+		formula.push_back(curclause);
+		//std::cout << "CLAUSE";
+		//for (int i : curclause) std::cout << " " << i;
+		//std::cout << std::endl;
+		curclause.clear();
+#endif
+	}
 	kissat_add((kissat*)solver,lit_or_zero);
 }
 
@@ -64,7 +95,7 @@ IPASIR_API void ipasir_add (void * solver, int lit_or_zero){
  * Required state: INPUT or SAT or UNSAT
  * State after: INPUT
  */
-IPASIR_API void ipasir_assume (__attribute__ ((unused)) void * solver, __attribute__ ((unused)) int lit){
+IPASIR_API void ipasir_assume (__attribute__ ((unused))void * solver, __attribute__ ((unused)) int lit){
 	printf("Not supported by kissat\n");
 	exit(0);
 }
@@ -80,6 +111,16 @@ IPASIR_API void ipasir_assume (__attribute__ ((unused)) void * solver, __attribu
  * State after: INPUT or SAT or UNSAT
  */
 IPASIR_API int ipasir_solve (void * solver){
+#ifndef NDEBUG
+	dmacsfile.open(dmacsfilepath);
+	dmacsfile << "p cnf " << maxVar + 1 << " " << formula.size() << std::endl;
+	for (auto clause: formula){
+		for (size_t i = 0; i < clause.size(); i++)
+			dmacsfile << (i?" ":"") << clause[i];
+		dmacsfile << std::endl;
+	}
+  	dmacsfile.close();
+#endif
 	return kissat_solve((kissat*)solver);
 }
 

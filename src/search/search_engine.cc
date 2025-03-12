@@ -97,6 +97,18 @@ bool SearchEngine::check_goal_and_set_plan(const PlanState& goal_state, const st
     return false;
 }
 
+bool SearchEngine::check_goal_and_set_plan(const PlanState& goal_state, const std::vector<PlanState>& states, const std::vector<int>& labels, const std::shared_ptr<task_representation::FTSTask>& _task) {
+    if (_task->is_goal_state(goal_state)) {
+        cout << "Solution found!" << endl;
+        //search_space.set_path(goal_state, plan, states, ops, _task);
+        plan.set_plan(std::vector<PlanState>(states),  std::vector<int>(labels));
+        solution_found = true;
+        return true;
+    }
+    cout << "Goal state provided is not actually a goal state." << endl;
+    return false;
+}
+
 int SearchEngine::get_adjusted_cost(int cost) const {
     return get_adjusted_action_cost(cost, cost_type);
 }

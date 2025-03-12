@@ -4,6 +4,7 @@
 #include "../search_engine.h"
 #include "../option_parser.h"
 #include "../plugin.h"
+#include "sat_encoder.h"
 
 namespace plugins {
 class Feature;
@@ -22,6 +23,10 @@ private:
 protected:
     virtual void initialize() override;
     virtual SearchStatus step() override;
+    virtual std::vector<std::vector<int>> generateStateVars(void* solver, sat_capsule & capsule/* , int timestep */);
+    virtual std::vector<int> generateLabelVars(void* solver, sat_capsule & capsule/* , int timestep */);
+    virtual std::map<int, std::map<int, std::vector<int>>> getApplicableLabels();
+    virtual std::map<int, std::map<int, std::map<int, std::vector<int>>>> getSuccessorStates(std::map<int, std::map<int, std::vector<int>>> applicableLabels);
 
 public:
     explicit SATSearch(const Options &opts);

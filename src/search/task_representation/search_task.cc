@@ -495,6 +495,26 @@ namespace task_representation {
         return fts_task.get_label_cost(operators[op.get_index()].get_label());
     }
 
+    string SearchTask::operator_names(__attribute__ ((unused))LabelID label) const {
+/*     const LabelMap &label_map = fts_task.get_label_map();
+    vector<int> sas_op_ids;
+    for (int sas_op_id = 0; sas_op_id < g_sas_task()->get_num_operators(); ++sas_op_id) {
+        if (label_map.get_reduced_label(sas_op_id) == label) {
+            sas_op_ids.push_back(sas_op_id);
+        }
+    }
+    string operator_names = "";
+    for (size_t i = 0; i < sas_op_ids.size(); ++i) {
+        int sas_op_index = sas_op_ids[i];
+        operator_names += g_sas_task()->get_operator_name(sas_op_index, false);
+        if (i != sas_op_ids.size() - 1) {
+            operator_names += " ";
+        }
+    }
+    return operator_names; */
+    return "";
+    }
+
     void SearchTask::dump_op(OperatorID op) const {
         const FTSOperator &fts_op = operators[op.get_index()];
         LabelID label = fts_op.get_label();

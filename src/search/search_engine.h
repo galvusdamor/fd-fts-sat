@@ -53,6 +53,7 @@ protected:
     bool check_goal_and_set_plan(const GlobalState &state);
     bool check_goal_and_set_plan(const PlanState &goal_state, const std::vector<PlanState> &states, const std::vector<OperatorID> &ops,
                                  const std::shared_ptr<task_representation::FTSTask> &_task);
+    bool check_goal_and_set_plan(const PlanState& goal_state, const std::vector<PlanState>& states, const std::vector<int>& labels, const std::shared_ptr<task_representation::FTSTask>& _task);
 
     int get_adjusted_cost(int cost) const;
 public:
