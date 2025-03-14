@@ -211,7 +211,8 @@ SearchStatus SATSearch::step() {
 			}
 		}
 
-		PlanState goalState = PlanState(std::move(statesPerTimestep.back()));
+		vector<int> GS = statesPerTimestep.back();
+		PlanState goalState = PlanState(std::move(GS));
 		vector<PlanState> states;
 		for(size_t s = 0 ; s < statesPerTimestep.size() ; s++){
 			states.push_back(PlanState(std::move(statesPerTimestep[s])));
