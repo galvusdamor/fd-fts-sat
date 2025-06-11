@@ -55,56 +55,70 @@ void SATSearch::bdd_to_dot(const BDD &bdd, const std::string &file_name) const {
 map<DdNode *, int> tseitsinVars;
 
 
+int SATSearch::givevar(int bddvar, vector<int> & factorVars, std::vector<int> & labelVars, vector<int> & nextFactorVars){
+	if (bddvar >= num_factor_vars) return labelVars[bddvar - num_factor_vars];
+	if (bddvar < num_factor_vars / 2) {
+		assert(factorVars.size() > bddvar);
+		return factorVars[bddvar];
+	}
+	assert(factorVars.size() > bddvar - num_factor_vars / 2);
+	return nextFactorVars[bddvar - num_factor_vars / 2];
+}
 
-int SATSearch::myRecursion(DdNode * node, vector<int> & factorVars, void* solver, sat_capsule & capsule){
+
+int SATSearch::bdd_to_cnf(DdNode * node, vector<int> & factorVars, std::vector<int> & labelVars, vector<int> & nextFactorVars, void* solver, sat_capsule & capsule, bool negationStatus){
+	if (Cudd_IsComplement(node)) negationStatus = !negationStatus;
+	
 	// for lookup
-	DdNode * myRegular = Cudd_Regular(node);
+	DdNode * lookup;
+	if (implicationalTseitsin) lookup = node;
+	else lookup = Cudd_Regular(node);
 
-	if (tseitsinVars.count(myRegular)){
-		int myVar = tseitsinVars[myRegular];
-		if (Cudd_IsComplement(node)) myVar *= -1;
+	if (tseitsinVars.count(lookup)){
+		int myVar = tseitsinVars[lookup];
+		if (!implicationalTseitsin && Cudd_IsComplement(node)) myVar *= -1;
 		return myVar;
 	}
-	int thisVar = tseitsinVars.size() + 1;
-	tseitsinVars[myRegular] = thisVar;
-
+	int thisVar = capsule.new_variable();
+	DEBUG(capsule.registerVariable(thisVar, "BDD_eval_var_" + to_string(tseitsinVars.size())));
+	tseitsinVars[lookup] = thisVar;
 
 	assert(!Cudd_IsConstant(node));
 
 	// branching node
-	int var_to_branch = Cudd_NodeReadIndex(node);
+	int var_to_branch = givevar(Cudd_NodeReadIndex(node), factorVars, labelVars, nextFactorVars);
     DdNode* true_branch = Cudd_T(node);
     DdNode* false_branch = Cudd_E(node);
 
+	vector<pair<int,DdNode*>> successors {{var_to_branch, true_branch}, {-var_to_branch, false_branch}};
 
-	if (Cudd_IsConstant(true_branch)){
-		bool isTrue = !Cudd_IsComplement(true_branch);
+	for (const auto & succ : successors){ // TODO structure binding once FD compiles with C++17
+		int condition_var = succ.first;
+		DdNode* branch = succ.second;
+		if (Cudd_IsConstant(branch)){
+			bool isTrue;
+			if (implicationalTseitsin) isTrue = !(negationStatus != Cudd_IsComplement(branch));  // read != as XOR
+			else isTrue = !Cudd_IsComplement(branch);
 
-		if (isTrue)
-			cout << "V" << var_to_branch << " -> " << "T" << thisVar << endl;
-		else
-			cout << "V" << var_to_branch << " -> " << "T" << -thisVar << endl;
-	} else {
-		int branchvar = myRecursion(true_branch, factorVars, solver, capsule);
-
-		cout << "V" << var_to_branch << " & " << "T" << thisVar << " -> " << "T" << branchvar << endl;
-		cout << "V" << var_to_branch << " & " << "T-" << thisVar << " -> " << "T-" << branchvar << endl;
+			if (isTrue){
+				//cout << "V" << condition_var << " -> " << "T" << thisVar << endl;
+				implies(solver,condition_var, thisVar);
+			} else {
+				//cout << "V" << condition_var << " -> " << "T" << -thisVar << endl;
+				impliesNot(solver,condition_var, thisVar);
+			}
+		} else {
+			int branchvar = bdd_to_cnf(branch, factorVars, labelVars, nextFactorVars, solver, capsule, negationStatus);
+			//cout << "V" << condition_var << " & " << "T" << thisVar << " -> " << "T" << branchvar << endl;
+			andImplies(solver, condition_var, thisVar, branchvar);
+			if (!implicationalTseitsin){
+				// in implicational Tseitin mode, we only care about the true outcome -- every Tseitin var will be forced to true anyway.
+				// Then we don't need to implication in the backwards direction.
+				//cout << "V" << var_to_branch << " & " << "T-" << thisVar << " -> " << "T-" << branchvar << endl;
+				andImplies(solver, condition_var, -thisVar, -branchvar);
+			}
+		}
 	}
-
-	if (Cudd_IsConstant(false_branch)){
-		bool isTrue = !Cudd_IsComplement(false_branch);
-
-		if (isTrue)
-			cout << "V" << -var_to_branch << " -> " << "T" << thisVar << endl;
-		else
-			cout << "V" << -var_to_branch << " -> " << "T" << -thisVar << endl;
-	} else {
-		int branchvar = myRecursion(false_branch, factorVars, solver, capsule);
-
-		cout << "V" << -var_to_branch << " & " << "T" << thisVar << " -> " << "T" << branchvar << endl;
-		cout << "V" << -var_to_branch << " & " << "T-" << thisVar << " -> " << "T-" << branchvar << endl;
-	}
-
 
 	if (Cudd_IsComplement(node)) return -thisVar;
 	return thisVar;
@@ -121,7 +135,6 @@ void SATSearch::initialize() {
 	for(int l = 0; l < fts->get_num_labels(); l++) labelOrder[l] = l;
  
 	if (do_BDD_encoding){
-		combineAllBDDsIntoOne = true;
 		bdd_num_vars = fts->get_num_labels();
 		num_factor_vars = 0;
 		if (combineAllBDDsIntoOne) {
@@ -145,7 +158,7 @@ void SATSearch::initialize() {
     	_manager->setNodesExceededHandler(exceptionError);
 
 
-
+		transition_BDDs_per_factor.resize(fts->get_size());
 		for (int fac = 0; fac < fts->get_size(); fac++){
 			cout << "Precomputation for factor Nr " << fac << endl;
 			const task_representation::TransitionSystem & factor = fts->get_ts(fac);
@@ -216,9 +229,9 @@ void SATSearch::initialize() {
 			string name = "dots/factor_" + to_string(fac) + ".dot";
 			bdd_to_dot(allTransitionsBDD, name);
 
-			transition_BDDs_per_factor.push_back(allTransitionsBDD);
+			transition_BDDs_per_factor[fac] = allTransitionsBDD;
 
-			//int overallVar = myRecursion(allTransitionsBDD.getNode());
+			//int overallVar = bdd_to_cnf(allTransitionsBDD.getNode());
 			//cout << "Overall :" << "T" << overallVar << endl;
 			//exit(0);
 
@@ -396,83 +409,97 @@ SearchStatus SATSearch::step() {
 		assertYes(solver, previousStateVars[ts][fts->get_ts(ts).get_init_state()]);
 	}
 
+	// empty for BDD-based encoding
 	map<int, map<int, vector<pair<Transition, int>>>> transitionVars;
 	vector<int> labelVars;
 	vector<vector<int>> nextStateVars;
+	// empty for BDD-based encoding
 	map<int, map<int, vector<int>>> auxVars;
 	for(int timestep = 1 ; timestep <= currentLength ; timestep++){
-		auxVars = generateAuxVars(capsule);
-		transitionVars = generateTransitionVars(solver, capsule/* , timestep */);
-		allTimesTransitionVars.push_back(transitionVars);
 		labelVars = generateLabelVars(solver, capsule/* , int timestep */);
 		allTimesLabelVars.push_back(labelVars);
 		nextStateVars = generateStateVars(solver, capsule/* , timestep */);
 		allTimesStateVars.push_back(nextStateVars);
 
-		for(int ts = 0 ; ts < fts->get_size() ; ts++){
-			for(int label = 0 ; label < fts->get_num_labels() ; label++){
-				vector<int> labelTransitionSATVars;
-				for(pair<Transition, int> transition : transitionVars[ts][label]){
-					labelTransitionSATVars.push_back(transition.second);
-					vector<int> impliesOrPrec;
-					impliesOrPrec.push_back(previousStateVars[ts][transition.first.src]);
-					for(int label_prec = 0 ; label_prec < label ; label_prec++){
-						for(pair<Transition, int> transition_prec : transitionVars[ts][label_prec]){
-							if(transition_prec.first.target == transition.first.src){
-								impliesOrPrec.push_back(transition_prec.second);
-							}
-						}
-					}
-					impliesOr(solver, transition.second, impliesOrPrec);
-
-					vector<int> impliesOrEff;
-					impliesOrEff.push_back(nextStateVars[ts][transition.first.target]);
-					for(int label_eff = label+1 ; label_eff < fts->get_num_labels() ; label_eff++){
-						for(pair<Transition, int> transition_eff : transitionVars[ts][label_eff]){
-							if(transition_eff.first.target != transition.first.target){
-								impliesOrEff.push_back(transition_eff.second);
-							}
-						}
-					}
-					impliesOr(solver, transition.second, impliesOrEff);
-				}
-				impliesOr(solver, labelVars[label], labelTransitionSATVars);
-				for(size_t ltsv = 0 ; ltsv < labelTransitionSATVars.size() ; ltsv++){
-					implies(solver, labelTransitionSATVars[ltsv], labelVars[label]);
-				}
-
-			}
-
-			for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
-				for(pair<Transition, int> transition : transitionVars[ts][0]){
-					if(transition.first.target != states && transition.first.src != transition.first.target){
-						implies(solver, transition.second, auxVars[ts][states][0]);
-					}
-				}
-				for(int label = 1 ; label < fts->get_num_labels()-1 ; label++){
-					vector<int> supportingTransitions;
-					supportingTransitions.push_back(auxVars[ts][states][label]);
+		if (!do_BDD_encoding){
+			auxVars = generateAuxVars(capsule);
+			transitionVars = generateTransitionVars(solver, capsule/* , timestep */);
+			allTimesTransitionVars.push_back(transitionVars);
+			
+			for(int ts = 0 ; ts < fts->get_size() ; ts++){
+				for(int label = 0 ; label < fts->get_num_labels() ; label++){
+					vector<int> labelTransitionSATVars;
 					for(pair<Transition, int> transition : transitionVars[ts][label]){
+						labelTransitionSATVars.push_back(transition.second);
+						vector<int> impliesOrPrec;
+						impliesOrPrec.push_back(previousStateVars[ts][transition.first.src]);
+						for(int label_prec = 0 ; label_prec < label ; label_prec++){
+							for(pair<Transition, int> transition_prec : transitionVars[ts][label_prec]){
+								if(transition_prec.first.target == transition.first.src){
+									impliesOrPrec.push_back(transition_prec.second);
+								}
+							}
+						}
+						impliesOr(solver, transition.second, impliesOrPrec);
+
+						vector<int> impliesOrEff;
+						impliesOrEff.push_back(nextStateVars[ts][transition.first.target]);
+						for(int label_eff = label+1 ; label_eff < fts->get_num_labels() ; label_eff++){
+							for(pair<Transition, int> transition_eff : transitionVars[ts][label_eff]){
+								if(transition_eff.first.target != transition.first.target){
+									impliesOrEff.push_back(transition_eff.second);
+								}
+							}
+						}
+						impliesOr(solver, transition.second, impliesOrEff);
+					}
+					impliesOr(solver, labelVars[label], labelTransitionSATVars);
+					for(size_t ltsv = 0 ; ltsv < labelTransitionSATVars.size() ; ltsv++){
+						implies(solver, labelTransitionSATVars[ltsv], labelVars[label]);
+					}
+
+				}
+
+				for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
+					for(pair<Transition, int> transition : transitionVars[ts][0]){
 						if(transition.first.target != states && transition.first.src != transition.first.target){
-							implies(solver, transition.second, auxVars[ts][states][label]);
+							implies(solver, transition.second, auxVars[ts][states][0]);
 						}
-						if(transition.first.target == states && transition.first.src != transition.first.target){
-							supportingTransitions.push_back(transition.second);
+					}
+					for(int label = 1 ; label < fts->get_num_labels()-1 ; label++){
+						vector<int> supportingTransitions;
+						supportingTransitions.push_back(auxVars[ts][states][label]);
+						for(pair<Transition, int> transition : transitionVars[ts][label]){
+							if(transition.first.target != states && transition.first.src != transition.first.target){
+								implies(solver, transition.second, auxVars[ts][states][label]);
+							}
+							if(transition.first.target == states && transition.first.src != transition.first.target){
+								supportingTransitions.push_back(transition.second);
+							}
+							if(transition.first.src == states){
+								impliesNot(solver, auxVars[ts][states][label-1], transition.second);
+							}
 						}
+						impliesOr(solver, auxVars[ts][states][label-1], supportingTransitions);
+					}
+					for(pair<Transition, int> transition : transitionVars[ts][fts->get_num_labels()]){
 						if(transition.first.src == states){
-							impliesNot(solver, auxVars[ts][states][label-1], transition.second);
+							impliesNot(solver, auxVars[ts][states][fts->get_num_labels()-1], transition.second);
 						}
 					}
-					impliesOr(solver, auxVars[ts][states][label-1], supportingTransitions);
 				}
-				for(pair<Transition, int> transition : transitionVars[ts][fts->get_num_labels()]){
-					if(transition.first.src == states){
-						impliesNot(solver, auxVars[ts][states][fts->get_num_labels()-1], transition.second);
-					}
-				}
+			}
+		} else {
+			// BDD-based encoding
+			for(int fac = 0 ; fac < fts->get_size() ; fac++){
+				tseitsinVars.clear();
+				int transitionVar = bdd_to_cnf(transition_BDDs_per_factor[fac].getNode(), previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
+
+				assertYes(solver,transitionVar);
+				//const task_representation::TransitionSystem & factor = fts->get_ts(fac);
+				//cout << "This factor has " << factor.get_size() << " many states." << endl;
 			}
 		}
-
 		swap(previousStateVars, nextStateVars);
 
 	}
@@ -571,13 +598,17 @@ SearchStatus SATSearch::step() {
 				}else{
 					selectedLabels.push_back(label);
 					cout << "Label : " << label << endl;
-					for(int ts = 0 ; ts < fts->get_size() ; ts++){
-						for(pair<Transition, int> transition : allTimesTransitionVars[timestep-1][ts][label]){
-							if(ipasir_val(solver, transition.second) > 0){
-								stateReconstructor.push_back(transition.first.target);
-								continue;
+					if (!do_BDD_encoding){
+						for(int ts = 0 ; ts < fts->get_size() ; ts++){
+							for(pair<Transition, int> transition : allTimesTransitionVars[timestep-1][ts][label]){
+								if(ipasir_val(solver, transition.second) > 0){
+									stateReconstructor.push_back(transition.first.target);
+									continue;
+								}
 							}
 						}
+					} else {
+						// reconstruction of states for BDD encoding
 					}
 				}
 				statesPerTimestep.push_back(stateReconstructor);

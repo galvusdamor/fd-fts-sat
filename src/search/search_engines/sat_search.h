@@ -27,11 +27,12 @@ private:
     std::vector<int> labelOrder;
 
 
-	bool do_BDD_encoding = false;
+	bool do_BDD_encoding = true;
+	bool implicationalTseitsin = true;
+	bool combineAllBDDsIntoOne = true;
 
 	std::unique_ptr<Cudd> _manager; //_manager associated with this symbolic search
 	void bdd_to_dot(const BDD &bdd, const std::string &file_name) const;
-	bool combineAllBDDsIntoOne;
 
 
 
@@ -45,7 +46,9 @@ private:
 	
 	std::vector<BDD> transition_BDDs_per_factor;
 
-	int myRecursion(DdNode * node, std::vector<int> & factorVars, void* solver, sat_capsule & capsule);
+	int givevar(int bddvar, std::vector<int> & factorVars, std::vector<int> & labelVars, std::vector<int> & nextFactorVars);
+
+	int bdd_to_cnf(DdNode * node, std::vector<int> & factorVars, std::vector<int> & labelVars, std::vector<int> & nextFactorVars, void* solver, sat_capsule & capsule, bool negationStatus = false);
 	
 	// for iteration	
 	int currentLength;
