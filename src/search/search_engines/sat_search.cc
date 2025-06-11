@@ -58,10 +58,10 @@ map<DdNode *, int> tseitsinVars;
 int SATSearch::givevar(int bddvar, vector<int> & factorVars, std::vector<int> & labelVars, vector<int> & nextFactorVars){
 	if (bddvar >= num_factor_vars) return labelVars[bddvar - num_factor_vars];
 	if (bddvar < num_factor_vars / 2) {
-		assert(factorVars.size() > bddvar);
+		assert(factorVars.size() > size_t(bddvar));
 		return factorVars[bddvar];
 	}
-	assert(factorVars.size() > bddvar - num_factor_vars / 2);
+	assert(int(factorVars.size()) > bddvar - num_factor_vars / 2);
 	return nextFactorVars[bddvar - num_factor_vars / 2];
 }
 
@@ -101,11 +101,12 @@ int SATSearch::bdd_to_cnf(DdNode * node, vector<int> & factorVars, std::vector<i
 			else isTrue = !Cudd_IsComplement(branch);
 
 			if (isTrue){
-				//cout << "V" << condition_var << " -> " << "T" << thisVar << endl;
+				cout << "V" << condition_var << " <-> " << "T" << thisVar << endl;
+				
 				implies(solver,condition_var, thisVar);
 			} else {
-				//cout << "V" << condition_var << " -> " << "T" << -thisVar << endl;
-				impliesNot(solver,condition_var, thisVar);
+				//cout << "V" << condition_var << " <-> " << "T" << -thisVar << endl;
+				implies(solver,condition_var,-thisVar);
 			}
 		} else {
 			int branchvar = bdd_to_cnf(branch, factorVars, labelVars, nextFactorVars, solver, capsule, negationStatus);
@@ -120,7 +121,7 @@ int SATSearch::bdd_to_cnf(DdNode * node, vector<int> & factorVars, std::vector<i
 		}
 	}
 
-	if (Cudd_IsComplement(node)) return -thisVar;
+	if (!implicationalTseitsin && Cudd_IsComplement(node)) return -thisVar;
 	return thisVar;
 }
 
@@ -157,8 +158,8 @@ void SATSearch::initialize() {
     	_manager->setTimeoutHandler(exceptionError);
     	_manager->setNodesExceededHandler(exceptionError);
 
-
-		transition_BDDs_per_factor.resize(fts->get_size());
+		if (combineAllBDDsIntoOne) transition_BDDs_per_factor.resize(fts->get_size());
+		else transition_BDDs_per_factor_per_state_pair.resize(fts->get_size());
 		for (int fac = 0; fac < fts->get_size(); fac++){
 			cout << "Precomputation for factor Nr " << fac << endl;
 			const task_representation::TransitionSystem & factor = fts->get_ts(fac);
@@ -210,26 +211,30 @@ void SATSearch::initialize() {
 				swap(allPossiblePaths,nextPossiblePaths);	
 			}
 
-			// compute the union BDD that describes all transitions at the same time.
-			BDD allTransitionsBDD = _manager->bddZero();
-			for (int s = 0; s < factor.get_size(); s++){
-				for (int ss = 0; ss < factor.get_size(); ss++){
-					BDD thisFactorTransitionBDD = _manager->bddVar(s) * _manager->bddVar(num_factor_vars/2 + ss);
-					for (int nots = 0; nots < factor.get_size(); nots++)
-						if (s != nots) thisFactorTransitionBDD *= ~_manager->bddVar(nots);
-					for (int notss = 0; notss < factor.get_size(); notss++)
-						if (ss != notss) thisFactorTransitionBDD *= ~_manager->bddVar(num_factor_vars/2 + notss);
+			if (combineAllBDDsIntoOne){
+				// compute the union BDD that describes all transitions at the same time.
+				BDD allTransitionsBDD = _manager->bddZero();
+				for (int s = 0; s < factor.get_size(); s++){
+					for (int ss = 0; ss < factor.get_size(); ss++){
+						BDD thisFactorTransitionBDD = _manager->bddVar(s) * _manager->bddVar(num_factor_vars/2 + ss);
+						for (int nots = 0; nots < factor.get_size(); nots++)
+							if (s != nots) thisFactorTransitionBDD *= ~_manager->bddVar(nots);
+						for (int notss = 0; notss < factor.get_size(); notss++)
+							if (ss != notss) thisFactorTransitionBDD *= ~_manager->bddVar(num_factor_vars/2 + notss);
 
-					thisFactorTransitionBDD *= allPossiblePaths[s][ss];
+						thisFactorTransitionBDD *= allPossiblePaths[s][ss];
 
-					allTransitionsBDD += thisFactorTransitionBDD;
+						allTransitionsBDD += thisFactorTransitionBDD;
+					}
 				}
+
+				string name = "dots/factor_" + to_string(fac) + ".dot";
+				bdd_to_dot(allTransitionsBDD, name);
+
+				transition_BDDs_per_factor[fac] = allTransitionsBDD;
+			} else {
+				transition_BDDs_per_factor_per_state_pair[fac] = allPossiblePaths;	
 			}
-
-			string name = "dots/factor_" + to_string(fac) + ".dot";
-			bdd_to_dot(allTransitionsBDD, name);
-
-			transition_BDDs_per_factor[fac] = allTransitionsBDD;
 
 			//int overallVar = bdd_to_cnf(allTransitionsBDD.getNode());
 			//cout << "Overall :" << "T" << overallVar << endl;
@@ -492,12 +497,32 @@ SearchStatus SATSearch::step() {
 		} else {
 			// BDD-based encoding
 			for(int fac = 0 ; fac < fts->get_size() ; fac++){
-				tseitsinVars.clear();
-				int transitionVar = bdd_to_cnf(transition_BDDs_per_factor[fac].getNode(), previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
+				if (combineAllBDDsIntoOne){
+					tseitsinVars.clear();
+					int transitionVar = bdd_to_cnf(transition_BDDs_per_factor[fac].getNode(), previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
 
-				assertYes(solver,transitionVar);
-				//const task_representation::TransitionSystem & factor = fts->get_ts(fac);
-				//cout << "This factor has " << factor.get_size() << " many states." << endl;
+					assertYes(solver,transitionVar);
+				} else {
+					const task_representation::TransitionSystem & factor = fts->get_ts(fac);
+					for (int s = 0; s < factor.get_size(); s++){
+						for (int ss = 0; ss < factor.get_size(); ss++){
+							// edge case: it can happen that this transition is impossible under the chosen order
+							if (transition_BDDs_per_factor_per_state_pair[fac][s][ss] == _manager->bddZero()){
+								impliesNot(solver,previousStateVars[fac][s], nextStateVars[fac][ss]);
+								continue;
+							}
+							
+
+							tseitsinVars.clear();
+							// Providing the previous and next state here is useless -- they will not be accessed anyway.
+							// But the function API requires them.
+							int transitionVar = bdd_to_cnf(transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode(), previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
+
+							andImplies(solver,previousStateVars[fac][s], nextStateVars[fac][ss], transitionVar);
+						}
+					}
+
+				}
 			}
 		}
 		swap(previousStateVars, nextStateVars);
@@ -564,6 +589,8 @@ SearchStatus SATSearch::step() {
 	}
 
 
+	//assertYes(solver,allTimesLabelVars[0][1]);
+	//assertYes(solver,allTimesLabelVars[0][5]);
 	//implies(solver,2,3);	
 
 
@@ -588,8 +615,7 @@ SearchStatus SATSearch::step() {
 		
 
 		for(int timestep = 1 ; timestep <= currentLength ; timestep++){
-			
-			
+			cout << "Time " << timestep << endl;
 			vector<int> selectedLabels;
 			for(size_t label = 0 ; label < allTimesLabelVars[timestep-1].size() ; label++){
 				stateReconstructor.clear();
@@ -607,14 +633,12 @@ SearchStatus SATSearch::step() {
 								}
 							}
 						}
-					} else {
-						// reconstruction of states for BDD encoding
+						statesPerTimestep.push_back(stateReconstructor);
 					}
 				}
-				statesPerTimestep.push_back(stateReconstructor);
 			}
 			labelsPerTimestep.push_back(selectedLabels);
-			/* stateReconstructor.clear();
+			 stateReconstructor.clear();
 			for(size_t ts = 0 ; ts < allTimesStateVars[timestep].size() ; ts++){
 				for(size_t state = 0 ; state < allTimesStateVars[timestep][ts].size() ; state++){
 					if(ipasir_val(solver, allTimesStateVars[timestep][ts][state]) > 0){
@@ -623,13 +647,16 @@ SearchStatus SATSearch::step() {
 					}
 				}
 			}
-			statesPerTimestep.push_back(stateReconstructor); */
+			statesPerTimestep.push_back(stateReconstructor);
 			
 		}
 
 		vector<int> GS = statesPerTimestep.back();
 		for(auto x : statesPerTimestep){
-			cout << x.size() << endl; 
+			cout << x.size() << ":";
+			for (size_t f = 0; f < x.size() ; f++)
+				cout << " " << f << "=" << x[f];
+			cout << endl;
 		}
 		PlanState goalState = PlanState(std::move(GS));
 		vector<PlanState> states;

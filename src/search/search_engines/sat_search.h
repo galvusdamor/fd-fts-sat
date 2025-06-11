@@ -28,7 +28,7 @@ private:
 
 
 	bool do_BDD_encoding = true;
-	bool implicationalTseitsin = true;
+	bool implicationalTseitsin = false;
 	bool combineAllBDDsIntoOne = true;
 
 	std::unique_ptr<Cudd> _manager; //_manager associated with this symbolic search
@@ -44,7 +44,9 @@ private:
 	int bdd_num_vars;
 	int num_factor_vars;
 	
+	// for the combined encoding
 	std::vector<BDD> transition_BDDs_per_factor;
+	std::vector<std::vector<std::vector<BDD>>> transition_BDDs_per_factor_per_state_pair;
 
 	int givevar(int bddvar, std::vector<int> & factorVars, std::vector<int> & labelVars, std::vector<int> & nextFactorVars);
 
