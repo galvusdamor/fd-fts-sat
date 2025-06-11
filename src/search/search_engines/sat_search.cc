@@ -114,123 +114,123 @@ int SATSearch::myRecursion(DdNode * node, vector<int> & factorVars, void* solver
 
 void SATSearch::initialize() {
 	cout << "Initialising" << endl;
-
 	cout << "My FTS task has " << fts->get_size() << " systems and " << fts->get_num_labels() << " labels." << endl;
-  
-
-
-	combineAllBDDsIntoOne = true;
-	bdd_num_vars = fts->get_num_labels();
-	num_factor_vars = 0;
-	if (combineAllBDDsIntoOne) {
-		for (int fac = 0; fac < fts->get_size(); fac++){
-			const task_representation::TransitionSystem & factor = fts->get_ts(fac);
-			if (num_factor_vars < factor.get_size()) num_factor_vars = factor.get_size();
-		}
-		num_factor_vars*=2;
-		// add the variables for the factor -- those come first
-		bdd_num_vars += num_factor_vars; 
-	}
-	cout << "Number BDD vars: " << bdd_num_vars << " of that " << num_factor_vars << " factor state variables." << endl;
-   
-    _manager = std::make_unique<Cudd> (bdd_num_vars, 0,
-                                          cudd_init_nodes / fts->get_num_labels(),
-                                          cudd_init_cache_size,
-                                          cudd_init_available_memory);
-
-    _manager->setHandler(exceptionError);
-    _manager->setTimeoutHandler(exceptionError);
-    _manager->setNodesExceededHandler(exceptionError);
-
 
 	labelOrder.resize(fts->get_num_labels());
 	// for now just the natural ordering
 	for(int l = 0; l < fts->get_num_labels(); l++) labelOrder[l] = l;
-
-
-	for (int fac = 0; fac < fts->get_size(); fac++){
-		cout << "Precomputation for factor Nr " << fac << endl;
-		const task_representation::TransitionSystem & factor = fts->get_ts(fac);
-		cout << "This factor has " << factor.get_size() << " many states." << endl;
-
-		// we compute a matrix of size |S|^2 that contains all-pair-possible-paths
-		vector<vector<BDD>> allPossiblePaths (factor.get_size());
-		for (int s = 0; s < factor.get_size(); s++){
-			allPossiblePaths[s].resize(factor.get_size());
-			for (int ss = 0; ss < factor.get_size(); ss++){
-				if (s == ss){
-					allPossiblePaths[s][ss] = _manager->bddOne();
-				} else {
-					allPossiblePaths[s][ss] = _manager->bddZero(); 
-				}
+ 
+	if (do_BDD_encoding){
+		combineAllBDDsIntoOne = true;
+		bdd_num_vars = fts->get_num_labels();
+		num_factor_vars = 0;
+		if (combineAllBDDsIntoOne) {
+			for (int fac = 0; fac < fts->get_size(); fac++){
+				const task_representation::TransitionSystem & factor = fts->get_ts(fac);
+				if (num_factor_vars < factor.get_size()) num_factor_vars = factor.get_size();
 			}
+			num_factor_vars*=2;
+			// add the variables for the factor -- those come first
+			bdd_num_vars += num_factor_vars; 
 		}
+		cout << "Number BDD vars: " << bdd_num_vars << " of that " << num_factor_vars << " factor state variables." << endl;
+   
+    	_manager = std::make_unique<Cudd> (bdd_num_vars, 0,
+    	                                      cudd_init_nodes / fts->get_num_labels(),
+    	                                      cudd_init_cache_size,
+    	                                      cudd_init_available_memory);
+
+    	_manager->setHandler(exceptionError);
+    	_manager->setTimeoutHandler(exceptionError);
+    	_manager->setNodesExceededHandler(exceptionError);
 
 
 
-		// DP backwards(!) over the relevant labels
-		for(int l = fts->get_num_labels() -  1; l >= 0; l--){
-			int label = labelOrder[l];
-			task_representation::LabelID labelID (label);
-			cout << "Processing label " << label << "." << endl;
-			if (!factor.is_relevant_label(labelID)){
-				cout << "\tLabel is not relevant for factor. Skipping." << endl;
-				continue;
-			}
-			vector<vector<BDD>> nextPossiblePaths (factor.get_size());
+		for (int fac = 0; fac < fts->get_size(); fac++){
+			cout << "Precomputation for factor Nr " << fac << endl;
+			const task_representation::TransitionSystem & factor = fts->get_ts(fac);
+			cout << "This factor has " << factor.get_size() << " many states." << endl;
+
+			// we compute a matrix of size |S|^2 that contains all-pair-possible-paths
+			vector<vector<BDD>> allPossiblePaths (factor.get_size());
 			for (int s = 0; s < factor.get_size(); s++){
-				nextPossiblePaths[s].resize(factor.get_size());
+				allPossiblePaths[s].resize(factor.get_size());
 				for (int ss = 0; ss < factor.get_size(); ss++){
-					// situation: I am in state s and need to go to state ss.
-					// The first label I can use for this transition is "label" (current variable).
-					// I have two options: either use it and go to one of its successors, or stay here.
-
-					// base case: don't use the label
-					nextPossiblePaths[s][ss] = ~_manager->bddVar(label + num_factor_vars) * allPossiblePaths[s][ss];
-
-					// inductive case: use the label and go one step
-					for (const auto & transition : factor.get_transitions_with_label(label)){
-						if (transition.src != s) continue;
-						nextPossiblePaths[s][ss] +=
-								_manager->bddVar(label + num_factor_vars) * allPossiblePaths[transition.target][ss];
+					if (s == ss){
+						allPossiblePaths[s][ss] = _manager->bddOne();
+					} else {
+						allPossiblePaths[s][ss] = _manager->bddZero(); 
 					}
 				}
 			}
-			swap(allPossiblePaths,nextPossiblePaths);	
-		}
 
-		// compute the union BDD that describes all transitions at the same time.
-		BDD allTransitionsBDD = _manager->bddZero();
-		for (int s = 0; s < factor.get_size(); s++){
-			for (int ss = 0; ss < factor.get_size(); ss++){
-				BDD thisFactorTransitionBDD = _manager->bddVar(s) * _manager->bddVar(num_factor_vars/2 + ss);
-				for (int nots = 0; nots < factor.get_size(); nots++)
-					if (s != nots) thisFactorTransitionBDD *= ~_manager->bddVar(nots);
-				for (int notss = 0; notss < factor.get_size(); notss++)
-					if (ss != notss) thisFactorTransitionBDD *= ~_manager->bddVar(num_factor_vars/2 + notss);
 
-				thisFactorTransitionBDD *= allPossiblePaths[s][ss];
 
-				allTransitionsBDD += thisFactorTransitionBDD;
+			// DP backwards(!) over the relevant labels
+			for(int l = fts->get_num_labels() -  1; l >= 0; l--){
+				int label = labelOrder[l];
+				task_representation::LabelID labelID (label);
+				cout << "Processing label " << label << "." << endl;
+				if (!factor.is_relevant_label(labelID)){
+					cout << "\tLabel is not relevant for factor. Skipping." << endl;
+					continue;
+				}
+				vector<vector<BDD>> nextPossiblePaths (factor.get_size());
+				for (int s = 0; s < factor.get_size(); s++){
+					nextPossiblePaths[s].resize(factor.get_size());
+					for (int ss = 0; ss < factor.get_size(); ss++){
+						// situation: I am in state s and need to go to state ss.
+						// The first label I can use for this transition is "label" (current variable).
+						// I have two options: either use it and go to one of its successors, or stay here.
+
+						// base case: don't use the label
+						nextPossiblePaths[s][ss] = ~_manager->bddVar(label + num_factor_vars) * allPossiblePaths[s][ss];
+
+						// inductive case: use the label and go one step
+						for (const auto & transition : factor.get_transitions_with_label(label)){
+							if (transition.src != s) continue;
+							nextPossiblePaths[s][ss] +=
+									_manager->bddVar(label + num_factor_vars) * allPossiblePaths[transition.target][ss];
+						}
+					}
+				}
+				swap(allPossiblePaths,nextPossiblePaths);	
 			}
+
+			// compute the union BDD that describes all transitions at the same time.
+			BDD allTransitionsBDD = _manager->bddZero();
+			for (int s = 0; s < factor.get_size(); s++){
+				for (int ss = 0; ss < factor.get_size(); ss++){
+					BDD thisFactorTransitionBDD = _manager->bddVar(s) * _manager->bddVar(num_factor_vars/2 + ss);
+					for (int nots = 0; nots < factor.get_size(); nots++)
+						if (s != nots) thisFactorTransitionBDD *= ~_manager->bddVar(nots);
+					for (int notss = 0; notss < factor.get_size(); notss++)
+						if (ss != notss) thisFactorTransitionBDD *= ~_manager->bddVar(num_factor_vars/2 + notss);
+
+					thisFactorTransitionBDD *= allPossiblePaths[s][ss];
+
+					allTransitionsBDD += thisFactorTransitionBDD;
+				}
+			}
+
+			string name = "dots/factor_" + to_string(fac) + ".dot";
+			bdd_to_dot(allTransitionsBDD, name);
+
+			transition_BDDs_per_factor.push_back(allTransitionsBDD);
+
+			//int overallVar = myRecursion(allTransitionsBDD.getNode());
+			//cout << "Overall :" << "T" << overallVar << endl;
+			//exit(0);
+
+			// printing
+			//for (int s = 0; s < factor.get_size(); s++){
+			//	for (int ss = 0; ss < factor.get_size(); ss++){
+			//		string name = "dots/factor_" + to_string(fac) + "_" + to_string(s) + "_to_" + to_string(ss) + ".dot";
+			//		bdd_to_dot(allPossiblePaths[s][ss], name);
+			//	}
+			//}
+
 		}
-
-		string name = "dots/factor_" + to_string(fac) + ".dot";
-		bdd_to_dot(allTransitionsBDD, name);
-
-		transition_BDDs_per_factor.push_back(allTransitionsBDD);
-
-		//int overallVar = myRecursion(allTransitionsBDD.getNode());
-		//cout << "Overall :" << "T" << overallVar << endl;
-		//exit(0);
-
-		// printing
-		//for (int s = 0; s < factor.get_size(); s++){
-		//	for (int ss = 0; ss < factor.get_size(); ss++){
-		//		string name = "dots/factor_" + to_string(fac) + "_" + to_string(s) + "_to_" + to_string(ss) + ".dot";
-		//		bdd_to_dot(allPossiblePaths[s][ss], name);
-		//	}
-		//}
 
 	}
 
@@ -248,9 +248,6 @@ void SATSearch::initialize() {
 		}
 	}
 
-	for(int labelID = 0 ; labelID < fts->get_num_labels() ; labelID++){
-		labelOrder.push_back(labelID);
-	}
 
 	if (planLength != -1){
 		currentLength = planLength;

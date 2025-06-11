@@ -27,6 +27,8 @@ private:
     std::vector<int> labelOrder;
 
 
+	bool do_BDD_encoding = false;
+
 	std::unique_ptr<Cudd> _manager; //_manager associated with this symbolic search
 	void bdd_to_dot(const BDD &bdd, const std::string &file_name) const;
 	bool combineAllBDDsIntoOne;
