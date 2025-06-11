@@ -13,6 +13,7 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	planLength(opts.get<int>("plan_length")),
 	implicationalTseitsin(opts.get<bool>("impltseitsin")),
 	combineAllBDDsIntoOne(opts.get<bool>("combinebdds")),
+	bddCutting(opts.get<bool>("cutbdds")),
 	fts(g_main_task){
 
 	switch (opts.get<int>("encoding")){
@@ -112,7 +113,7 @@ int SATSearch::bdd_to_cnf(DdNode * node, vector<int> & factorVars, std::vector<i
 			//else isTrue = ;
 
 			if (isTrue){
-				cout << "V" << condition_var << " <-> " << "T" << thisVar << endl;
+				//cout << "V" << condition_var << " <-> " << "T" << thisVar << endl;
 				
 				implies(solver,condition_var, thisVar);
 			} else {
@@ -259,6 +260,89 @@ void SATSearch::initialize() {
 			//	}
 			//}
 
+		}
+		
+		BDD stateCube = _manager->bddOne();
+		for (int i = 0; i < num_factor_vars; i++) stateCube *= _manager->bddVar(i);
+
+
+		if (bddCutting){
+			// fixpoint algorithm. Will break from the inside if no BDD changes.
+			int round = 0;
+			while (true) {	
+				round++;
+				// 1. We need to prepare the data structures for cutting
+				// we need a BDD for every factor that describes any legal transition in that factor
+				vector<BDD> any_transition_per_factor(fts->get_size());
+				for (int fac = 0; fac < fts->get_size(); fac++){
+					const task_representation::TransitionSystem & factor = fts->get_ts(fac);
+					if (!combineAllBDDsIntoOne){
+						any_transition_per_factor[fac] = _manager->bddZero();
+						for (int s = 0; s < factor.get_size(); s++){
+							for (int ss = 0; ss < factor.get_size(); ss++){
+								any_transition_per_factor[fac] += transition_BDDs_per_factor_per_state_pair[fac][s][ss];
+							}
+						}
+					} else {
+						// project away the state variables.
+						any_transition_per_factor[fac] = transition_BDDs_per_factor[fac].ExistAbstract(stateCube);
+					}
+				}
+	
+				bool anyUpdate = false;
+				// 2. Go over all pairs of factors	
+				for (int facS = 0; facS < fts->get_size(); facS++){
+					const task_representation::TransitionSystem & factorSource = fts->get_ts(facS);
+					for (int facT = 0; facT < fts->get_size(); facT++){
+						const task_representation::TransitionSystem & factorTarget = fts->get_ts(facT);
+
+						if (facS == facT) continue;
+					
+						// cube for the variables that need to be abstracted away
+						BDD cube = _manager->bddOne();
+						cout << "Propagate from " << facS << " to " << facT << " Round: " << round << endl;
+						for(int label = 0; label < fts->get_num_labels(); label++){
+							task_representation::LabelID labelID (label);
+							// will not be mentioned in this BDD anyway
+							if (!factorSource.is_relevant_label(labelID)) continue;
+							// don't project away labels that *are* relevant
+							if (factorTarget.is_relevant_label(labelID)) continue;
+					
+							//cout << "label " << label << endl;
+							cube *= _manager->bddVar(num_factor_vars + label);
+						}
+
+						// no shared variables
+						if (cube == _manager->bddOne()) continue;
+
+						//string name = "dots/bef"+to_string(facS) + "-" + to_string(facT)+".dot";
+						//bdd_to_dot(any_transition_per_factor[facS], name);
+						BDD relevantLabelsForTarget = any_transition_per_factor[facS].ExistAbstract(cube);
+						//name = "dots/aft"+to_string(facS) + "-" + to_string(facT)+".dot";
+						//bdd_to_dot(relevantLabelsForTarget, name);
+
+						// if the relevant BDD is 1, then there is nothing to propagate.
+						if (relevantLabelsForTarget == _manager->bddOne()) continue;
+						// actually propagate
+						if (!combineAllBDDsIntoOne){
+							for (int s = 0; s < factorTarget.get_size(); s++){
+								for (int ss = 0; ss < factorTarget.get_size(); ss++){
+									BDD old = transition_BDDs_per_factor_per_state_pair[facT][s][ss];
+									transition_BDDs_per_factor_per_state_pair[facT][s][ss] *= relevantLabelsForTarget;
+									if (old != transition_BDDs_per_factor_per_state_pair[facT][s][ss])
+										anyUpdate = true;
+								}
+							}
+						
+						} else {
+							transition_BDDs_per_factor[facT] *= relevantLabelsForTarget;
+						}
+					}
+				}
+
+				if (!anyUpdate) break; // did not change any BDD
+			}
+			//exit(0);
 		}
 
 	}
@@ -596,7 +680,7 @@ SearchStatus SATSearch::step() {
 		}
 		atLeastOne(solver, capsule, goalStateVars);
 
-		fts->get_ts(ts).dump_dot_graph();
+		//fts->get_ts(ts).dump_dot_graph();
 	}
 
 

@@ -24,6 +24,7 @@ private:
 	bool do_BDD_encoding;
 	bool implicationalTseitsin;
 	bool combineAllBDDsIntoOne;
+	bool bddCutting;
 	
 	std::shared_ptr<task_representation::FTSTask> fts;
 
