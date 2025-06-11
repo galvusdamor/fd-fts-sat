@@ -11,7 +11,14 @@ using namespace task_representation;
 namespace sat_search {
 SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	planLength(opts.get<int>("plan_length")),
+	implicationalTseitsin(opts.get<bool>("impltseitsin")),
+	combineAllBDDsIntoOne(opts.get<bool>("combinebdds")),
 	fts(g_main_task){
+
+	switch (opts.get<int>("encoding")){
+		case 0: do_BDD_encoding = false; break;
+		case 1: do_BDD_encoding = true; break;
+	}
 }
 
 
@@ -66,8 +73,7 @@ int SATSearch::givevar(int bddvar, vector<int> & factorVars, std::vector<int> & 
 }
 
 
-int SATSearch::bdd_to_cnf(DdNode * node, vector<int> & factorVars, std::vector<int> & labelVars, vector<int> & nextFactorVars, void* solver, sat_capsule & capsule, bool negationStatus){
-	if (Cudd_IsComplement(node)) negationStatus = !negationStatus;
+int SATSearch::bdd_to_cnf(DdNode * node, vector<int> & factorVars, std::vector<int> & labelVars, vector<int> & nextFactorVars, void* solver, sat_capsule & capsule){
 	
 	// for lookup
 	DdNode * lookup;
@@ -89,6 +95,11 @@ int SATSearch::bdd_to_cnf(DdNode * node, vector<int> & factorVars, std::vector<i
 	int var_to_branch = givevar(Cudd_NodeReadIndex(node), factorVars, labelVars, nextFactorVars);
     DdNode* true_branch = Cudd_T(node);
     DdNode* false_branch = Cudd_E(node);
+	//cout << "Rec: " << node << " " << var_to_branch << "T " << true_branch << " F " << false_branch << endl;
+	if (implicationalTseitsin && Cudd_IsComplement(node)) {
+		true_branch = Cudd_Not(true_branch);
+		false_branch = Cudd_Not(false_branch);
+	}
 
 	vector<pair<int,DdNode*>> successors {{var_to_branch, true_branch}, {-var_to_branch, false_branch}};
 
@@ -96,9 +107,9 @@ int SATSearch::bdd_to_cnf(DdNode * node, vector<int> & factorVars, std::vector<i
 		int condition_var = succ.first;
 		DdNode* branch = succ.second;
 		if (Cudd_IsConstant(branch)){
-			bool isTrue;
-			if (implicationalTseitsin) isTrue = !(negationStatus != Cudd_IsComplement(branch));  // read != as XOR
-			else isTrue = !Cudd_IsComplement(branch);
+			bool isTrue = !Cudd_IsComplement(branch);
+			//if (implicationalTseitsin) isTrue = !(negationStatus != Cudd_IsComplement(branch));  // read != as XOR
+			//else isTrue = ;
 
 			if (isTrue){
 				cout << "V" << condition_var << " <-> " << "T" << thisVar << endl;
@@ -109,7 +120,7 @@ int SATSearch::bdd_to_cnf(DdNode * node, vector<int> & factorVars, std::vector<i
 				implies(solver,condition_var,-thisVar);
 			}
 		} else {
-			int branchvar = bdd_to_cnf(branch, factorVars, labelVars, nextFactorVars, solver, capsule, negationStatus);
+			int branchvar = bdd_to_cnf(branch, factorVars, labelVars, nextFactorVars, solver, capsule);
 			//cout << "V" << condition_var << " & " << "T" << thisVar << " -> " << "T" << branchvar << endl;
 			andImplies(solver, condition_var, thisVar, branchvar);
 			if (!implicationalTseitsin){
@@ -589,9 +600,23 @@ SearchStatus SATSearch::step() {
 	}
 
 
-	//assertYes(solver,allTimesLabelVars[0][1]);
-	//assertYes(solver,allTimesLabelVars[0][5]);
-	//implies(solver,2,3);	
+	//assertYes(solver,-allTimesLabelVars[0][0]);
+	//assertYes(solver,-allTimesLabelVars[0][1]);
+	//assertYes(solver,-allTimesLabelVars[0][2]);
+	//assertYes(solver,allTimesLabelVars[0][3]);
+	//assertYes(solver,-allTimesLabelVars[0][4]);
+	//assertYes(solver,-allTimesLabelVars[0][5]);
+	//assertYes(solver,-allTimesLabelVars[0][6]);
+	//assertYes(solver,allTimesLabelVars[0][7]);
+	//assertYes(solver,-allTimesStateVars[1][0][0]);
+	//assertYes(solver,-allTimesStateVars[1][0][1]);
+	//assertYes(solver,allTimesStateVars[1][0][2]);
+	//assertYes(solver,-allTimesStateVars[1][0][3]);
+	//assertYes(solver,-allTimesStateVars[1][0][4]);
+	//assertYes(solver,allTimesStateVars[1][1][3]);
+	//assertYes(solver,allTimesStateVars[1][2][3]);
+	//assertYes(solver,allTimesStateVars[1][3][3]);
+	////implies(solver,2,3);	
 
 
 	int solverState = ipasir_solve(solver);

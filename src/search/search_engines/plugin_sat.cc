@@ -17,8 +17,16 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
             "-1");
                 parser.add_option<int>(
             "encoding",
-            "set the encoding. Currently supported are OneStep: 0 and ExistsStep: 2",
-            "2");
+            "set the encoding. Currently supported are 0: R^2E: 1: BDD",
+            "0");
+                parser.add_option<bool>(
+            "impltseitsin",
+            "use implicational version of Tseitsin encoding for BDDs",
+            "true");
+                parser.add_option<bool>(
+            "combinebdds",
+            "combine all BDDs for each factor into one. Otherwise transitions will be encoded for each pair of states in each factor",
+            "false");
                 parser.add_option<int>(
             "length_iteration",
             "run the search for a single plan length only. -1 if length should not be fixed. This options run's Rintanen's algorithm C in the round specified by length_iteration",

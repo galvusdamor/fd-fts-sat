@@ -21,15 +21,16 @@ namespace sat_search{
 class SATSearch : public SearchEngine {
 private: 
 	int planLength;
+	bool do_BDD_encoding;
+	bool implicationalTseitsin;
+	bool combineAllBDDsIntoOne;
+	
 	std::shared_ptr<task_representation::FTSTask> fts;
 
     std::vector<std::vector<int>> np_labels;
     std::vector<int> labelOrder;
 
 
-	bool do_BDD_encoding = true;
-	bool implicationalTseitsin = false;
-	bool combineAllBDDsIntoOne = true;
 
 	std::unique_ptr<Cudd> _manager; //_manager associated with this symbolic search
 	void bdd_to_dot(const BDD &bdd, const std::string &file_name) const;
@@ -50,7 +51,7 @@ private:
 
 	int givevar(int bddvar, std::vector<int> & factorVars, std::vector<int> & labelVars, std::vector<int> & nextFactorVars);
 
-	int bdd_to_cnf(DdNode * node, std::vector<int> & factorVars, std::vector<int> & labelVars, std::vector<int> & nextFactorVars, void* solver, sat_capsule & capsule, bool negationStatus = false);
+	int bdd_to_cnf(DdNode * node, std::vector<int> & factorVars, std::vector<int> & labelVars, std::vector<int> & nextFactorVars, void* solver, sat_capsule & capsule);
 	
 	// for iteration	
 	int currentLength;
