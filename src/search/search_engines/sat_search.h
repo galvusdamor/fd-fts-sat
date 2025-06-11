@@ -5,6 +5,7 @@
 #include "../option_parser.h"
 #include "../plugin.h"
 #include "sat_encoder.h"
+#include "../task_representation/transition_system.h"
 
 
 // include for BDDs
@@ -21,10 +22,16 @@ class SATSearch : public SearchEngine {
 private: 
 	int planLength;
 	std::shared_ptr<task_representation::FTSTask> fts;
+
+    std::vector<std::vector<int>> np_labels;
+    std::vector<int> labelOrder;
+
+
 	std::unique_ptr<Cudd> _manager; //_manager associated with this symbolic search
 	void bdd_to_dot(const BDD &bdd, const std::string &file_name) const;
-	std::vector<int> labelOrdering;
 	bool combineAllBDDsIntoOne;
+
+
 
 
 	// TODO: read from command line arguments
@@ -36,7 +43,7 @@ private:
 	
 	std::vector<BDD> transition_BDDs_per_factor;
 
-	int myRecursion(DdNode * node, vector<int> & factorVars, void* solver, sat_capsule & capsule);
+	int myRecursion(DdNode * node, std::vector<int> & factorVars, void* solver, sat_capsule & capsule);
 	
 	// for iteration	
 	int currentLength;
@@ -45,6 +52,8 @@ protected:
     virtual void initialize() override;
     virtual SearchStatus step() override;
     virtual std::vector<std::vector<int>> generateStateVars(void* solver, sat_capsule & capsule/* , int timestep */);
+    virtual std::map<int, std::map<int, std::vector<std::pair<task_representation::Transition, int>>>> generateTransitionVars(void* solver, sat_capsule &capsule);
+    virtual std::map<int, std::map<int, std::vector<int>>> generateAuxVars(sat_capsule &capsule);
     virtual std::vector<int> generateLabelVars(void* solver, sat_capsule & capsule/* , int timestep */);
     virtual std::map<int, std::map<int, std::vector<int>>> getApplicableLabels();
     virtual std::map<int, std::map<int, std::map<int, std::vector<int>>>> getSuccessorStates(std::map<int, std::map<int, std::vector<int>>> applicableLabels);

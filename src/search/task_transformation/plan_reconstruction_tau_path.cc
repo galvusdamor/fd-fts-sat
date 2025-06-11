@@ -205,7 +205,7 @@ void PlanReconstructionTauPath::reconstruct_plan(Plan &plan) const {
 
         // Skip labels with an effect on a single transition system if there is a tau path
         // to the target
-        assert ((size_t)label < label_only_relevant_for.size());
+        assert (label_only_relevant_for.empty() || (size_t)label < label_only_relevant_for.size());
 
 
         if (!label_only_relevant_for.empty() && label_only_relevant_for[label] &&
