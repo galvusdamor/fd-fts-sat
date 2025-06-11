@@ -6,6 +6,10 @@
 #include "../plugin.h"
 #include "sat_encoder.h"
 
+
+// include for BDDs
+#include "cuddObj.hh"
+
 namespace plugins {
 class Feature;
 }
@@ -17,7 +21,24 @@ class SATSearch : public SearchEngine {
 private: 
 	int planLength;
 	std::shared_ptr<task_representation::FTSTask> fts;
+	std::unique_ptr<Cudd> _manager; //_manager associated with this symbolic search
+	void bdd_to_dot(const BDD &bdd, const std::string &file_name) const;
+	std::vector<int> labelOrdering;
+	bool combineAllBDDsIntoOne;
 
+
+	// TODO: read from command line arguments
+	const long cudd_init_nodes = 16000000; //Number of initial nodes
+    const long cudd_init_cache_size = 16000000; //Initial cache size
+    const long cudd_init_available_memory = 0; //Maximum available memory (bytes)
+	int bdd_num_vars;
+	int num_factor_vars;
+	
+	std::vector<BDD> transition_BDDs_per_factor;
+
+	int myRecursion(DdNode * node, vector<int> & factorVars, void* solver, sat_capsule & capsule);
+	
+	// for iteration	
 	int currentLength;
 
 protected:
