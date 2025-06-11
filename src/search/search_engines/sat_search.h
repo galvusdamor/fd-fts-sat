@@ -5,6 +5,7 @@
 #include "../option_parser.h"
 #include "../plugin.h"
 #include "sat_encoder.h"
+#include "../task_representation/transition_system.h"
 
 namespace plugins {
 class Feature;
@@ -17,6 +18,8 @@ class SATSearch : public SearchEngine {
 private: 
 	int planLength;
 	std::shared_ptr<task_representation::FTSTask> fts;
+    std::vector<std::vector<int>> np_labels;
+    std::vector<int> labelOrder;
 
 	int currentLength;
 
@@ -24,6 +27,8 @@ protected:
     virtual void initialize() override;
     virtual SearchStatus step() override;
     virtual std::vector<std::vector<int>> generateStateVars(void* solver, sat_capsule & capsule/* , int timestep */);
+    virtual std::map<int, std::map<int, std::vector<std::pair<task_representation::Transition, int>>>> generateTransitionVars(void* solver, sat_capsule &capsule);
+    virtual std::map<int, std::map<int, std::vector<int>>> generateAuxVars(sat_capsule &capsule);
     virtual std::vector<int> generateLabelVars(void* solver, sat_capsule & capsule/* , int timestep */);
     virtual std::map<int, std::map<int, std::vector<int>>> getApplicableLabels();
     virtual std::map<int, std::map<int, std::map<int, std::vector<int>>>> getSuccessorStates(std::map<int, std::map<int, std::vector<int>>> applicableLabels);
