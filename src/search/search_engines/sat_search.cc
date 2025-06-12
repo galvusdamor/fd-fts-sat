@@ -788,6 +788,7 @@ SearchStatus SATSearch::step() {
 					std::set<std::pair<int,int>> visited;
 					//cout << "Factor " << fac << " from " << reconstructedStates[0][fac] << " to " << reconstructedStates.back()[fac] << endl;
 					bool reconstruction_successful = bdd_state_reconstruction_dfs(fac,reconstructedStates,0,selectedLabels,visited);
+					if (!reconstruction_successful) cout << "Reconstruction failed on factor " << fac << "." << endl;
 					assert(reconstruction_successful);
 				}
 				// add the reconstructed states to the list of states
