@@ -335,7 +335,10 @@ void SATSearch::initialize() {
 							}
 						
 						} else {
+							BDD old = transition_BDDs_per_factor[facT];
 							transition_BDDs_per_factor[facT] *= relevantLabelsForTarget;
+							if (old != transition_BDDs_per_factor[facT])
+								anyUpdate = true;
 						}
 					}
 				}
@@ -382,14 +385,14 @@ vector<vector<int>> SATSearch::generateStateVars(void* solver, sat_capsule & cap
 	return stateVars;
 }
 
-vector<int> SATSearch::generateLabelVars(void* solver, sat_capsule & capsule/* , int timestep */){
+vector<int> SATSearch::generateLabelVars(__attribute__((unused)) void* solver, sat_capsule & capsule/* , int timestep */){
 	vector<int> labelVars(fts->get_num_labels());
 	for(int label = 0 ; label < fts->get_num_labels() ; label++){
 		int labelVar = capsule.new_variable();
 		labelVars[label] = labelVar;
 	}
 	//atMostOne(solver, capsule, labelVars);
-	atLeastOne(solver, capsule, labelVars);
+	//atLeastOne(solver, capsule, labelVars);
 	/* for(auto v : np_labels){
 		for(size_t l = 1 ; l < v.size() ; l++){
 			impliesNot(solver, labelVars[v[0]], labelVars[v[l]]);
@@ -606,6 +609,10 @@ SearchStatus SATSearch::step() {
 								impliesNot(solver,previousStateVars[fac][s], nextStateVars[fac][ss]);
 								continue;
 							}
+							if (transition_BDDs_per_factor_per_state_pair[fac][s][ss] == _manager->bddOne()){
+								// Nothing to encode, this transition is always allowed
+								continue;
+							}
 							
 
 							tseitsinVars.clear();
@@ -703,6 +710,8 @@ SearchStatus SATSearch::step() {
 	////implies(solver,2,3);	
 
 
+
+	cout << "Formula has " << get_number_of_clauses() << " clauses and " << capsule.number_of_variables << " variables." << endl;
 	int solverState = ipasir_solve(solver);
 	cout << "SAT solver state: " << solverState << endl;
 
