@@ -330,6 +330,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description=DESCRIPTION, epilog=EPILOG,
         formatter_class=RawHelpFormatter,
+        allow_abbrev=False,
         add_help=False)
 
     help_options = parser.add_argument_group(
