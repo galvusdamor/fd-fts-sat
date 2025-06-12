@@ -429,6 +429,10 @@ map<int, map<int, vector<pair<Transition, int>>>> SATSearch::generateTransitionV
 			auto transitions = fts->get_ts(ts).get_transitions_with_label(labelOrder[label]);
 			vector<int> SATVars;
 			for(size_t t = 0 ; t < transitions.size() ; t++){
+				if(transitions[t].src == transitions[t].target){
+					transitionVars[ts][label].push_back({transitions[t],-1});
+					continue;
+				}
 				int transitionVar = capsule.new_variable();
 				SATVars.push_back(transitionVar);
 				transitionVars[ts][label].push_back({transitions[t],transitionVar});
@@ -444,14 +448,20 @@ map<int, map<int, vector<int>>> SATSearch::generateAuxVars(sat_capsule &capsule)
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
 			for(int label = 0 ; label < fts->get_num_labels()-1 ; label++){
-				if(fts->get_ts(ts).is_selfloop_everywhere((task_representation::LabelID)label)){
+				bool is_always_self_loop = true;
+				auto transitions = fts->get_ts(ts).get_transitions_with_label(labelOrder[label]);
+				for(size_t t = 0 ; t < transitions.size() ; t++){
+					if(transitions[t].src != transitions[t].target){
+						is_always_self_loop = false;
+					}
+				}
+				if(is_always_self_loop /* || fts->get_ts(ts).is_selfloop_everywhere((task_representation::LabelID)label) */){
 					auxVars[ts][states].push_back(-1);
 					continue;
 				}
 				int auxVar = capsule.new_variable();
 				auxVars[ts][states].push_back(auxVar);
 			}
-			cout << auxVars[ts][states].size() << endl;
 		}
 	}
 	return auxVars;
@@ -556,6 +566,8 @@ SearchStatus SATSearch::step() {
 		if (!do_BDD_encoding){
 			for(int ts = 0 ; ts < fts->get_size() ; ts++){
 				for(int label = 0 ; label < fts->get_num_labels() ; label++){
+					vector<int> otherTransitionsInLabelWithSelfLoop;
+					vector<int> precsForSelfLoops;
 					vector<int> labelTransitionSATVars;
 					for(pair<Transition, int> transition : transitionVars[ts][label]){
 						labelTransitionSATVars.push_back(transition.second);
@@ -568,7 +580,15 @@ SearchStatus SATSearch::step() {
 								}
 							}
 						}
-						impliesOr(solver, transition.second, impliesOrPrec);
+						if(transition.second != -1){
+							impliesOr(solver, transition.second, impliesOrPrec);
+							otherTransitionsInLabelWithSelfLoop.push_back(transition.second);
+						}else{
+							for(size_t v = 0 ; v < impliesOrPrec.size() ; v++){
+								precsForSelfLoops.push_back(impliesOrPrec[v]);
+							}
+							continue;
+						}
 
 						vector<int> impliesOrEff;
 						impliesOrEff.push_back(nextStateVars[ts][transition.first.target]);
@@ -579,7 +599,9 @@ SearchStatus SATSearch::step() {
 								}
 							}
 						}
-						impliesOr(solver, transition.second, impliesOrEff);
+						if(transition.second != -1){
+							impliesOr(solver, transition.second, impliesOrEff);
+						}
 					}
 					if(labelTransitionSATVars.size() > 0){
 						impliesOr(solver, labelVars[label], labelTransitionSATVars);
@@ -587,7 +609,14 @@ SearchStatus SATSearch::step() {
 							implies(solver, labelTransitionSATVars[ltsv], labelVars[label]);
 						}
 					}
-
+					if(precsForSelfLoops.size() > 0 && otherTransitionsInLabelWithSelfLoop.size() == 0){
+						impliesOr(solver, labelVars[label], precsForSelfLoops);
+					}else if(precsForSelfLoops.size() > 0 && otherTransitionsInLabelWithSelfLoop.size() > 0){
+						for(size_t w = 0 ; w < otherTransitionsInLabelWithSelfLoop.size() ; w++){
+							precsForSelfLoops.push_back(otherTransitionsInLabelWithSelfLoop[w]);
+						}
+						impliesOr(solver, labelVars[label], precsForSelfLoops);
+					}
 				}
 
 				for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
@@ -599,11 +628,13 @@ SearchStatus SATSearch::step() {
 						}
 					}
 					andImplies(solver, negatedRelevantLabels, nextStateVars[ts][states]);
+
 					for(pair<Transition, int> transition : transitionVars[ts][relevantLabels[ts][0]]){
 						if(transition.first.target != states && transition.first.src != transition.first.target){
 							implies(solver, transition.second, auxVars[ts][states][relevantLabels[ts][0]]);
 						}
 					}
+
 					for(size_t relevantLabel = 1 ; relevantLabel < relevantLabels[ts].size()-1 ; relevantLabel++){
 						vector<int> supportingTransitions;
 						supportingTransitions.push_back(auxVars[ts][states][relevantLabels[ts][relevantLabel]]);
@@ -614,18 +645,37 @@ SearchStatus SATSearch::step() {
 							if(transition.first.target == states && transition.first.src != transition.first.target){
 								supportingTransitions.push_back(transition.second);
 							}
-							if(transition.first.src == states){
+							if(transition.first.src == states && transition.second != -1){
 								impliesNot(solver, auxVars[ts][states][relevantLabels[ts][relevantLabel-1]], transition.second);
 							}
 						}
 						impliesOr(solver, auxVars[ts][states][relevantLabels[ts][relevantLabel-1]], supportingTransitions);
 					}
+
 					for(pair<Transition, int> transition : transitionVars[ts][fts->get_num_labels()]){
-						if(transition.first.src == states){
+						if(transition.first.src == states && transition.second != -1){
 							impliesNot(solver, auxVars[ts][states][fts->get_num_labels()-1], transition.second);
 						}
 					}
 				}
+
+				for(size_t relevantLabel = 0 ; relevantLabel < relevantLabels[ts].size() ; relevantLabel++){
+					vector<int> auxVarsInPrec;
+					vector<int> otherTransitions;
+					for(pair<Transition, int> transition : transitionVars[ts][relevantLabels[ts][relevantLabel]]){
+						if(transition.second == -1){
+							auxVarsInPrec.push_back(auxVars[ts][transition.first.src][relevantLabels[ts][relevantLabel]]);
+						}else{
+							otherTransitions.push_back(transition.second);
+						}
+					}
+					
+					otherTransitions.push_back(-labelVars[relevantLabels[ts][relevantLabel]]);
+					if(auxVarsInPrec.size() > 0){
+						andImpliesOr(solver, auxVarsInPrec, otherTransitions);
+					}
+				}
+
 			}
 		} else {
 			// BDD-based encoding
