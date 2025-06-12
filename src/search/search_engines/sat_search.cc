@@ -173,9 +173,7 @@ void SATSearch::initialize() {
 		if (combineAllBDDsIntoOne) transition_BDDs_per_factor.resize(fts->get_size());
 		else transition_BDDs_per_factor_per_state_pair.resize(fts->get_size());
 		for (int fac = 0; fac < fts->get_size(); fac++){
-			cout << "Precomputation for factor Nr " << fac << endl;
 			const task_representation::TransitionSystem & factor = fts->get_ts(fac);
-			cout << "This factor has " << factor.get_size() << " many states." << endl;
 
 			// we compute a matrix of size |S|^2 that contains all-pair-possible-paths
 			vector<vector<BDD>> allPossiblePaths (factor.get_size());
@@ -193,14 +191,16 @@ void SATSearch::initialize() {
 
 
 			// DP backwards(!) over the relevant labels
+			int num_relevant_labels = 0;
 			for(int l = fts->get_num_labels() -  1; l >= 0; l--){
 				int label = labelOrder[l];
 				task_representation::LabelID labelID (label);
-				cout << "Processing label " << label << "." << endl;
-				if (!factor.is_relevant_label(labelID)){
-					cout << "\tLabel is not relevant for factor. Skipping." << endl;
+				//cout << "Processing label " << label << "." << endl;
+				if (!factor.is_relevant_label(labelID) && factor.is_selfloop_everywhere(labelID)){
+					//cout << "\tLabel is not relevant for factor. Skipping." << endl;
 					continue;
 				}
+				num_relevant_labels++;
 				vector<vector<BDD>> nextPossiblePaths (factor.get_size());
 				for (int s = 0; s < factor.get_size(); s++){
 					nextPossiblePaths[s].resize(factor.get_size());
@@ -222,6 +222,9 @@ void SATSearch::initialize() {
 				}
 				swap(allPossiblePaths,nextPossiblePaths);	
 			}
+			
+			cout << "Precomputation for factor Nr " << fac << " with " << factor.get_size() << " states. " << 
+				num_relevant_labels << " of " << fts->get_num_labels() << " labels relevant." << endl;
 
 			if (combineAllBDDsIntoOne){
 				// compute the union BDD that describes all transitions at the same time.
@@ -240,25 +243,25 @@ void SATSearch::initialize() {
 					}
 				}
 
-				string name = "dots/factor_" + to_string(fac) + ".dot";
-				bdd_to_dot(allTransitionsBDD, name);
+				//string name = "dots/factor_" + to_string(fac) + ".dot";
+				//bdd_to_dot(allTransitionsBDD, name);
 
 				transition_BDDs_per_factor[fac] = allTransitionsBDD;
 			} else {
 				transition_BDDs_per_factor_per_state_pair[fac] = allPossiblePaths;	
+				// printing
+				//for (int s = 0; s < factor.get_size(); s++){
+				//	for (int ss = 0; ss < factor.get_size(); ss++){
+				//		string name = "dots/factor_" + to_string(fac) + "_" + to_string(s) + "_to_" + to_string(ss) + ".dot";
+				//		bdd_to_dot(allPossiblePaths[s][ss], name);
+				//	}
+				//}
 			}
 
 			//int overallVar = bdd_to_cnf(allTransitionsBDD.getNode());
 			//cout << "Overall :" << "T" << overallVar << endl;
 			//exit(0);
 
-			// printing
-			//for (int s = 0; s < factor.get_size(); s++){
-			//	for (int ss = 0; ss < factor.get_size(); ss++){
-			//		string name = "dots/factor_" + to_string(fac) + "_" + to_string(s) + "_to_" + to_string(ss) + ".dot";
-			//		bdd_to_dot(allPossiblePaths[s][ss], name);
-			//	}
-			//}
 
 		}
 		
@@ -269,7 +272,10 @@ void SATSearch::initialize() {
 		if (bddCutting){
 			// fixpoint algorithm. Will break from the inside if no BDD changes.
 			int round = 0;
-			while (true) {	
+			bool anyUpdate = true;
+			while (anyUpdate) {	
+				cout << "Propagation Round " << round;
+				anyUpdate = false;
 				round++;
 				// 1. We need to prepare the data structures for cutting
 				// we need a BDD for every factor that describes any legal transition in that factor
@@ -289,7 +295,6 @@ void SATSearch::initialize() {
 					}
 				}
 	
-				bool anyUpdate = false;
 				// 2. Go over all pairs of factors	
 				for (int facS = 0; facS < fts->get_size(); facS++){
 					const task_representation::TransitionSystem & factorSource = fts->get_ts(facS);
@@ -300,35 +305,39 @@ void SATSearch::initialize() {
 					
 						// cube for the variables that need to be abstracted away
 						BDD cube = _manager->bddOne();
-						cout << "Propagate from " << facS << " to " << facT << " Round: " << round << endl;
+						//cout << "Propagate from " << facS << " to " << facT << " Round: " << round << endl;
+						bool foundRemainingVariable = false;
 						for(int label = 0; label < fts->get_num_labels(); label++){
 							task_representation::LabelID labelID (label);
 							// will not be mentioned in this BDD anyway
-							if (!factorSource.is_relevant_label(labelID)) continue;
+							if (!factorSource.is_relevant_label(labelID) && factorSource.is_selfloop_everywhere(labelID)) continue;
 							// don't project away labels that *are* relevant
-							if (factorTarget.is_relevant_label(labelID)) continue;
+							if (factorTarget.is_relevant_label(labelID) || !factorTarget.is_selfloop_everywhere(labelID)) {
+								foundRemainingVariable = true;
+								continue;
+							}
 					
 							//cout << "label " << label << endl;
 							cube *= _manager->bddVar(num_factor_vars + label);
 						}
 
 						// no shared variables
-						if (cube == _manager->bddOne()) continue;
+						if (!foundRemainingVariable) continue;
 
 						//string name = "dots/bef"+to_string(facS) + "-" + to_string(facT)+".dot";
 						//bdd_to_dot(any_transition_per_factor[facS], name);
-						BDD relevantLabelsForTarget = any_transition_per_factor[facS].ExistAbstract(cube);
+						BDD constraintsOverLabelsRelevantForTarget = any_transition_per_factor[facS].ExistAbstract(cube);
 						//name = "dots/aft"+to_string(facS) + "-" + to_string(facT)+".dot";
-						//bdd_to_dot(relevantLabelsForTarget, name);
+						//bdd_to_dot(constraintsOverLabelsRelevantForTarget, name);
 
 						// if the relevant BDD is 1, then there is nothing to propagate.
-						if (relevantLabelsForTarget == _manager->bddOne()) continue;
+						if (constraintsOverLabelsRelevantForTarget == _manager->bddOne()) continue;
 						// actually propagate
 						if (!combineAllBDDsIntoOne){
 							for (int s = 0; s < factorTarget.get_size(); s++){
 								for (int ss = 0; ss < factorTarget.get_size(); ss++){
 									BDD old = transition_BDDs_per_factor_per_state_pair[facT][s][ss];
-									transition_BDDs_per_factor_per_state_pair[facT][s][ss] *= relevantLabelsForTarget;
+									transition_BDDs_per_factor_per_state_pair[facT][s][ss] *= constraintsOverLabelsRelevantForTarget;
 									if (old != transition_BDDs_per_factor_per_state_pair[facT][s][ss])
 										anyUpdate = true;
 								}
@@ -336,14 +345,13 @@ void SATSearch::initialize() {
 						
 						} else {
 							BDD old = transition_BDDs_per_factor[facT];
-							transition_BDDs_per_factor[facT] *= relevantLabelsForTarget;
+							transition_BDDs_per_factor[facT] *= constraintsOverLabelsRelevantForTarget;
 							if (old != transition_BDDs_per_factor[facT])
 								anyUpdate = true;
 						}
 					}
 				}
-
-				if (!anyUpdate) break; // did not change any BDD
+				cout << " completed with " << (anyUpdate?"some reduction. Continuing": "no reduction. Reached fixpoint.") << endl;
 			}
 			//exit(0);
 		}
@@ -392,7 +400,7 @@ vector<int> SATSearch::generateLabelVars(__attribute__((unused)) void* solver, s
 		labelVars[label] = labelVar;
 	}
 	//atMostOne(solver, capsule, labelVars);
-	//atLeastOne(solver, capsule, labelVars);
+	atLeastOne(solver, capsule, labelVars);
 	/* for(auto v : np_labels){
 		for(size_t l = 1 ; l < v.size() ; l++){
 			impliesNot(solver, labelVars[v[0]], labelVars[v[l]]);
@@ -687,6 +695,7 @@ SearchStatus SATSearch::step() {
 		}
 		atLeastOne(solver, capsule, goalStateVars);
 
+		//cout << endl << endl << "Factor " << ts << endl;
 		//fts->get_ts(ts).dump_dot_graph();
 	}
 
@@ -756,16 +765,35 @@ SearchStatus SATSearch::step() {
 				}
 			}
 			labelsPerTimestep.push_back(selectedLabels);
-			 stateReconstructor.clear();
-			for(size_t ts = 0 ; ts < allTimesStateVars[timestep].size() ; ts++){
-				for(size_t state = 0 ; state < allTimesStateVars[timestep][ts].size() ; state++){
-					if(ipasir_val(solver, allTimesStateVars[timestep][ts][state]) > 0){
-						stateReconstructor.push_back(state);
-						break;
+			// For the BDD-based encoding, we need to reconstruct the plan via search (labels are non-deterministic)
+			// What we have: the labels to be applied in which order (in selectedLabels) and the previous and next overall state
+			// We know how many intermediate state there are *and*
+			// that the determination of the intermediate states is independent between all factors.
+			// So we can reconstruct the visited states per factor
+			if (do_BDD_encoding && selectedLabels.size()){ // if we don't execute any label, we don't have to extract a new state.
+				
+				vector<vector<int>> reconstructedStates(selectedLabels.size() + 1);
+				for (size_t i = 1; i < selectedLabels.size(); i++) reconstructedStates[i].resize(fts->get_size());
+				reconstructedStates[0] = statesPerTimestep.back();
+				
+				for(size_t ts = 0 ; ts < allTimesStateVars[timestep].size() ; ts++){
+					for(size_t state = 0 ; state < allTimesStateVars[timestep][ts].size() ; state++){
+						if(ipasir_val(solver, allTimesStateVars[timestep][ts][state]) > 0){
+							reconstructedStates[selectedLabels.size()].push_back(state);
+							break;
+						}
 					}
 				}
+				for (int fac = 0; fac < fts->get_size(); fac++){
+					std::set<std::pair<int,int>> visited;
+					//cout << "Factor " << fac << " from " << reconstructedStates[0][fac] << " to " << reconstructedStates.back()[fac] << endl;
+					bool reconstruction_successful = bdd_state_reconstruction_dfs(fac,reconstructedStates,0,selectedLabels,visited);
+					assert(reconstruction_successful);
+				}
+				// add the reconstructed states to the list of states
+				for (size_t i = 1; i <= selectedLabels.size(); i++)
+					statesPerTimestep.push_back(reconstructedStates[i]);
 			}
-			statesPerTimestep.push_back(stateReconstructor);
 			
 		}
 
@@ -809,6 +837,33 @@ SearchStatus SATSearch::step() {
 		currentLength++; // TODO better strategies for satisficing
 		return IN_PROGRESS;
 	}
+}
+	
+
+bool SATSearch::bdd_state_reconstruction_dfs(int fac, std::vector<std::vector<int>> & reconstructedStates, int depth, std::vector<int> & plan, std::set<std::pair<int,int>> & visited){
+	const task_representation::TransitionSystem & factor = fts->get_ts(fac);
+
+	int currentState = reconstructedStates[depth][fac];
+
+	// if already visited it will be unsuccessful.
+	if (visited.count({currentState, depth})) return false;
+	visited.insert({currentState, depth});
+
+	// try to walk one step further
+	for (const auto & transition : factor.get_transitions_with_label(plan[depth])){
+		if (transition.src != currentState) continue;
+		if (depth == int(plan.size()) - 1){
+			// this is the last label to we need to have reached the goal state
+			if (transition.target == reconstructedStates[depth+1][fac]){
+				return true;
+			} else continue; // cannot use this transition
+		}
+
+		reconstructedStates[depth + 1][fac] = transition.target;
+		if (bdd_state_reconstruction_dfs(fac,reconstructedStates,depth+1,plan,visited))
+			return true;
+	}
+	return false;	
 }
 
 
