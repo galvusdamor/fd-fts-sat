@@ -20,6 +20,7 @@ private:
 	std::shared_ptr<task_representation::FTSTask> fts;
     std::vector<std::vector<int>> np_labels;
     std::vector<int> labelOrder;
+    std::vector<std::vector<int>> relevantLabels;
 
 	int currentLength;
 
