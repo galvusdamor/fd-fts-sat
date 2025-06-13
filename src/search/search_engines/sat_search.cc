@@ -407,7 +407,9 @@ vector<int> SATSearch::generateLabelVars(__attribute__((unused)) void* solver, s
 	for(int label = 0 ; label < fts->get_num_labels() ; label++){
 		int labelVar = capsule.new_variable();
 		labelVars[label] = labelVar;
+		cout << labelVar << endl;
 	}
+	cout << endl;
 	//atMostOne(solver, capsule, labelVars);
 	atLeastOne(solver, capsule, labelVars);
 	/* for(auto v : np_labels){
@@ -434,6 +436,7 @@ map<int, map<int, vector<pair<Transition, int>>>> SATSearch::generateTransitionV
 					continue;
 				}
 				int transitionVar = capsule.new_variable();
+				cout << "TS : " << ts << " ; Label : " << label << " ; Transition Var : " << transitionVar <<endl;
 				SATVars.push_back(transitionVar);
 				transitionVars[ts][label].push_back({transitions[t],transitionVar});
 			}
@@ -570,7 +573,9 @@ SearchStatus SATSearch::step() {
 					vector<int> precsForSelfLoops;
 					vector<int> labelTransitionSATVars;
 					for(pair<Transition, int> transition : transitionVars[ts][label]){
-						labelTransitionSATVars.push_back(transition.second);
+						if(transition.second != -1){
+							labelTransitionSATVars.push_back(transition.second);
+						}
 						vector<int> impliesOrPrec;
 						impliesOrPrec.push_back(previousStateVars[ts][transition.first.src]);
 						for(int label_prec = 0 ; label_prec < label ; label_prec++){
@@ -630,7 +635,11 @@ SearchStatus SATSearch::step() {
 					andImplies(solver, negatedRelevantLabels, nextStateVars[ts][states]);
 
 					for(pair<Transition, int> transition : transitionVars[ts][relevantLabels[ts][0]]){
-						if(transition.first.target != states && transition.first.src != transition.first.target){
+						if(transition.first.target != states && transition.first.src != transition.first.target && relevantLabels[ts][0] < fts->get_num_labels()-1){
+							/* cout << auxVars[ts][states][relevantLabels[ts][0]] << endl;
+							cout << ts << endl;
+							cout << states << endl;
+							cout << relevantLabels[ts][0] << endl; */
 							implies(solver, transition.second, auxVars[ts][states][relevantLabels[ts][0]]);
 						}
 					}
@@ -652,19 +661,19 @@ SearchStatus SATSearch::step() {
 						impliesOr(solver, auxVars[ts][states][relevantLabels[ts][relevantLabel-1]], supportingTransitions);
 					}
 
-					for(pair<Transition, int> transition : transitionVars[ts][fts->get_num_labels()]){
+					for(pair<Transition, int> transition : transitionVars[ts][relevantLabels[ts].back()]){
 						if(transition.first.src == states && transition.second != -1){
-							impliesNot(solver, auxVars[ts][states][fts->get_num_labels()-1], transition.second);
+							impliesNot(solver, auxVars[ts][states][relevantLabels[ts][relevantLabels[ts].size()-2]], transition.second);
 						}
 					}
 				}
 
-				for(size_t relevantLabel = 0 ; relevantLabel < relevantLabels[ts].size() ; relevantLabel++){
+				for(size_t relevantLabel = 1 ; relevantLabel < relevantLabels[ts].size() ; relevantLabel++){
 					vector<int> auxVarsInPrec;
 					vector<int> otherTransitions;
 					for(pair<Transition, int> transition : transitionVars[ts][relevantLabels[ts][relevantLabel]]){
 						if(transition.second == -1){
-							auxVarsInPrec.push_back(auxVars[ts][transition.first.src][relevantLabels[ts][relevantLabel]]);
+							auxVarsInPrec.push_back(auxVars[ts][transition.first.src][relevantLabels[ts][relevantLabel-1]]);
 						}else{
 							otherTransitions.push_back(transition.second);
 						}
@@ -773,7 +782,7 @@ SearchStatus SATSearch::step() {
 		atLeastOne(solver, capsule, goalStateVars);
 
 		//cout << endl << endl << "Factor " << ts << endl;
-		//fts->get_ts(ts).dump_dot_graph();
+		fts->get_ts(ts).dump_dot_graph();
 	}
 
 
