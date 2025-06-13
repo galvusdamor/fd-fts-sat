@@ -11,6 +11,7 @@ using namespace task_representation;
 namespace sat_search {
 SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	planLength(opts.get<int>("plan_length")),
+	bddEncodingSizeLimit(opts.get<int>("bdd_size_limit")),
 	implicationalTseitsin(opts.get<bool>("impltseitsin")),
 	combineAllBDDsIntoOne(opts.get<bool>("combinebdds")),
 	bddCutting(opts.get<bool>("cutbdds")),
@@ -18,7 +19,9 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 
 	switch (opts.get<int>("encoding")){
 		case 0: do_BDD_encoding = false; break;
-		case 1: do_BDD_encoding = true; break;
+		case 1: do_BDD_encoding = false; break;
+		case 2: do_BDD_encoding = true; considerOnlyOneStepTransitions = false; break;
+		case 3: do_BDD_encoding = true; considerOnlyOneStepTransitions = true; break;
 	}
 }
 
@@ -171,60 +174,109 @@ void SATSearch::initialize() {
     	_manager->setNodesExceededHandler(exceptionError);
 
 		if (combineAllBDDsIntoOne) transition_BDDs_per_factor.resize(fts->get_size());
-		else transition_BDDs_per_factor_per_state_pair.resize(fts->get_size());
+		else {
+			if (!considerOnlyOneStepTransitions)
+				transition_BDDs_per_factor_per_state_pair.resize(fts->get_size());
+			if (considerOnlyOneStepTransitions || bddEncodingSizeLimit != -1)
+				one_step_transition_BDDs_per_factor_per_state_pair.resize(fts->get_size());
+		}
 		for (int fac = 0; fac < fts->get_size(); fac++){
 			const task_representation::TransitionSystem & factor = fts->get_ts(fac);
 
 			// we compute a matrix of size |S|^2 that contains all-pair-possible-paths
 			vector<vector<BDD>> allPossiblePaths (factor.get_size());
-			for (int s = 0; s < factor.get_size(); s++){
-				allPossiblePaths[s].resize(factor.get_size());
-				for (int ss = 0; ss < factor.get_size(); ss++){
-					if (s == ss){
-						allPossiblePaths[s][ss] = _manager->bddOne();
-					} else {
-						allPossiblePaths[s][ss] = _manager->bddZero(); 
-					}
-				}
-			}
-
-
-
-			// DP backwards(!) over the relevant labels
 			int num_relevant_labels = 0;
-			for(int l = fts->get_num_labels() -  1; l >= 0; l--){
-				int label = labelOrder[l];
-				task_representation::LabelID labelID (label);
-				//cout << "Processing label " << label << "." << endl;
-				if (!factor.is_relevant_label(labelID) && factor.is_selfloop_everywhere(labelID)){
-					//cout << "\tLabel is not relevant for factor. Skipping." << endl;
-					continue;
-				}
-				num_relevant_labels++;
-				vector<vector<BDD>> nextPossiblePaths (factor.get_size());
+
+			// pre-compute the full reachability 
+			if (!considerOnlyOneStepTransitions){
 				for (int s = 0; s < factor.get_size(); s++){
-					nextPossiblePaths[s].resize(factor.get_size());
+					allPossiblePaths[s].resize(factor.get_size());
 					for (int ss = 0; ss < factor.get_size(); ss++){
-						// situation: I am in state s and need to go to state ss.
-						// The first label I can use for this transition is "label" (current variable).
-						// I have two options: either use it and go to one of its successors, or stay here.
-
-						// base case: don't use the label
-						nextPossiblePaths[s][ss] = ~_manager->bddVar(label + num_factor_vars) * allPossiblePaths[s][ss];
-
-						// inductive case: use the label and go one step
-						for (const auto & transition : factor.get_transitions_with_label(label)){
-							if (transition.src != s) continue;
-							nextPossiblePaths[s][ss] +=
-									_manager->bddVar(label + num_factor_vars) * allPossiblePaths[transition.target][ss];
+						if (s == ss){
+							allPossiblePaths[s][ss] = _manager->bddOne();
+						} else {
+							allPossiblePaths[s][ss] = _manager->bddZero(); 
 						}
 					}
 				}
-				swap(allPossiblePaths,nextPossiblePaths);	
+
+				// DP backwards(!) over the relevant labels
+				for(int l = fts->get_num_labels() -  1; l >= 0; l--){
+					int label = labelOrder[l];
+					task_representation::LabelID labelID (label);
+					//cout << "Processing label " << label << "." << endl;
+					if (!factor.is_relevant_label(labelID) && factor.is_selfloop_everywhere(labelID)){
+						//cout << "\tLabel is not relevant for factor. Skipping." << endl;
+						continue;
+					}
+					num_relevant_labels++;
+					vector<vector<BDD>> nextPossiblePaths (factor.get_size());
+					for (int s = 0; s < factor.get_size(); s++){
+						nextPossiblePaths[s].resize(factor.get_size());
+						for (int ss = 0; ss < factor.get_size(); ss++){
+							// situation: I am in state s and need to go to state ss.
+							// The first label I can use for this transition is "label" (current variable).
+							// I have two options: either use it and go to one of its successors, or stay here.
+
+							// base case: don't use the label
+							nextPossiblePaths[s][ss] = ~_manager->bddVar(label + num_factor_vars) * allPossiblePaths[s][ss];
+
+							// inductive case: use the label and go one step
+							for (const auto & transition : factor.get_transitions_with_label(label)){
+								if (transition.src != s) continue;
+								nextPossiblePaths[s][ss] +=
+										_manager->bddVar(label + num_factor_vars) * allPossiblePaths[transition.target][ss];
+							}
+						}
+					}
+					swap(allPossiblePaths,nextPossiblePaths);	
+				}
 			}
-			
-			cout << "Precomputation for factor Nr " << fac << " with " << factor.get_size() << " states. " << 
-				num_relevant_labels << " of " << fts->get_num_labels() << " labels relevant." << endl;
+
+			// compute the BDDs expressing single transitions + possible loops before and after
+			if (considerOnlyOneStepTransitions || bddEncodingSizeLimit != -1){
+				one_step_transition_BDDs_per_factor_per_state_pair[fac].resize(factor.get_size());
+				for (int s = 0; s < factor.get_size(); s++){
+					one_step_transition_BDDs_per_factor_per_state_pair[fac][s].resize(factor.get_size());
+					for (int ss = 0; ss < factor.get_size(); ss++){
+						one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss] = _manager->bddZero();
+					}
+				}
+				for(int l = 0; l < fts->get_num_labels(); l++){
+					for (const auto & transition : factor.get_transitions_with_label(l)){
+						BDD thisTrans = _manager->bddOne();
+						bool beforeLabelL = true;
+						for(int ll = 0; ll < fts->get_num_labels(); ll++){
+							int label = labelOrder[ll];
+							task_representation::LabelID labelID (label);
+							if (l == label){
+								beforeLabelL = false;
+								thisTrans *= _manager->bddVar(label + num_factor_vars);
+							} else {
+								int loopState;
+								if (beforeLabelL) loopState = transition.src; else loopState = transition.target;
+								
+								bool foundLoop = false;
+								for (const auto & transition : factor.get_transitions_with_label(label)){
+									if (transition.src == loopState && transition.target == loopState){
+										foundLoop = true;
+										break;
+									}
+								}
+								if (!foundLoop)
+									thisTrans *= ~_manager->bddVar(label + num_factor_vars);
+							}
+						}
+						one_step_transition_BDDs_per_factor_per_state_pair[fac][transition.src][transition.target] += thisTrans;
+					}
+				}
+			}
+
+
+
+			cout << "Precomputation for factor Nr " << fac << " with " << factor.get_size() << " states. ";
+			if (num_relevant_labels) cout << num_relevant_labels << " of " << fts->get_num_labels() << " labels relevant.";
+			cout << endl;
 
 			if (combineAllBDDsIntoOne){
 				// compute the union BDD that describes all transitions at the same time.
@@ -237,7 +289,10 @@ void SATSearch::initialize() {
 						for (int notss = 0; notss < factor.get_size(); notss++)
 							if (ss != notss) thisFactorTransitionBDD *= ~_manager->bddVar(num_factor_vars/2 + notss);
 
-						thisFactorTransitionBDD *= allPossiblePaths[s][ss];
+						if (considerOnlyOneStepTransitions)
+							thisFactorTransitionBDD *= allPossiblePaths[s][ss];
+						else
+							thisFactorTransitionBDD *= one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss];
 
 						allTransitionsBDD += thisFactorTransitionBDD;
 					}
@@ -248,22 +303,63 @@ void SATSearch::initialize() {
 
 				transition_BDDs_per_factor[fac] = allTransitionsBDD;
 			} else {
-				transition_BDDs_per_factor_per_state_pair[fac] = allPossiblePaths;	
+				if (!considerOnlyOneStepTransitions)
+					transition_BDDs_per_factor_per_state_pair[fac] = allPossiblePaths;	
+			
+				int summedSizeBefore = 0, summedSizeAfter = 0, possibleSingleTrans = 0, allTrans = 0;
+
+				
+				map<int,vector<pair<int,int>>> bdd_sizes;
+
 				// printing
-				//for (int s = 0; s < factor.get_size(); s++){
-				//	for (int ss = 0; ss < factor.get_size(); ss++){
-				//		string name = "dots/factor_" + to_string(fac) + "_" + to_string(s) + "_to_" + to_string(ss) + ".dot";
-				//		bdd_to_dot(allPossiblePaths[s][ss], name);
-				//	}
-				//}
+				for (int s = 0; s < factor.get_size(); s++){
+					for (int ss = 0; ss < factor.get_size(); ss++){
+						if (!considerOnlyOneStepTransitions){
+							if (transition_BDDs_per_factor_per_state_pair[fac][s][ss] != _manager->bddZero()){
+								allTrans++;
+
+								int thisBDDsize = transition_BDDs_per_factor_per_state_pair[fac][s][ss].nodeCount();
+								summedSizeBefore += thisBDDsize;
+								bdd_sizes[thisBDDsize].push_back({s,ss});
+							}
+						}
+					
+						if (considerOnlyOneStepTransitions || bddEncodingSizeLimit != -1)
+							if (one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss] != _manager->bddZero())
+								possibleSingleTrans++;
+						
+						
+						//string name = "dots/factor_" + to_string(fac) + "_" + to_string(s) + "_to_" + to_string(ss) + ".dot";
+						//cout << "Factor"  << fac << " " << s << " " << ss << " state: " <<  allPossiblePaths[s][ss].nodeCount() << endl;
+						//bdd_to_dot(allPossiblePaths[s][ss], name);
+					}
+				}
+
+				if (bddEncodingSizeLimit != -1){
+					int size_up_to_now = 0;
+					for (const auto & thisSizeBDDs : bdd_sizes){
+						for (const pair<int,int> & s_ss : thisSizeBDDs.second){
+							// if overall BDD-size would be larger than the limit,
+							// replace it by the one that only allows for a single action in this factor
+							const int & s = s_ss.first;
+							const int & ss = s_ss.second;
+							if (size_up_to_now + thisSizeBDDs.first > bddEncodingSizeLimit){
+								transition_BDDs_per_factor_per_state_pair[fac][s][ss] = 
+									one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss];
+							} else 
+								size_up_to_now += thisSizeBDDs.first;
+						
+							summedSizeAfter += transition_BDDs_per_factor_per_state_pair[fac][s][ss].nodeCount();
+						}
+					}
+				}
+				cout << "Factor Overall: before limiting " << summedSizeBefore << " after limiting " << summedSizeAfter  << " all transitions: " << allTrans << " possible 1-step transitions: " << possibleSingleTrans <<  endl;
 			}
 
 			//int overallVar = bdd_to_cnf(allTransitionsBDD.getNode());
 			//cout << "Overall :" << "T" << overallVar << endl;
-			//exit(0);
-
-
 		}
+			//exit(0);
 		
 		BDD stateCube = _manager->bddOne();
 		for (int i = 0; i < num_factor_vars; i++) stateCube *= _manager->bddVar(i);
@@ -286,7 +382,10 @@ void SATSearch::initialize() {
 						any_transition_per_factor[fac] = _manager->bddZero();
 						for (int s = 0; s < factor.get_size(); s++){
 							for (int ss = 0; ss < factor.get_size(); ss++){
-								any_transition_per_factor[fac] += transition_BDDs_per_factor_per_state_pair[fac][s][ss];
+								if (considerOnlyOneStepTransitions)
+									any_transition_per_factor[fac] += one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss];
+								else
+									any_transition_per_factor[fac] += transition_BDDs_per_factor_per_state_pair[fac][s][ss];
 							}
 						}
 					} else {
@@ -336,10 +435,14 @@ void SATSearch::initialize() {
 						if (!combineAllBDDsIntoOne){
 							for (int s = 0; s < factorTarget.get_size(); s++){
 								for (int ss = 0; ss < factorTarget.get_size(); ss++){
-									BDD old = transition_BDDs_per_factor_per_state_pair[facT][s][ss];
-									transition_BDDs_per_factor_per_state_pair[facT][s][ss] *= constraintsOverLabelsRelevantForTarget;
-									if (old != transition_BDDs_per_factor_per_state_pair[facT][s][ss])
-										anyUpdate = true;
+									// reference to access
+									BDD & currentMemory = (considerOnlyOneStepTransitions)?
+									   one_step_transition_BDDs_per_factor_per_state_pair[facT][s][ss]:
+										transition_BDDs_per_factor_per_state_pair[facT][s][ss];
+									// copy to compare
+									BDD old = currentMemory;
+									currentMemory *= constraintsOverLabelsRelevantForTarget;
+									if (old != currentMemory) anyUpdate = true;
 								}
 							}
 						
@@ -602,7 +705,11 @@ SearchStatus SATSearch::step() {
 			}
 		} else {
 			// BDD-based encoding
+			if (!combineAllBDDsIntoOne) tseitsinVars.clear();
 			for(int fac = 0 ; fac < fts->get_size() ; fac++){
+				// if we combine the BDDs, we cannot (fully!) share encoding across factors.
+				// TODO in principle we can but only for the bottom part of the BDDs encoding the labels.
+				if (combineAllBDDsIntoOne) tseitsinVars.clear();
 				if (combineAllBDDsIntoOne){
 					tseitsinVars.clear();
 					int transitionVar = bdd_to_cnf(transition_BDDs_per_factor[fac].getNode(), previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
@@ -612,21 +719,25 @@ SearchStatus SATSearch::step() {
 					const task_representation::TransitionSystem & factor = fts->get_ts(fac);
 					for (int s = 0; s < factor.get_size(); s++){
 						for (int ss = 0; ss < factor.get_size(); ss++){
+							BDD toUse;
+							if (considerOnlyOneStepTransitions)
+								toUse = one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss];
+							else
+								toUse = transition_BDDs_per_factor_per_state_pair[fac][s][ss];
 							// edge case: it can happen that this transition is impossible under the chosen order
-							if (transition_BDDs_per_factor_per_state_pair[fac][s][ss] == _manager->bddZero()){
+							if (toUse == _manager->bddZero()){
 								impliesNot(solver,previousStateVars[fac][s], nextStateVars[fac][ss]);
 								continue;
 							}
-							if (transition_BDDs_per_factor_per_state_pair[fac][s][ss] == _manager->bddOne()){
+							if (toUse == _manager->bddOne()){
 								// Nothing to encode, this transition is always allowed
 								continue;
 							}
 							
 
-							tseitsinVars.clear();
 							// Providing the previous and next state here is useless -- they will not be accessed anyway.
 							// But the function API requires them.
-							int transitionVar = bdd_to_cnf(transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode(), previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
+							int transitionVar = bdd_to_cnf(toUse.getNode(), previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
 
 							andImplies(solver,previousStateVars[fac][s], nextStateVars[fac][ss], transitionVar);
 						}
@@ -637,6 +748,7 @@ SearchStatus SATSearch::step() {
 		}
 		swap(previousStateVars, nextStateVars);
 
+		cout << "Constructed time " << timestep << " of " << currentLength << ". Now " << get_number_of_clauses() << " clauses and " << capsule.number_of_variables << " variables." << endl;
 	}
 
 	// vector<int> labelVars;

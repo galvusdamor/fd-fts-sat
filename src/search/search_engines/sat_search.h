@@ -22,6 +22,8 @@ class SATSearch : public SearchEngine {
 private: 
 	int planLength;
 	bool do_BDD_encoding;
+	bool considerOnlyOneStepTransitions = true;
+	int bddEncodingSizeLimit = -1; // -1 means no limit
 	bool implicationalTseitsin;
 	bool combineAllBDDsIntoOne;
 	bool bddCutting;
@@ -49,6 +51,7 @@ private:
 	// for the combined encoding
 	std::vector<BDD> transition_BDDs_per_factor;
 	std::vector<std::vector<std::vector<BDD>>> transition_BDDs_per_factor_per_state_pair;
+	std::vector<std::vector<std::vector<BDD>>> one_step_transition_BDDs_per_factor_per_state_pair;
 
 	int givevar(int bddvar, std::vector<int> & factorVars, std::vector<int> & labelVars, std::vector<int> & nextFactorVars);
 
