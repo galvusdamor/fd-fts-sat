@@ -30,6 +30,7 @@ private:
 
     std::vector<std::vector<int>> np_labels;
     std::vector<int> labelOrder;
+    std::vector<std::vector<int>> relevantLabels;
 
 
 
