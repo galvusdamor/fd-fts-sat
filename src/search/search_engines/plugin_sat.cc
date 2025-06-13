@@ -17,7 +17,7 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
             "-1");
                 parser.add_option<int>(
             "encoding",
-            "set the encoding. Currently supported are 0: R^2E: 1: BDD",
+            "set the encoding. Currently supported are 0: sequential 1: R^2E: 2: BDD full 3: BDD only one step per factor",
             "0");
                 parser.add_option<bool>(
             "impltseitsin",
@@ -34,6 +34,10 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
                 parser.add_option<int>(
             "length_iteration",
             "run the search for a single plan length only. -1 if length should not be fixed. This options run's Rintanen's algorithm C in the round specified by length_iteration",
+            "-1");
+                parser.add_option<int>(
+            "bdd_size_limit",
+            "limit on individual BDD sizes for the non-combined encoding",
             "-1");
                 parser.add_option<int>(
             "start_length",
