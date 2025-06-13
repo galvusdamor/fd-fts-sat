@@ -119,7 +119,7 @@ def build(config_name, cmake_parameters, make_parameters):
 def main():
     config_names = set()
     make_parameters = []
-    configure_parameters = []
+    configure_parameters = ["-DFORCE_DYNAMIC_BUILD=ON"]
     for arg in sys.argv[1:]:
         if arg == "--help" or arg == "-h":
             print_usage()
