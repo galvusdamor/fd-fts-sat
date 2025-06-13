@@ -21,14 +21,15 @@ namespace sat_search{
 class SATSearch : public SearchEngine {
 private: 
 	int planLength;
-	bool do_BDD_encoding;
+	bool do_BDD_encoding = false;
+	bool do_R2_encoding = true;
+	bool no_selfloop_SATvars = false;
 	bool implicationalTseitsin;
 	bool combineAllBDDsIntoOne;
 	bool bddCutting;
 	
 	std::shared_ptr<task_representation::FTSTask> fts;
 
-    std::vector<std::vector<int>> np_labels;
     std::vector<int> labelOrder;
     std::vector<std::vector<int>> relevantLabels;
 
@@ -62,6 +63,7 @@ private:
 
 protected:
     virtual void initialize() override;
+	virtual bool isIrrelevantLabel(int ts, int label);
     virtual SearchStatus step() override;
     virtual std::vector<std::vector<int>> generateStateVars(void* solver, sat_capsule & capsule/* , int timestep */);
     virtual std::map<int, std::map<int, std::vector<std::pair<task_representation::Transition, int>>>> generateTransitionVars(void* solver, sat_capsule &capsule);
