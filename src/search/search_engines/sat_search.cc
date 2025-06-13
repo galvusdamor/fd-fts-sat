@@ -510,9 +510,9 @@ vector<int> SATSearch::generateLabelVars(__attribute__((unused)) void* solver, s
 	for(int label = 0 ; label < fts->get_num_labels() ; label++){
 		int labelVar = capsule.new_variable();
 		labelVars[label] = labelVar;
-		cout << labelVar << endl;
+		//cout << labelVar << endl;
 	}
-	cout << endl;
+	//cout << endl;
 	//atMostOne(solver, capsule, labelVars);
 	atLeastOne(solver, capsule, labelVars);
 	/* for(auto v : np_labels){
@@ -539,7 +539,7 @@ map<int, map<int, vector<pair<Transition, int>>>> SATSearch::generateTransitionV
 					continue;
 				}
 				int transitionVar = capsule.new_variable();
-				cout << "TS : " << ts << " ; Label : " << label << " ; Transition Var : " << transitionVar <<endl;
+				//cout << "TS : " << ts << " ; Label : " << label << " ; Transition Var : " << transitionVar <<endl;
 				SATVars.push_back(transitionVar);
 				transitionVars[ts][label].push_back({transitions[t],transitionVar});
 			}
@@ -665,11 +665,12 @@ SearchStatus SATSearch::step() {
 		allTimesLabelVars.push_back(labelVars);
 		nextStateVars = generateStateVars(solver, capsule/* , timestep */);
 		allTimesStateVars.push_back(nextStateVars);
-		transitionVars = generateTransitionVars(solver, capsule/* , timestep */);
-		allTimesTransitionVars.push_back(transitionVars);
-		auxVars = generateAuxVars(capsule);
-
+		
 		if (!do_BDD_encoding){
+			transitionVars = generateTransitionVars(solver, capsule/* , timestep */);
+			allTimesTransitionVars.push_back(transitionVars);
+			auxVars = generateAuxVars(capsule);
+
 			for(int ts = 0 ; ts < fts->get_size() ; ts++){
 				for(int label = 0 ; label < fts->get_num_labels() ; label++){
 					vector<int> otherTransitionsInLabelWithSelfLoop;
@@ -894,7 +895,7 @@ SearchStatus SATSearch::step() {
 		atLeastOne(solver, capsule, goalStateVars);
 
 		//cout << endl << endl << "Factor " << ts << endl;
-		fts->get_ts(ts).dump_dot_graph();
+		//fts->get_ts(ts).dump_dot_graph();
 	}
 
 
@@ -937,7 +938,8 @@ SearchStatus SATSearch::step() {
 			}
 		}
 		statesPerTimestep.push_back(stateReconstructor);
-		
+	
+		set<int> timesteps_with_labels;	
 
 		for(int timestep = 1 ; timestep <= currentLength ; timestep++){
 			cout << "Time " << timestep << endl;
@@ -948,6 +950,7 @@ SearchStatus SATSearch::step() {
 					continue;
 				}else{
 					selectedLabels.push_back(label);
+					timesteps_with_labels.insert(timestep);
 					cout << "Label : " << label << endl;
 					if (!do_BDD_encoding){
 						for(int ts = 0 ; ts < fts->get_size() ; ts++){
@@ -1020,8 +1023,9 @@ SearchStatus SATSearch::step() {
 			}
 		}
 
-		cout << "Total states : " << states.size() << endl;
-		cout << "Total labels : " << labels.size() << endl;
+		cout << "Total states: " << states.size() << endl;
+		cout << "Total labels: " << labels.size() << endl;
+		cout << "Total timesteps with label: " << timesteps_with_labels.size() << endl;
 
 		check_goal_and_set_plan(goalState, states, std::move(labels), fts);
 
