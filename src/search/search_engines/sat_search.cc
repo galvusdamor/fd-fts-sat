@@ -328,10 +328,13 @@ void SATSearch::initialize() {
 							if (one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss] != _manager->bddZero())
 								possibleSingleTrans++;
 						
+						//cout << "Factor"  << fac << " " << s << " " << ss << " state: " <<  allPossiblePaths[s][ss].nodeCount() << endl;
 						
 						//string name = "dots/factor_" + to_string(fac) + "_" + to_string(s) + "_to_" + to_string(ss) + ".dot";
-						//cout << "Factor"  << fac << " " << s << " " << ss << " state: " <<  allPossiblePaths[s][ss].nodeCount() << endl;
 						//bdd_to_dot(allPossiblePaths[s][ss], name);
+						
+						//name = "dots/factor_" + to_string(fac) + "_one_" + to_string(s) + "_to_" + to_string(ss) + ".dot";
+						//bdd_to_dot(one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss], name);
 					}
 				}
 
