@@ -226,6 +226,18 @@ void SATSearch::checkSolution(vector<vector<vector<int>>> &allTimesStateVars, ve
 	cout << "SOLUTION SEEMS TO BE VALID!!! YIIPEEEEEE!!!!" << endl;
 }
 
+
+
+void exitOutOfMemory(size_t) {
+    cerr << "Memory exceeded within BDD operation" << endl;
+    utils::exit_with(utils::ExitCode::OUT_OF_MEMORY);
+}
+
+
+
+
+
+
 void SATSearch::initialize() {
 	cout << "Initialising" << endl;
 	cout << "My FTS task has " << fts->get_size() << " systems and " << fts->get_num_labels() << " labels." << endl;
@@ -256,6 +268,7 @@ void SATSearch::initialize() {
     	_manager->setHandler(exceptionError);
     	_manager->setTimeoutHandler(exceptionError);
     	_manager->setNodesExceededHandler(exceptionError);
+		_manager->RegisterOutOfMemoryCallback(exitOutOfMemory);
 
 		if (combineAllBDDsIntoOne) transition_BDDs_per_factor.resize(fts->get_size());
 		else {
