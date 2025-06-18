@@ -18,10 +18,11 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	fts(g_main_task){
 
 	switch (opts.get<int>("encoding")){
-		case 0: do_BDD_encoding = false; break;
-		case 1: do_BDD_encoding = false; break;
-		case 2: do_BDD_encoding = true; considerOnlyOneStepTransitions = false; break;
-		case 3: do_BDD_encoding = true; considerOnlyOneStepTransitions = true; break;
+		case 0: do_BDD_encoding = false; do_R2_encoding = false; break;
+		case 1: do_BDD_encoding = false; do_R2_encoding = true; no_selfloop_SATvars = false; break;
+		case 2: do_BDD_encoding = false; do_R2_encoding = true; no_selfloop_SATvars = true; break;
+		case 3: do_BDD_encoding = true; considerOnlyOneStepTransitions = false; break;
+		case 4: do_BDD_encoding = true; considerOnlyOneStepTransitions = true; break;
 	}
 }
 
@@ -177,6 +178,7 @@ bool SATSearch::isAlwaysSelfLoop(int ts, int label){
 
 void SATSearch::checkSolution(vector<vector<vector<int>>> &allTimesStateVars, vector<vector<int>> &allTimesLabelVars, vector<map<int, map<int, vector<pair<Transition, int>>>>> &allTimesTransitionVars, 
 					int length, void* solver){
+	if (!do_R2_encoding) return; // TODO needs to be implemented still
 	vector<int> previousState;
 	vector<int> nextState;
 	for(vector<int> vars : allTimesStateVars[0]){
