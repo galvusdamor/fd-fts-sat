@@ -140,7 +140,89 @@ int SATSearch::bdd_to_cnf(DdNode * node, vector<int> & factorVars, std::vector<i
 	return thisVar;
 }
 
+bool SATSearch::isIrrelevantLabel(int ts, int label){
+	auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
+	if((int)transitions.size() != fts->get_ts(ts).get_size()) return false;
+	for(size_t t = 0 ; t < transitions.size() ; t++){
+		if(transitions[t].src != transitions[t].target){
+			return false;
+		}
+	}
+	return true;
+}
 
+bool isSelfLoop(Transition t){
+	return t.src == t.target;
+}
+
+bool SATSearch::containsSelfLoops(int ts, int label){
+	auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
+	for(size_t t = 0 ; t < transitions.size() ; t++){
+		if(transitions[t].src == transitions[t].target){
+			return true;
+		}
+	}
+	return false;
+}
+
+bool SATSearch::isAlwaysSelfLoop(int ts, int label){
+	auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
+	for(size_t t = 0 ; t < transitions.size() ; t++){
+		if(transitions[t].src != transitions[t].target){
+			return false;
+		}
+	}
+	return true;
+}
+
+void SATSearch::checkSolution(vector<vector<vector<int>>> &allTimesStateVars, vector<vector<int>> &allTimesLabelVars, vector<map<int, map<int, vector<pair<Transition, int>>>>> &allTimesTransitionVars, 
+					int length, void* solver){
+	vector<int> previousState;
+	vector<int> nextState;
+	for(vector<int> vars : allTimesStateVars[0]){
+		for(size_t val = 0 ; val < vars.size() ; val++){
+			if(ipasir_val(solver, vars[val]) > 0){
+				previousState.push_back(val);//Initial State
+				break;
+			}
+		}
+	}
+	for(int l = 1 ; l <= length ; l++){
+		for(int label = 0 ; label < fts->get_num_labels() ; label++){
+			if(ipasir_val(solver, allTimesLabelVars[l-1][label]) <= 0)continue;
+			for(int ts = 0 ; ts < fts->get_size() ; ts++){
+				bool selfLoopCanBeUsed = false;
+				bool selectedTransitionVar = false;
+				for(pair<Transition, int> t : allTimesTransitionVars[l-1][ts][label]){
+					if(t.second != -1 && ipasir_val(solver, t.second) > 0 && t.first.src == previousState[ts]){
+						nextState.push_back(t.first.target);
+						selectedTransitionVar = true;
+						break;
+					}else if(t.second == -1 && t.first.src == previousState[ts]){
+						selfLoopCanBeUsed = true;
+					}else if(t.second != -1 && ipasir_val(solver, t.second) > 0 && t.first.src != previousState[ts]){
+						cout << "WEEWOO WEEWOO WEEWOO WEEWOO" << endl;
+						cout << "SAT solver tried to apply a transition (" << t.first.src << "," << t.first.target << ") in TS " << ts << " with label " << label << ", but the previous state was " << previousState[ts] << endl;
+						return;
+						//exit(0);
+					}
+				}
+				if(!selectedTransitionVar && (selfLoopCanBeUsed || isIrrelevantLabel(ts, label))){
+					nextState.push_back(previousState[ts]);
+				}else if(!selfLoopCanBeUsed && !selectedTransitionVar){
+					cout << "WEEWOO WEEWOO WEEWOO WEEWOO" << endl;
+					cout << "SAT solver tried to apply a selfloop transition in TS " << ts << " with label " << label << ", but the previous state was " << previousState[ts] << endl;
+					return;
+					//exit(0);
+				}
+			}
+			assert(previousState.size() == nextState.size());
+			swap(previousState, nextState);
+			nextState.clear();
+		}
+	}
+	cout << "SOLUTION SEEMS TO BE VALID!!! YIIPEEEEEE!!!!" << endl;
+}
 
 void SATSearch::initialize() {
 	cout << "Initialising" << endl;
@@ -464,27 +546,17 @@ void SATSearch::initialize() {
 
 	}
 
-
-	np_labels.resize(fts->get_num_labels());//non parallel labels
-	for(int l1 = 0 ; l1 < fts->get_num_labels() ; l1++){
-		np_labels[l1].push_back(l1);
-		for(int l2 = l1+1 ; l2 < fts->get_num_labels() ; l2++){
-			for(int ts = 0 ; ts < fts->get_size() ; ts++){
-				if( !fts->get_ts(ts).is_selfloop_everywhere((task_representation::LabelID) l1) && !fts->get_ts(ts).is_selfloop_everywhere((task_representation::LabelID) l2)){
-					np_labels[l1].push_back(l2);
-					break;
-				}
-			}
-		}
-	}
-
-
 	relevantLabels.resize(fts->get_size());
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
-		for(int label = 0 ; label < fts->get_num_labels() ; label++){
-			if(!fts->get_ts(ts).is_selfloop_everywhere((task_representation::LabelID)label)){
-				relevantLabels[ts].push_back(label);
+		if (no_selfloop_SATvars){
+			for(int label = 0 ; label < fts->get_num_labels() ; label++){
+				if(!isIrrelevantLabel(ts, label) ){
+					relevantLabels[ts].push_back(label);
+				}
 			}
+		} else {
+			relevantLabels[ts].resize(fts->get_num_labels());
+			iota(relevantLabels[ts].begin(), relevantLabels[ts].end(), 0);
 		}
 	}
 
@@ -501,6 +573,7 @@ vector<vector<int>> SATSearch::generateStateVars(void* solver, sat_capsule & cap
 		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
 			int stateVar = capsule.new_variable();
 			stateVars[ts].push_back(stateVar);
+			DEBUG(capsule.registerVariable(stateVar,"TS:"+to_string(ts)+";Val:"+to_string(states)));
 		}
 		atMostOne(solver, capsule, stateVars[ts]);
 		atLeastOne(solver, capsule, stateVars[ts]);
@@ -513,10 +586,12 @@ vector<int> SATSearch::generateLabelVars(__attribute__((unused)) void* solver, s
 	for(int label = 0 ; label < fts->get_num_labels() ; label++){
 		int labelVar = capsule.new_variable();
 		labelVars[label] = labelVar;
+		DEBUG(capsule.registerVariable(labelVar,"Label:"+to_string(label)));
 		//cout << labelVar << endl;
 	}
-	//cout << endl;
-	//atMostOne(solver, capsule, labelVars);
+	if(!do_R2_encoding && !do_BDD_encoding){
+		atMostOne(solver, capsule, labelVars);
+	}
 	atLeastOne(solver, capsule, labelVars);
 	/* for(auto v : np_labels){
 		for(size_t l = 1 ; l < v.size() ; l++){
@@ -530,21 +605,20 @@ map<int, map<int, vector<pair<Transition, int>>>> SATSearch::generateTransitionV
 	map<int, map<int, vector<pair<Transition, int>>>> transitionVars;
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		for(int label = 0 ; label < fts->get_num_labels() ; label++){
-			if(fts->get_ts(ts).is_selfloop_everywhere((task_representation::LabelID)label)){
-				//transitionVars[ts][label].push_back({(src=-1,target=-1),labelVars[label]});
+			if(no_selfloop_SATvars && isIrrelevantLabel(ts, label)){
 				continue;
 			}
 			auto transitions = fts->get_ts(ts).get_transitions_with_label(labelOrder[label]);
 			vector<int> SATVars;
 			for(size_t t = 0 ; t < transitions.size() ; t++){
-				if(transitions[t].src == transitions[t].target){
+				if(no_selfloop_SATvars && transitions[t].src == transitions[t].target){
 					transitionVars[ts][label].push_back({transitions[t],-1});
 					continue;
 				}
 				int transitionVar = capsule.new_variable();
-				//cout << "TS : " << ts << " ; Label : " << label << " ; Transition Var : " << transitionVar <<endl;
 				SATVars.push_back(transitionVar);
 				transitionVars[ts][label].push_back({transitions[t],transitionVar});
+				DEBUG(capsule.registerVariable(transitionVar,"TS:"+to_string(ts)+";Label:"+to_string(label)+"--"+to_string(transitions[t].src)+"->"+to_string(transitions[t].target)));
 			}
 			atMostOne(solver, capsule, SATVars);
 		}
@@ -557,16 +631,19 @@ map<int, map<int, vector<int>>> SATSearch::generateAuxVars(sat_capsule &capsule)
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
 			for(int label = 0 ; label < fts->get_num_labels()-1 ; label++){
-				bool is_always_self_loop = true;
-				auto transitions = fts->get_ts(ts).get_transitions_with_label(labelOrder[label]);
-				for(size_t t = 0 ; t < transitions.size() ; t++){
-					if(transitions[t].src != transitions[t].target){
-						is_always_self_loop = false;
+				if(no_selfloop_SATvars){
+					bool is_always_self_loop = true;
+					auto transitions = fts->get_ts(ts).get_transitions_with_label(labelOrder[label]);
+					for(size_t t = 0 ; t < transitions.size() ; t++){
+						if(transitions[t].src != transitions[t].target){
+							is_always_self_loop = false;
+							break;
+						}
 					}
-				}
-				if(is_always_self_loop /* || fts->get_ts(ts).is_selfloop_everywhere((task_representation::LabelID)label) */){
-					auxVars[ts][states].push_back(-1);
-					continue;
+					if(no_selfloop_SATvars && is_always_self_loop){
+						auxVars[ts][states].push_back(-1);
+						continue;
+					}
 				}
 				int auxVar = capsule.new_variable();
 				auxVars[ts][states].push_back(auxVar);
@@ -668,138 +745,10 @@ SearchStatus SATSearch::step() {
 		allTimesLabelVars.push_back(labelVars);
 		nextStateVars = generateStateVars(solver, capsule/* , timestep */);
 		allTimesStateVars.push_back(nextStateVars);
-		
-		if (!do_BDD_encoding){
-			transitionVars = generateTransitionVars(solver, capsule/* , timestep */);
-			allTimesTransitionVars.push_back(transitionVars);
-			auxVars = generateAuxVars(capsule);
 
-			for(int ts = 0 ; ts < fts->get_size() ; ts++){
-				for(int label = 0 ; label < fts->get_num_labels() ; label++){
-					vector<int> otherTransitionsInLabelWithSelfLoop;
-					vector<int> precsForSelfLoops;
-					vector<int> labelTransitionSATVars;
-					for(pair<Transition, int> transition : transitionVars[ts][label]){
-						if(transition.second != -1){
-							labelTransitionSATVars.push_back(transition.second);
-						}
-						vector<int> impliesOrPrec;
-						impliesOrPrec.push_back(previousStateVars[ts][transition.first.src]);
-						for(int label_prec = 0 ; label_prec < label ; label_prec++){
-							for(pair<Transition, int> transition_prec : transitionVars[ts][label_prec]){
-								if(transition_prec.first.target == transition.first.src){
-									impliesOrPrec.push_back(transition_prec.second);
-								}
-							}
-						}
-						if(transition.second != -1){
-							impliesOr(solver, transition.second, impliesOrPrec);
-							otherTransitionsInLabelWithSelfLoop.push_back(transition.second);
-						}else{
-							for(size_t v = 0 ; v < impliesOrPrec.size() ; v++){
-								precsForSelfLoops.push_back(impliesOrPrec[v]);
-							}
-							continue;
-						}
-
-						vector<int> impliesOrEff;
-						impliesOrEff.push_back(nextStateVars[ts][transition.first.target]);
-						for(int label_eff = label+1 ; label_eff < fts->get_num_labels() ; label_eff++){
-							for(pair<Transition, int> transition_eff : transitionVars[ts][label_eff]){
-								if(transition_eff.first.target != transition.first.target){
-									impliesOrEff.push_back(transition_eff.second);
-								}
-							}
-						}
-						if(transition.second != -1){
-							impliesOr(solver, transition.second, impliesOrEff);
-						}
-					}
-					if(labelTransitionSATVars.size() > 0){
-						impliesOr(solver, labelVars[label], labelTransitionSATVars);
-						for(size_t ltsv = 0 ; ltsv < labelTransitionSATVars.size() ; ltsv++){
-							implies(solver, labelTransitionSATVars[ltsv], labelVars[label]);
-						}
-					}
-					if(precsForSelfLoops.size() > 0 && otherTransitionsInLabelWithSelfLoop.size() == 0){
-						impliesOr(solver, labelVars[label], precsForSelfLoops);
-					}else if(precsForSelfLoops.size() > 0 && otherTransitionsInLabelWithSelfLoop.size() > 0){
-						for(size_t w = 0 ; w < otherTransitionsInLabelWithSelfLoop.size() ; w++){
-							precsForSelfLoops.push_back(otherTransitionsInLabelWithSelfLoop[w]);
-						}
-						impliesOr(solver, labelVars[label], precsForSelfLoops);
-					}
-				}
-
-				for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
-					set<int> negatedRelevantLabels;
-					negatedRelevantLabels.insert(previousStateVars[ts][states]);
-					for(int label = 0 ; label < fts->get_num_labels() ; label++){
-						if(!fts->get_ts(ts).is_selfloop_everywhere((task_representation::LabelID)label)){
-							negatedRelevantLabels.insert(-labelVars[label]);
-						}
-					}
-					andImplies(solver, negatedRelevantLabels, nextStateVars[ts][states]);
-
-					for(pair<Transition, int> transition : transitionVars[ts][relevantLabels[ts][0]]){
-						if(transition.first.target != states && transition.first.src != transition.first.target && relevantLabels[ts][0] < fts->get_num_labels()-1){
-							/* cout << auxVars[ts][states][relevantLabels[ts][0]] << endl;
-							cout << ts << endl;
-							cout << states << endl;
-							cout << relevantLabels[ts][0] << endl; */
-							implies(solver, transition.second, auxVars[ts][states][relevantLabels[ts][0]]);
-						}
-					}
-
-					for(size_t relevantLabel = 1 ; relevantLabel < relevantLabels[ts].size()-1 ; relevantLabel++){
-						vector<int> supportingTransitions;
-						supportingTransitions.push_back(auxVars[ts][states][relevantLabels[ts][relevantLabel]]);
-						for(pair<Transition, int> transition : transitionVars[ts][relevantLabels[ts][relevantLabel]]){
-							if(transition.first.target != states && transition.first.src != transition.first.target){
-								implies(solver, transition.second, auxVars[ts][states][relevantLabels[ts][relevantLabel]]);
-							}
-							if(transition.first.target == states && transition.first.src != transition.first.target){
-								supportingTransitions.push_back(transition.second);
-							}
-							if(transition.first.src == states && transition.second != -1){
-								impliesNot(solver, auxVars[ts][states][relevantLabels[ts][relevantLabel-1]], transition.second);
-							}
-						}
-						impliesOr(solver, auxVars[ts][states][relevantLabels[ts][relevantLabel-1]], supportingTransitions);
-					}
-
-					for(pair<Transition, int> transition : transitionVars[ts][relevantLabels[ts].back()]){
-						if(transition.first.src == states && transition.second != -1){
-							impliesNot(solver, auxVars[ts][states][relevantLabels[ts][relevantLabels[ts].size()-2]], transition.second);
-						}
-					}
-				}
-
-				for(size_t relevantLabel = 1 ; relevantLabel < relevantLabels[ts].size() ; relevantLabel++){
-					vector<int> auxVarsInPrec;
-					vector<int> otherTransitions;
-					for(pair<Transition, int> transition : transitionVars[ts][relevantLabels[ts][relevantLabel]]){
-						if(transition.second == -1){
-							auxVarsInPrec.push_back(auxVars[ts][transition.first.src][relevantLabels[ts][relevantLabel-1]]);
-						}else{
-							otherTransitions.push_back(transition.second);
-						}
-					}
-					
-					otherTransitions.push_back(-labelVars[relevantLabels[ts][relevantLabel]]);
-					if(auxVarsInPrec.size() > 0){
-						andImpliesOr(solver, auxVarsInPrec, otherTransitions);
-					}
-				}
-
-			}
-		} else {
+		if (do_BDD_encoding){
 			// BDD-based encoding
-			if (!combineAllBDDsIntoOne) tseitsinVars.clear();
 			for(int fac = 0 ; fac < fts->get_size() ; fac++){
-				// if we combine the BDDs, we cannot (fully!) share encoding across factors.
-				// TODO in principle we can but only for the bottom part of the BDDs encoding the labels.
-				if (combineAllBDDsIntoOne) tseitsinVars.clear();
 				if (combineAllBDDsIntoOne){
 					tseitsinVars.clear();
 					int transitionVar = bdd_to_cnf(transition_BDDs_per_factor[fac].getNode(), previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
@@ -809,30 +758,157 @@ SearchStatus SATSearch::step() {
 					const task_representation::TransitionSystem & factor = fts->get_ts(fac);
 					for (int s = 0; s < factor.get_size(); s++){
 						for (int ss = 0; ss < factor.get_size(); ss++){
-							BDD toUse;
-							if (considerOnlyOneStepTransitions)
-								toUse = one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss];
-							else
-								toUse = transition_BDDs_per_factor_per_state_pair[fac][s][ss];
 							// edge case: it can happen that this transition is impossible under the chosen order
-							if (toUse == _manager->bddZero()){
+							if (transition_BDDs_per_factor_per_state_pair[fac][s][ss] == _manager->bddZero()){
 								impliesNot(solver,previousStateVars[fac][s], nextStateVars[fac][ss]);
 								continue;
 							}
-							if (toUse == _manager->bddOne()){
+							if (transition_BDDs_per_factor_per_state_pair[fac][s][ss] == _manager->bddOne()){
 								// Nothing to encode, this transition is always allowed
 								continue;
 							}
 							
 
+							tseitsinVars.clear();
 							// Providing the previous and next state here is useless -- they will not be accessed anyway.
 							// But the function API requires them.
-							int transitionVar = bdd_to_cnf(toUse.getNode(), previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
+							int transitionVar = bdd_to_cnf(transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode(), previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
 
 							andImplies(solver,previousStateVars[fac][s], nextStateVars[fac][ss], transitionVar);
 						}
 					}
+				}
+			}
+		}else if(do_R2_encoding){
+			transitionVars = generateTransitionVars(solver, capsule/* , timestep */);
+			allTimesTransitionVars.push_back(transitionVars);
+			auxVars = generateAuxVars(capsule);
 
+			for(int ts = 0 ; ts < fts->get_size() ; ts++){
+				for(int label = 0 ; label < fts->get_num_labels() ; label++){
+					//if(no_selfloop_SATvars){
+					vector<int> otherTransitionsInLabelWithSelfLoop;
+					vector<int> precsForSelfLoops;
+					//}
+					vector<int> labelTransitionSATVars;
+					for(pair<Transition, int> transition : transitionVars[ts][label]){
+						if(!no_selfloop_SATvars || (no_selfloop_SATvars && !isSelfLoop(transition.first))){
+							labelTransitionSATVars.push_back(transition.second);
+						}
+						vector<int> impliesOrPrec;
+						impliesOrPrec.push_back(previousStateVars[ts][transition.first.src]);
+						for(int label_prec = 0 ; label_prec < label ; label_prec++){
+							for(pair<Transition, int> transition_prec : transitionVars[ts][label_prec]){
+								if(transition_prec.first.target == transition.first.src && !isSelfLoop(transition_prec.first)){
+									impliesOrPrec.push_back(transition_prec.second);
+								}
+							}
+						}
+						if(no_selfloop_SATvars && isSelfLoop(transition.first)){
+							precsForSelfLoops.insert(precsForSelfLoops.end(), impliesOrPrec.begin(), impliesOrPrec.end());
+							continue;
+						}
+						if(no_selfloop_SATvars){
+							otherTransitionsInLabelWithSelfLoop.push_back(transition.second);
+						}
+
+						impliesOr(solver, transition.second, impliesOrPrec);
+
+						vector<int> impliesOrEff;
+						impliesOrEff.push_back(nextStateVars[ts][transition.first.target]);
+						for(int label_eff = label+1 ; label_eff < fts->get_num_labels() ; label_eff++){
+							for(pair<Transition, int> transition_eff : transitionVars[ts][label_eff]){
+								if(transition_eff.first.target != transition.first.target && !isSelfLoop(transition_eff.first)){
+									impliesOrEff.push_back(transition_eff.second);
+								}
+							}
+						}
+						impliesOr(solver, transition.second, impliesOrEff);
+					}
+
+					if(labelTransitionSATVars.size() > 0){
+						if(!no_selfloop_SATvars || (no_selfloop_SATvars && !containsSelfLoops(ts, label)) ){
+							impliesOr(solver, labelVars[label], labelTransitionSATVars);
+						}
+						for(size_t ltsv = 0 ; ltsv < labelTransitionSATVars.size() ; ltsv++){
+							implies(solver, labelTransitionSATVars[ltsv], labelVars[label]);
+						}
+					}
+					if(no_selfloop_SATvars && precsForSelfLoops.size() > 0){
+						precsForSelfLoops.insert(precsForSelfLoops.end(), otherTransitionsInLabelWithSelfLoop.begin(), otherTransitionsInLabelWithSelfLoop.end());
+						impliesOr(solver, labelVars[label], precsForSelfLoops);
+					}
+				}
+
+				for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
+					if(no_selfloop_SATvars){
+						set<int> negatedRelevantLabels;
+						negatedRelevantLabels.insert(previousStateVars[ts][states]);
+						for(int label = 0 ; label < fts->get_num_labels() ; label++){
+							if(!isAlwaysSelfLoop(ts, label)){//Should I also add a condition for labels which are not irrelevant but always self loops??????? YES!!!!
+								negatedRelevantLabels.insert(-labelVars[label]);
+							}
+						}
+						andImplies(solver, negatedRelevantLabels, nextStateVars[ts][states]);
+					}
+
+					for(size_t relevantLabel = 0 ; relevantLabel < relevantLabels[ts].size() ; relevantLabel++){
+						vector<int> supportingTransitions;
+						if(relevantLabel < relevantLabels[ts].size()-1 && !isAlwaysSelfLoop(ts, relevantLabels[ts][relevantLabel])){
+							supportingTransitions.push_back(auxVars[ts][states][relevantLabels[ts][relevantLabel]]);
+						}
+						for(pair<Transition, int> transition : transitionVars[ts][relevantLabels[ts][relevantLabel]]){
+							if(transition.first.target != states && relevantLabels[ts][relevantLabel] < fts->get_num_labels()-1 && !isSelfLoop(transition.first)){
+								implies(solver, transition.second, auxVars[ts][states][relevantLabels[ts][relevantLabel]]);
+							}
+							if(transition.first.target == states && !isSelfLoop(transition.first)){
+								supportingTransitions.push_back(transition.second);
+							}
+							if(transition.first.src == states && relevantLabel > 0 && (!no_selfloop_SATvars || (no_selfloop_SATvars && !isSelfLoop(transition.first)))){
+								impliesNot(solver, auxVars[ts][states][relevantLabels[ts][relevantLabel-1]], transition.second);
+							}
+						}
+						if(supportingTransitions.size() > 0 && relevantLabel > 0 && relevantLabel < relevantLabels[ts].size()-1 && !isAlwaysSelfLoop(ts, relevantLabels[ts][relevantLabel-1])){
+							impliesOr(solver, auxVars[ts][states][relevantLabels[ts][relevantLabel-1]], supportingTransitions);
+						}
+					}
+				}
+				if(no_selfloop_SATvars){
+					for(size_t relevantLabel = 1 ; relevantLabel < relevantLabels[ts].size() ; relevantLabel++){//What happens to the first label??????????
+						vector<int> auxVarsInPrec;
+						vector<int> otherTransitions;
+						for(pair<Transition, int> transition : transitionVars[ts][relevantLabels[ts][relevantLabel]]){
+							if(transition.second == -1){
+								auxVarsInPrec.push_back(auxVars[ts][transition.first.src][relevantLabels[ts][relevantLabel-1]]);
+							}else{
+								otherTransitions.push_back(transition.second);
+							}
+						}
+						
+						otherTransitions.push_back(-labelVars[relevantLabels[ts][relevantLabel]]);
+						if(auxVarsInPrec.size() > 0){
+							andImpliesOr(solver, auxVarsInPrec, otherTransitions);
+						}
+					}
+				}
+			}
+		}else{
+			for(size_t ts = 0 ; ts < previousStateVars.size() ; ts++){
+				for(size_t states = 0 ; states < previousStateVars[ts].size() ; states++){
+					vector<int> appLabelVars;
+					for(size_t l = 0 ; l < applicableLabels[ts][states].size() ; l++){
+						appLabelVars.push_back(labelVars[applicableLabels[ts][states][l]]);
+						vector<int> succStateVars;
+						for(size_t s = 0 ; s < successorStates[ts][states][applicableLabels[ts][states][l]].size() ; s++){
+							succStateVars.push_back(nextStateVars[ts][successorStates[ts][states][applicableLabels[ts][states][l]][s]]);
+						}
+						if(succStateVars.size() > 0){
+							andImpliesOr(solver, previousStateVars[ts][states], labelVars[applicableLabels[ts][states][l]], succStateVars);
+						}
+					}
+					if(appLabelVars.size() > 0){
+						impliesOr(solver, previousStateVars[ts][states], appLabelVars);
+					}
 				}
 			}
 		}
@@ -840,54 +916,6 @@ SearchStatus SATSearch::step() {
 
 		cout << "Constructed time " << timestep << " of " << currentLength << ". Now " << get_number_of_clauses() << " clauses and " << capsule.number_of_variables << " variables." << endl;
 	}
-
-	// vector<int> labelVars;
-	// vector<vector<int>> nextStateVars;
-	// for(int timestep = 1 ; timestep <= currentLength ; timestep++){
-	// 	labelVars = generateLabelVars(solver, capsule/* , timestep */);
-	// 	allTimesLabelVars.push_back(labelVars);
-	// 	nextStateVars = generateStateVars(solver, capsule/* , timestep */);
-	// 	allTimesStateVars.push_back(nextStateVars);
-
-	// 	for(size_t ts = 0 ; ts < previousStateVars.size() ; ts++){
-	// 		for(size_t states = 0 ; states < previousStateVars[ts].size() ; states++){
-	// 			//vector<int> appLabelVars;
-	// 			set<int> appLabelVars;
-	// 			for(size_t l = 0 ; l < applicableLabels[ts][states].size() ; l++){
-	// 				//appLabelVars.push_back(labelVars[applicableLabels[ts][states][l]]);
-	// 				appLabelVars.insert(applicableLabels[ts][states][l]);
-	// 				vector<int> succStateVars;
-	// 				for(size_t s = 0 ; s < successorStates[ts][states][applicableLabels[ts][states][l]].size() ; s++){
-	// 					if(parallelism && (int)states == successorStates[ts][states][applicableLabels[ts][states][l]][s]){//found a self loop
-	// 						set<int> labelsInStateWithSelfLoop = {labelVars[applicableLabels[ts][states][l]]};
-	// 						for(size_t l_aux = 0 ; l_aux < applicableLabels[ts][states].size() ; l_aux++){
-	// 							if(l == l_aux) continue;
-	// 							labelsInStateWithSelfLoop.insert(-labelVars[applicableLabels[ts][states][l_aux]]);
-	// 						}
-	// 						andImplies(solver, labelsInStateWithSelfLoop, nextStateVars[ts][successorStates[ts][states][applicableLabels[ts][states][l]][s]]);
-	// 					}else{
-	// 						succStateVars.push_back(nextStateVars[ts][successorStates[ts][states][applicableLabels[ts][states][l]][s]]);
-	// 					}
-	// 				}
-	// 				if(succStateVars.size() > 0){
-	// 					andImpliesOr(solver, previousStateVars[ts][states], labelVars[applicableLabels[ts][states][l]], succStateVars);
-	// 				}
-	// 			}
-	// 			assert(appLabelVars.size() > 0);
-	// 			for(size_t l = 0 ; l < labelVars.size() ; l++){
-	// 				if(appLabelVars.find(l) == appLabelVars.end()){
-	// 					impliesNot(solver, previousStateVars[ts][states], labelVars[l]);
-	// 				}
-	// 			}
-	// 			//impliesOr(solver, previousStateVars[ts][states], appLabelVars);
-				
-	// 		}
-	// 	}
-
-	// 	swap(previousStateVars, nextStateVars);
-	// }
-
-
 
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		vector<int> goals = fts->get_ts(ts).get_goal_states();
@@ -901,32 +929,25 @@ SearchStatus SATSearch::step() {
 		//fts->get_ts(ts).dump_dot_graph();
 	}
 
-
-	//assertYes(solver,-allTimesLabelVars[0][0]);
-	//assertYes(solver,-allTimesLabelVars[0][1]);
-	//assertYes(solver,-allTimesLabelVars[0][2]);
-	//assertYes(solver,allTimesLabelVars[0][3]);
-	//assertYes(solver,-allTimesLabelVars[0][4]);
-	//assertYes(solver,-allTimesLabelVars[0][5]);
-	//assertYes(solver,-allTimesLabelVars[0][6]);
-	//assertYes(solver,allTimesLabelVars[0][7]);
-	//assertYes(solver,-allTimesStateVars[1][0][0]);
-	//assertYes(solver,-allTimesStateVars[1][0][1]);
-	//assertYes(solver,allTimesStateVars[1][0][2]);
-	//assertYes(solver,-allTimesStateVars[1][0][3]);
-	//assertYes(solver,-allTimesStateVars[1][0][4]);
-	//assertYes(solver,allTimesStateVars[1][1][3]);
-	//assertYes(solver,allTimesStateVars[1][2][3]);
-	//assertYes(solver,allTimesStateVars[1][3][3]);
-	////implies(solver,2,3);	
-
-
+	//DEBUG(capsule.printVariables());
 
 	cout << "Formula has " << get_number_of_clauses() << " clauses and " << capsule.number_of_variables << " variables." << endl;
 	int solverState = ipasir_solve(solver);
 	cout << "SAT solver state: " << solverState << endl;
 
 	if (solverState == 10){
+
+		/* cout << allTimesStateVars[1][1][0] << endl;
+		cout << allTimesStateVars[1][1][1] << endl;
+		cout << allTimesLabelVars[1][7] << endl;
+		cout << allTimesTransitionVars[1][1][7][1].second << endl;
+		cout << ipasir_val(solver, allTimesStateVars[1][1][0]) << endl;
+		cout << ipasir_val(solver, allTimesStateVars[1][1][1]) << endl;
+		cout << ipasir_val(solver, allTimesLabelVars[1][7]) << endl;
+		cout << ipasir_val(solver, allTimesTransitionVars[1][1][7][1].second) << endl; */
+
+		checkSolution(allTimesStateVars, allTimesLabelVars, allTimesTransitionVars, currentLength, solver);
+
 		// run plan extraction
 		// likely check_goal_and_set_plan with four arguments
 		vector<vector<int>> statesPerTimestep;
@@ -957,13 +978,27 @@ SearchStatus SATSearch::step() {
 					cout << "Label : " << label << endl;
 					if (!do_BDD_encoding){
 						for(int ts = 0 ; ts < fts->get_size() ; ts++){
-							if(allTimesTransitionVars[timestep-1][ts][label].size() == 0){
-								stateReconstructor.push_back(statesPerTimestep.back()[ts]);
+							if(do_R2_encoding){
+								if(allTimesTransitionVars[timestep-1][ts][label].size() == 0){
+									stateReconstructor.push_back(statesPerTimestep.back()[ts]);
+								}else{
+									bool addedState = false;
+									for(pair<Transition, int> transition : allTimesTransitionVars[timestep-1][ts][label]){
+										if(ipasir_val(solver, transition.second) > 0){
+											stateReconstructor.push_back(transition.first.target);
+											addedState = true;
+											break;
+										}
+									}
+									if(!addedState){
+										stateReconstructor.push_back(statesPerTimestep.back()[ts]);
+									}
+								}
 							}else{
-								for(pair<Transition, int> transition : allTimesTransitionVars[timestep-1][ts][label]){
-									if(ipasir_val(solver, transition.second) > 0){
-										stateReconstructor.push_back(transition.first.target);
-										continue;
+								for(size_t state = 0 ; state < allTimesStateVars[timestep][ts].size() ; state++){
+									if(ipasir_val(solver, allTimesStateVars[timestep][ts][state]) > 0){
+										stateReconstructor.push_back(state);
+										break;
 									}
 								}
 							}

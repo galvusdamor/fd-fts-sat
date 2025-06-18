@@ -21,6 +21,8 @@ namespace sat_search{
 class SATSearch : public SearchEngine {
 private: 
 	int planLength;
+	bool do_R2_encoding = true;
+	bool no_selfloop_SATvars = true;
 	bool do_BDD_encoding;
 	bool considerOnlyOneStepTransitions = true;
 	int bddEncodingSizeLimit = -1; // -1 means no limit
@@ -30,7 +32,6 @@ private:
 	
 	std::shared_ptr<task_representation::FTSTask> fts;
 
-    std::vector<std::vector<int>> np_labels;
     std::vector<int> labelOrder;
     std::vector<std::vector<int>> relevantLabels;
 
@@ -65,6 +66,11 @@ private:
 
 protected:
     virtual void initialize() override;
+	virtual bool isIrrelevantLabel(int ts, int label);
+	virtual bool containsSelfLoops(int ts, int label);
+	virtual bool isAlwaysSelfLoop(int ts, int label);
+	virtual void checkSolution(std::vector<std::vector<std::vector<int>>> &allTimesStateVars, std::vector<std::vector<int>> &allTimesLabelVars, 
+		std::vector<std::map<int, std::map<int, std::vector<std::pair<task_representation::Transition, int>>>>> &allTimesTransitionVars, int length, void* solver);
     virtual SearchStatus step() override;
     virtual std::vector<std::vector<int>> generateStateVars(void* solver, sat_capsule & capsule/* , int timestep */);
     virtual std::map<int, std::map<int, std::vector<std::pair<task_representation::Transition, int>>>> generateTransitionVars(void* solver, sat_capsule &capsule);
