@@ -851,7 +851,7 @@ SearchStatus SATSearch::step() {
 
 					for(size_t relevantLabel = 0 ; relevantLabel < relevantLabels[ts].size() ; relevantLabel++){
 						vector<int> supportingTransitions;
-						if(relevantLabel < relevantLabels[ts].size()-1 && !isAlwaysSelfLoop(ts, relevantLabels[ts][relevantLabel])){
+						if(relevantLabel < relevantLabels[ts].size()-1 && (!no_selfloop_SATvars || (no_selfloop_SATvars && !isAlwaysSelfLoop(ts, relevantLabels[ts][relevantLabel])))){
 							supportingTransitions.push_back(auxVars[ts][states][relevantLabels[ts][relevantLabel]]);
 						}
 						for(pair<Transition, int> transition : transitionVars[ts][relevantLabels[ts][relevantLabel]]){
@@ -865,7 +865,7 @@ SearchStatus SATSearch::step() {
 								impliesNot(solver, auxVars[ts][states][relevantLabels[ts][relevantLabel-1]], transition.second);
 							}
 						}
-						if(supportingTransitions.size() > 0 && relevantLabel > 0 && relevantLabel < relevantLabels[ts].size()-1 && !isAlwaysSelfLoop(ts, relevantLabels[ts][relevantLabel-1])){
+						if(supportingTransitions.size() > 0 && relevantLabel > 0 && relevantLabel < relevantLabels[ts].size()-1 && (!no_selfloop_SATvars || (no_selfloop_SATvars && !isAlwaysSelfLoop(ts, relevantLabels[ts][relevantLabel])))){
 							impliesOr(solver, auxVars[ts][states][relevantLabels[ts][relevantLabel-1]], supportingTransitions);
 						}
 					}

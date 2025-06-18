@@ -22,7 +22,7 @@ class SATSearch : public SearchEngine {
 private: 
 	int planLength;
 	bool do_R2_encoding = true;
-	bool no_selfloop_SATvars = true;
+	bool no_selfloop_SATvars = false;
 	bool do_BDD_encoding;
 	bool considerOnlyOneStepTransitions = true;
 	int bddEncodingSizeLimit = -1; // -1 means no limit
