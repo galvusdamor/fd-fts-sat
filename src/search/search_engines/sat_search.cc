@@ -178,7 +178,7 @@ bool SATSearch::isAlwaysSelfLoop(int ts, int label){
 
 void SATSearch::checkSolution(vector<vector<vector<int>>> &allTimesStateVars, vector<vector<int>> &allTimesLabelVars, vector<map<int, map<int, vector<pair<Transition, int>>>>> &allTimesTransitionVars, 
 					int length, void* solver){
-	if (!do_R2_encoding) return; // TODO needs to be implemented still
+	if (do_BDD_encoding || !do_R2_encoding) return; // TODO needs to be implemented still
 	vector<int> previousState;
 	vector<int> nextState;
 	for(vector<int> vars : allTimesStateVars[0]){
@@ -387,9 +387,9 @@ void SATSearch::initialize() {
 							if (ss != notss) thisFactorTransitionBDD *= ~_manager->bddVar(num_factor_vars/2 + notss);
 
 						if (considerOnlyOneStepTransitions)
-							thisFactorTransitionBDD *= allPossiblePaths[s][ss];
-						else
 							thisFactorTransitionBDD *= one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss];
+						else
+							thisFactorTransitionBDD *= allPossiblePaths[s][ss];
 
 						allTransitionsBDD += thisFactorTransitionBDD;
 					}
