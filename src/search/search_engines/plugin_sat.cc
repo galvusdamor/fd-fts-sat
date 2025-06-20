@@ -17,7 +17,7 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
             "-1");
                 parser.add_option<int>(
             "encoding",
-            "set the encoding. Currently supported are 0: sequential 1: R^2E: 2: BDD full 3: BDD only one step per factor",
+            "set the encoding. Currently supported are 0: sequential; 1: R^2E; 2: R^2E without self-loops; 3: BDD full; 4: BDD only one step per factor",
             "0");
                 parser.add_option<bool>(
             "impltseitsin",

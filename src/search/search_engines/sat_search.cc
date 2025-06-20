@@ -18,10 +18,11 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	fts(g_main_task){
 
 	switch (opts.get<int>("encoding")){
-		case 0: do_BDD_encoding = false; break;
-		case 1: do_BDD_encoding = false; break;
-		case 2: do_BDD_encoding = true; considerOnlyOneStepTransitions = false; break;
-		case 3: do_BDD_encoding = true; considerOnlyOneStepTransitions = true; break;
+		case 0: do_BDD_encoding = false; do_R2_encoding = false; break;
+		case 1: do_BDD_encoding = false; do_R2_encoding = true; no_selfloop_SATvars = false; break;
+		case 2: do_BDD_encoding = false; do_R2_encoding = true; no_selfloop_SATvars = true; break;
+		case 3: do_BDD_encoding = true; considerOnlyOneStepTransitions = false; break;
+		case 4: do_BDD_encoding = true; considerOnlyOneStepTransitions = true; break;
 	}
 }
 
@@ -214,6 +215,7 @@ int SATSearch::findPreviousValidAuxVar(vector<int> &auxVars, int label){
 
 void SATSearch::checkSolution(vector<vector<vector<int>>> &allTimesStateVars, vector<vector<int>> &allTimesLabelVars, vector<map<int, map<int, vector<pair<Transition, int>>>>> &allTimesTransitionVars, 
 					int length, void* solver){
+	if (do_BDD_encoding || !do_R2_encoding) return; // TODO needs to be implemented still
 	vector<int> previousState;
 	vector<int> nextState;
 	for(vector<int> vars : allTimesStateVars[0]){
@@ -261,6 +263,18 @@ void SATSearch::checkSolution(vector<vector<vector<int>>> &allTimesStateVars, ve
 	cout << "SOLUTION SEEMS TO BE VALID!!! YIIPEEEEEE!!!!" << endl;
 }
 
+
+
+void exitOutOfMemory(size_t) {
+    cerr << "Memory exceeded within BDD operation" << endl;
+    utils::exit_with(utils::ExitCode::OUT_OF_MEMORY);
+}
+
+
+
+
+
+
 void SATSearch::initialize() {
 	cout << "Initialising" << endl;
 	cout << "My FTS task has " << fts->get_size() << " systems and " << fts->get_num_labels() << " labels." << endl;
@@ -291,6 +305,7 @@ void SATSearch::initialize() {
     	_manager->setHandler(exceptionError);
     	_manager->setTimeoutHandler(exceptionError);
     	_manager->setNodesExceededHandler(exceptionError);
+		_manager->RegisterOutOfMemoryCallback(exitOutOfMemory);
 
 		if (combineAllBDDsIntoOne) transition_BDDs_per_factor.resize(fts->get_size());
 		else {
@@ -409,9 +424,9 @@ void SATSearch::initialize() {
 							if (ss != notss) thisFactorTransitionBDD *= ~_manager->bddVar(num_factor_vars/2 + notss);
 
 						if (considerOnlyOneStepTransitions)
-							thisFactorTransitionBDD *= allPossiblePaths[s][ss];
-						else
 							thisFactorTransitionBDD *= one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss];
+						else
+							thisFactorTransitionBDD *= allPossiblePaths[s][ss];
 
 						allTransitionsBDD += thisFactorTransitionBDD;
 					}
