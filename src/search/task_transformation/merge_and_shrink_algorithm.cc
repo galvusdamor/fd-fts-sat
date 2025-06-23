@@ -278,11 +278,20 @@ bool MergeAndShrinkAlgorithm::prune_fts(FactoredTransitionSystem &fts, const uti
    bool pruned = false;
 
    // Pruning
+    vector<int> check_dead_labels_in;
+
    if (prune_transitions_from_goal) {
-       fts.remove_transitions_from_goal();
+       optional<int> pruned_factor = fts.remove_transitions_from_goal();
+       if (pruned_factor.has_value()) {
+           if (verbosity >= Verbosity::NORMAL) {
+               cout << "Removed transitions from goal in factor "
+                    << pruned_factor.value() << endl;
+           }
+            pruned = true;
+           check_dead_labels_in.push_back(pruned_factor.value());
+       }
    }
 
-    vector<int> check_dead_labels_in;
     for (int index = 0; index < fts.get_size(); ++index) {
         if (!fts.is_active(index)) {
             continue;
@@ -428,7 +437,19 @@ void MergeAndShrinkAlgorithm::main_loop(
 
         // Pruning
         if (prune_transitions_from_goal) {
-            fts.remove_transitions_from_goal();
+            auto pruned_factor = fts.remove_transitions_from_goal();
+            if (pruned_factor.has_value()) {
+                if (verbosity >= Verbosity::NORMAL) {
+                    cout << "Removed transitions from goal in factor "
+                         << pruned_factor.value() << endl;
+                }
+                if (check_dead_labels(fts, pruned_factor.value())) {
+                    if (verbosity >= Verbosity::NORMAL) {
+                        cout << "Abstract problem is unsolvable, exiting" << endl;
+                        utils::exit_with(ExitCode::UNSOLVED_INCOMPLETE);
+                    }
+                }
+            }
         }
 
        if (prune_unreachable_states || prune_irrelevant_states) {

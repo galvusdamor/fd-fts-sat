@@ -385,20 +385,23 @@ bool FactoredTransitionSystem::is_tau_label(int ts_index, LabelID label) const {
     return true;
 }
 
-void FactoredTransitionSystem::remove_transitions_from_goal() {
+std::optional<int> FactoredTransitionSystem::remove_transitions_from_goal() {
     int ts_goal = -1;
     for (size_t i = 0; i < transition_systems.size(); ++i) {
         if (transition_systems[i] && transition_systems[i]->is_goal_relevant()) {
             if (ts_goal == -1) {
                 ts_goal = i;
             } else {
-                return;
+                return std::nullopt;
             }
         }
     }
-    if (ts_goal >= 0) {
-        transition_systems[ts_goal]->remove_transitions_from_goal();
-    }
+        if (ts_goal >= 0) {
+            if (transition_systems[ts_goal]->remove_transitions_from_goal()) {
+                return ts_goal;
+            }
+        }
+        return std::nullopt;
 }
 
 
