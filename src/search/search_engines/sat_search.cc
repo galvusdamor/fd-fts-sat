@@ -24,6 +24,13 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 		case 3: do_BDD_encoding = true; considerOnlyOneStepTransitions = false; break;
 		case 4: do_BDD_encoding = true; considerOnlyOneStepTransitions = true; break;
 	}
+
+	if (opts.get<int>("length_iteration") != -1){
+		planLength = int(0.5 + opts.get<int>("start_length") * pow(opts.get<double>("multiplier"), opts.get<int>("length_iteration")));
+		forceAtLeastOneAction = false;
+	} else
+		forceAtLeastOneAction = true;
+	
 }
 
 
@@ -607,7 +614,8 @@ vector<int> SATSearch::generateLabelVars(__attribute__((unused)) void* solver, s
 	if(!do_R2_encoding && !do_BDD_encoding){
 		atMostOne(solver, capsule, labelVars);
 	}
-	atLeastOne(solver, capsule, labelVars);
+	if (forceAtLeastOneAction)
+		atLeastOne(solver, capsule, labelVars);
 	/* for(auto v : np_labels){
 		for(size_t l = 1 ; l < v.size() ; l++){
 			impliesNot(solver, labelVars[v[0]], labelVars[v[l]]);

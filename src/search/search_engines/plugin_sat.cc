@@ -16,6 +16,20 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
             "run the search for a single plan length only. -1 if length should not be fixed.",
             "-1");
                 parser.add_option<int>(
+            "length_iteration",
+            "run the search for a single plan length only. -1 if length should not be fixed. Plan length to use is calculated as 5 * sqrt(2)^length_iteration ",
+            "-1");
+                parser.add_option<int>(
+            "start_length",
+            "only if length_iteration != -1. Start value for C.",
+            "5");
+                parser.add_option<double>(
+            "multiplier",
+            "only if length_iteration != -1. Multiplier for C.",
+            "1.41");
+
+
+				parser.add_option<int>(
             "encoding",
             "set the encoding. Currently supported are 0: sequential; 1: R^2E; 2: R^2E without self-loops; 3: BDD full; 4: BDD only one step per factor",
             "0");

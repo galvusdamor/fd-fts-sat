@@ -29,6 +29,8 @@ private:
 	bool implicationalTseitsin;
 	bool combineAllBDDsIntoOne;
 	bool bddCutting;
+
+	bool forceAtLeastOneAction;
 	
 	std::shared_ptr<task_representation::FTSTask> fts;
 
