@@ -12,7 +12,7 @@ template<typename T>
 class Predefinitions {
     std::unordered_map<std::string, T> predefined;
 
-    Predefinitions<T>() = default;
+    Predefinitions() = default;
 
 public:
     void predefine(std::string key, T object) {

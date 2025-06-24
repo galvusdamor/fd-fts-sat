@@ -6,6 +6,7 @@
 #include "../task_representation/transition_system.h"
 
 #include <memory>
+#include <optional>
 #include <vector>
 #include <set>
 
@@ -217,7 +218,7 @@ public:
     bool remove_irrelevant_labels();
     std::vector<int> remove_labels(const std::vector<task_representation::LabelID> & labels);
     bool remove_irrelevant_transition_systems(Verbosity verbosity);
-    void remove_transitions_from_goal();
+    std::optional<int> remove_transitions_from_goal();
 
     const task_representation::Labels& get_labels() {
         return *labels;

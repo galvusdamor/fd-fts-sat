@@ -285,7 +285,7 @@ public:
 
     void check_dead_labels(std::set<LabelID> & dead_labels) const;
 
-    void remove_transitions_from_goal();
+    bool remove_transitions_from_goal();
 
     void remove_transitions_for_labels(std::unordered_map<int, std::set<Transition>>& label_to_transitions);
 };
