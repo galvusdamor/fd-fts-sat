@@ -31,6 +31,7 @@ private:
 	int forcedVariablesThreshold;
 	bool combineAllBDDsIntoOne;
 	bool bddCutting;
+	bool bddCovering;
 
 	bool forceAtLeastOneAction;
 	

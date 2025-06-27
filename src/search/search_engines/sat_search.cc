@@ -17,6 +17,7 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	forcedVariablesThreshold(opts.get<int>("forcedvariablesthreshold")),
 	combineAllBDDsIntoOne(opts.get<bool>("combinebdds")),
 	bddCutting(opts.get<bool>("cutbdds")),
+	bddCovering(opts.get<bool>("coverbdds")),
 	fts(g_main_task){
 
 	switch (opts.get<int>("encoding")){
@@ -560,13 +561,74 @@ void SATSearch::initialize() {
 						}
 					}
 				}
+
+
+				// try to find a better BDD representation
+				if (bddCovering){
+					vector<vector<BDD>> pathsToForbit (factor.get_size());
+					for (int s = 0; s < factor.get_size(); s++){
+						pathsToForbit[s].resize(factor.get_size());
+						for (int ss = 0; ss < factor.get_size(); ss++){
+							pathsToForbit[s][ss] = !allPossiblePaths[s][ss]; 
+						}
+					}
+					for(int label = 0; label < fts->get_num_labels(); label++){
+						task_representation::LabelID labelID (label);
+						if (!factor.is_relevant_label(labelID) && factor.is_selfloop_everywhere(labelID)) {
+							continue;
+						}
+
+						for (int mode = 0; mode < 2; mode++){
+							bool m = mode == 0;
+							
+							
+							// source
+							for (int s = 0; s < factor.get_size(); s++){
+								// check whether it is false
+								bool isFalse = true;
+								BDD testBDD = _manager->bddVar(label + num_factor_vars);
+								if (!m) testBDD = !testBDD;
+								for (int ss = 0; ss < factor.get_size(); ss++){
+									if (testBDD * allPossiblePaths[s][ss] != _manager->bddZero()){
+										isFalse = false;
+										break;
+									}
+								}
+
+								if (isFalse){
+									cout << "Relevant label " << label << " is constantly " << (m?"false":"true") << " for source state " << s << " in factor " << fac << endl;
+
+								}
+							}
+
+							// target
+							for (int ss = 0; ss < factor.get_size(); ss++){
+								// check whether it is false
+								bool isFalse = true;
+								BDD testBDD = _manager->bddVar(label + num_factor_vars);
+								if (!m) testBDD = !testBDD;
+								for (int s = 0; s < factor.get_size(); s++){
+									if (testBDD * allPossiblePaths[s][ss] != _manager->bddZero()){
+										isFalse = false;
+										break;
+									}
+								}
+
+								if (isFalse)
+									cout << "Relevant label " << label << " is constantly " << (m?"false":"true") << " for target state " << ss << " in factor " << fac << endl;
+							}
+						}
+					}
+
+				}
+
 				cout << "Factor Overall: before limiting " << summedSizeBefore << " after limiting " << summedSizeAfter  << " all transitions: " << allTrans << " possible 1-step transitions: " << possibleSingleTrans <<  endl;
 			}
 
 			//int overallVar = bdd_to_cnf(allTransitionsBDD.getNode());
 			//cout << "Overall :" << "T" << overallVar << endl;
 		}
-			//exit(0);
+		if (bddCovering) exit(0);
 		
 		BDD stateCube = _manager->bddOne();
 		for (int i = 0; i < num_factor_vars; i++) stateCube *= _manager->bddVar(i);
@@ -577,7 +639,7 @@ void SATSearch::initialize() {
 			int round = 0;
 			bool anyUpdate = true;
 			while (anyUpdate) {	
-				cout << "Propagation Round " << round;
+				cout << "Propagation Round " << round << endl;
 				anyUpdate = false;
 				round++;
 				// 1. We need to prepare the data structures for cutting
@@ -600,18 +662,19 @@ void SATSearch::initialize() {
 						any_transition_per_factor[fac] = transition_BDDs_per_factor[fac].ExistAbstract(stateCube);
 					}
 				}
+
+				//cout << "Data structures prepared " << endl;
 	
 				// 2. Go over all pairs of factors	
 				for (int facS = 0; facS < fts->get_size(); facS++){
 					const task_representation::TransitionSystem & factorSource = fts->get_ts(facS);
 					for (int facT = 0; facT < fts->get_size(); facT++){
 						const task_representation::TransitionSystem & factorTarget = fts->get_ts(facT);
-
 						if (facS == facT) continue;
 					
 						// cube for the variables that need to be abstracted away
 						BDD cube = _manager->bddOne();
-						//cout << "Propagate from " << facS << " to " << facT << " Round: " << round << endl;
+						//cout << "Propagate from " << facS << " to " << facT << " Round: " << round << " labels: " << fts->get_num_labels() << endl;
 						bool foundRemainingVariable = false;
 						for(int label = 0; label < fts->get_num_labels(); label++){
 							task_representation::LabelID labelID (label);
@@ -626,6 +689,7 @@ void SATSearch::initialize() {
 							//cout << "label " << label << endl;
 							cube *= _manager->bddVar(num_factor_vars + label);
 						}
+						//cout << "Mask build" << endl;
 
 						// no shared variables
 						if (!foundRemainingVariable) continue;
@@ -633,6 +697,7 @@ void SATSearch::initialize() {
 						//string name = "dots/bef"+to_string(facS) + "-" + to_string(facT)+".dot";
 						//bdd_to_dot(any_transition_per_factor[facS], name);
 						BDD constraintsOverLabelsRelevantForTarget = any_transition_per_factor[facS].ExistAbstract(cube);
+						//cout << "Projected onto mask" << endl;
 						//name = "dots/aft"+to_string(facS) + "-" + to_string(facT)+".dot";
 						//bdd_to_dot(constraintsOverLabelsRelevantForTarget, name);
 
@@ -640,6 +705,7 @@ void SATSearch::initialize() {
 						if (constraintsOverLabelsRelevantForTarget == _manager->bddOne()) continue;
 						// actually propagate
 						if (!combineAllBDDsIntoOne){
+							//cout << "Apply to " << factorTarget.get_size() * factorTarget.get_size()<< endl;
 							for (int s = 0; s < factorTarget.get_size(); s++){
 								for (int ss = 0; ss < factorTarget.get_size(); ss++){
 									// reference to access
@@ -652,6 +718,7 @@ void SATSearch::initialize() {
 									if (old != currentMemory) anyUpdate = true;
 								}
 							}
+							//cout << "Done" << endl;
 						
 						} else {
 							BDD old = transition_BDDs_per_factor[facT];

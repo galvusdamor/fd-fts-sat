@@ -53,6 +53,10 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
             "cutbdds",
             "cut BDDs for the facts with each other to get stronger constraints",
             "false");
+                parser.add_option<bool>(
+            "coverbdds",
+            "try to reformulate BDDs to find more effective representations",
+            "false");
                 parser.add_option<int>(
             "length_iteration",
             "run the search for a single plan length only. -1 if length should not be fixed. This options run's Rintanen's algorithm C in the round specified by length_iteration",
