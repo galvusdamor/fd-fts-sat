@@ -28,6 +28,7 @@ private:
 	int bddEncodingSizeLimit = -1; // -1 means no limit
 	bool implicationalTseitsin;
 	bool omitForcedVariables;
+	int forcedVariablesThreshold;
 	bool combineAllBDDsIntoOne;
 	bool bddCutting;
 
@@ -59,6 +60,8 @@ private:
 	std::vector<std::vector<std::vector<BDD>>> one_step_transition_BDDs_per_factor_per_state_pair;
 
 	int givevar(int bddvar, std::vector<int> & factorVars, std::vector<int> & labelVars, std::vector<int> & nextFactorVars);
+
+	void bdd_in_degree(DdNode * node);
 
 	void bdd_to_cnf(DdNode * node, std::vector<int> & currentConditions, std::vector<int> & factorVars, std::vector<int> & labelVars, std::vector<int> & nextFactorVars, void* solver, sat_capsule & capsule);
 

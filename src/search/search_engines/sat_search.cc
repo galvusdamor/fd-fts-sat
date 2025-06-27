@@ -14,6 +14,7 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	bddEncodingSizeLimit(opts.get<int>("bdd_size_limit")),
 	implicationalTseitsin(opts.get<bool>("impltseitsin")),
 	omitForcedVariables(opts.get<bool>("omitforcedvariables")),
+	forcedVariablesThreshold(opts.get<int>("forcedvariablesthreshold")),
 	combineAllBDDsIntoOne(opts.get<bool>("combinebdds")),
 	bddCutting(opts.get<bool>("cutbdds")),
 	fts(g_main_task){
@@ -73,6 +74,7 @@ void SATSearch::bdd_to_dot(const BDD &bdd, const std::string &file_name) const {
 
 
 map<DdNode *, int> tseitsinVars;
+map<DdNode *, int> node_indegree;
 
 
 int SATSearch::givevar(int bddvar, vector<int> & factorVars, std::vector<int> & labelVars, vector<int> & nextFactorVars){
@@ -85,6 +87,34 @@ int SATSearch::givevar(int bddvar, vector<int> & factorVars, std::vector<int> & 
 	return nextFactorVars[bddvar - num_factor_vars / 2];
 }
 
+
+void SATSearch::bdd_in_degree(DdNode * node){
+
+	// first handle edge cases
+	if (Cudd_IsConstant(node)) return;
+
+	// this node is branching
+    DdNode* true_branch = Cudd_T(node);
+    DdNode* false_branch = Cudd_E(node);
+	if (implicationalTseitsin && Cudd_IsComplement(node)) {
+		true_branch = Cudd_Not(true_branch);
+		false_branch = Cudd_Not(false_branch);
+	}
+
+	// compute lookup node. For the biimplicational encoding we only keep one copy,
+	// for tseitsin we need both positive and negative versions
+	DdNode * lookup;
+	if (implicationalTseitsin) lookup = node; else lookup = Cudd_Regular(node);
+
+	if (node_indegree.count(lookup)){
+		node_indegree[lookup]++;
+		return;
+	}
+
+	node_indegree[lookup]++;
+	bdd_in_degree(true_branch);
+	bdd_in_degree(false_branch);
+}
 
 void SATSearch::bdd_to_cnf(DdNode * node, std::vector<int> & currentConditions, vector<int> & factorVars, std::vector<int> & labelVars, vector<int> & nextFactorVars, void* solver, sat_capsule & capsule){
 
@@ -112,8 +142,14 @@ void SATSearch::bdd_to_cnf(DdNode * node, std::vector<int> & currentConditions, 
 	int var_to_branch = givevar(Cudd_NodeReadIndex(node), factorVars, labelVars, nextFactorVars);
 	vector<tuple<int,DdNode*,DdNode*>> successors {{var_to_branch, true_branch, false_branch}, {-var_to_branch, false_branch, true_branch}};
 
+	// compute lookup node. For the biimplicational encoding we only keep one copy,
+	// for tseitsin we need both positive and negative versions
+	DdNode * lookup;
+	if (implicationalTseitsin) lookup = node; else lookup = Cudd_Regular(node);
+
+
 	// forcing takes precedence over lookup.
-	if (implicationalTseitsin && omitForcedVariables){
+	if (implicationalTseitsin && omitForcedVariables && node_indegree[lookup] <= forcedVariablesThreshold){
 		// check if one of the branches leads to the false node
 		for (const auto & [branch_var, branch, otherbranch] : successors){
 			if (Cudd_IsConstant(branch) && Cudd_IsComplement(branch)){
@@ -144,10 +180,6 @@ void SATSearch::bdd_to_cnf(DdNode * node, std::vector<int> & currentConditions, 
 	// but only up to a point as otherwise this will be an exponential encoding
 
 
-	// compute lookup node. For the biimplicational encoding we only keep one copy,
-	// for tseitsin we need both positive and negative versions
-	DdNode * lookup;
-	if (implicationalTseitsin) lookup = node; else lookup = Cudd_Regular(node);
 
 	if (tseitsinVars.count(lookup)){
 		int myVar = tseitsinVars[lookup];
@@ -831,6 +863,24 @@ SearchStatus SATSearch::step() {
 	vector<vector<int>> nextStateVars;
 	// empty for BDD-based encoding
 	map<int, map<int, vector<int>>> auxVars;
+	
+	// determine the in-degree of nodes in the BDD for better encoding.
+	if (do_BDD_encoding){
+		for(int fac = 0 ; fac < fts->get_size() ; fac++){
+			if (combineAllBDDsIntoOne){
+				bdd_in_degree(transition_BDDs_per_factor[fac].getNode());
+			} else {
+				const task_representation::TransitionSystem & factor = fts->get_ts(fac);
+				for (int s = 0; s < factor.get_size(); s++){
+					for (int ss = 0; ss < factor.get_size(); ss++){
+						bdd_in_degree(transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode());
+					}
+				}
+			}
+		}
+	}
+
+
 	for(int timestep = 1 ; timestep <= currentLength ; timestep++){
 		labelVars = generateLabelVars(solver, capsule/* , int timestep */);
 		allTimesLabelVars.push_back(labelVars);
@@ -840,26 +890,24 @@ SearchStatus SATSearch::step() {
 		if (do_BDD_encoding){
 			// BDD-based encoding
 			for(int fac = 0 ; fac < fts->get_size() ; fac++){
+				tseitsinVars.clear();
 				if (combineAllBDDsIntoOne){
-					tseitsinVars.clear();
 					vector<int> __no_conditions;
 					bdd_to_cnf(transition_BDDs_per_factor[fac].getNode(), __no_conditions, previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
 				} else {
 					const task_representation::TransitionSystem & factor = fts->get_ts(fac);
 					for (int s = 0; s < factor.get_size(); s++){
 						for (int ss = 0; ss < factor.get_size(); ss++){
-							// edge case: it can happen that this transition is impossible under the chosen order
-							if (transition_BDDs_per_factor_per_state_pair[fac][s][ss] == _manager->bddZero()){
-								impliesNot(solver,previousStateVars[fac][s], nextStateVars[fac][ss]);
-								continue;
-							}
-							if (transition_BDDs_per_factor_per_state_pair[fac][s][ss] == _manager->bddOne()){
-								// Nothing to encode, this transition is always allowed
-								continue;
-							}
-							
+							//// edge case: it can happen that this transition is impossible under the chosen order
+							//if (transition_BDDs_per_factor_per_state_pair[fac][s][ss] == _manager->bddZero()){
+							//	impliesNot(solver,previousStateVars[fac][s], nextStateVars[fac][ss]);
+							//	continue;
+							//}
+							//if (transition_BDDs_per_factor_per_state_pair[fac][s][ss] == _manager->bddOne()){
+							//	// Nothing to encode, this transition is always allowed
+							//	continue;
+							//}
 
-							tseitsinVars.clear();
 							// Providing the previous and next state here is useless -- they will not be accessed anyway.
 							// But the function API requires them.
 							vector<int> conditions = {previousStateVars[fac][s], nextStateVars[fac][ss]};
