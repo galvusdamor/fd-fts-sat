@@ -13,6 +13,7 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	planLength(opts.get<int>("plan_length")),
 	bddEncodingSizeLimit(opts.get<int>("bdd_size_limit")),
 	implicationalTseitsin(opts.get<bool>("impltseitsin")),
+	omitForcedVariables(opts.get<bool>("omitforcedvariables")),
 	combineAllBDDsIntoOne(opts.get<bool>("combinebdds")),
 	bddCutting(opts.get<bool>("cutbdds")),
 	fts(g_main_task){
@@ -85,26 +86,22 @@ int SATSearch::givevar(int bddvar, vector<int> & factorVars, std::vector<int> & 
 }
 
 
-int SATSearch::bdd_to_cnf(DdNode * node, vector<int> & factorVars, std::vector<int> & labelVars, vector<int> & nextFactorVars, void* solver, sat_capsule & capsule){
-	
-	// for lookup
-	DdNode * lookup;
-	if (implicationalTseitsin) lookup = node;
-	else lookup = Cudd_Regular(node);
+void SATSearch::bdd_to_cnf(DdNode * node, std::vector<int> & currentConditions, vector<int> & factorVars, std::vector<int> & labelVars, vector<int> & nextFactorVars, void* solver, sat_capsule & capsule){
 
-	if (tseitsinVars.count(lookup)){
-		int myVar = tseitsinVars[lookup];
-		if (!implicationalTseitsin && Cudd_IsComplement(node)) myVar *= -1;
-		return myVar;
+	// first handle edge cases
+	if (Cudd_IsConstant(node)){
+		bool isTrue = !Cudd_IsComplement(node);
+
+		if (!isTrue){
+			// if conditions are true, we would end up at the false node, thus the conditions must be false
+			notAll(solver, currentConditions);
+		}
+		// in the true case, we have nothing to do as the BDD is automatically satisfied
+
+		return;
 	}
-	int thisVar = capsule.new_variable();
-	DEBUG(capsule.registerVariable(thisVar, "BDD_eval_var_" + to_string(tseitsinVars.size())));
-	tseitsinVars[lookup] = thisVar;
 
-	assert(!Cudd_IsConstant(node));
-
-	// branching node
-	int var_to_branch = givevar(Cudd_NodeReadIndex(node), factorVars, labelVars, nextFactorVars);
+	// this node is branching
     DdNode* true_branch = Cudd_T(node);
     DdNode* false_branch = Cudd_E(node);
 	//cout << "Rec: " << node << " " << var_to_branch << "T " << true_branch << " F " << false_branch << endl;
@@ -112,40 +109,74 @@ int SATSearch::bdd_to_cnf(DdNode * node, vector<int> & factorVars, std::vector<i
 		true_branch = Cudd_Not(true_branch);
 		false_branch = Cudd_Not(false_branch);
 	}
+	int var_to_branch = givevar(Cudd_NodeReadIndex(node), factorVars, labelVars, nextFactorVars);
+	vector<tuple<int,DdNode*,DdNode*>> successors {{var_to_branch, true_branch, false_branch}, {-var_to_branch, false_branch, true_branch}};
 
-	vector<pair<int,DdNode*>> successors {{var_to_branch, true_branch}, {-var_to_branch, false_branch}};
+	// forcing takes precedence over lookup.
+	if (implicationalTseitsin && omitForcedVariables){
+		// check if one of the branches leads to the false node
+		for (const auto & [branch_var, branch, otherbranch] : successors){
+			if (Cudd_IsConstant(branch) && Cudd_IsComplement(branch)){
+				// this branch leads immediately to false. Thus we *must* take the other branch.
+				// Thus: if conditions are true, the branch var must direct us in the other direction.
+				andImplies(solver,currentConditions,-branch_var);
 
-	for (const auto & succ : successors){ // TODO structure binding once FD compiles with C++17
-		int condition_var = succ.first;
-		DdNode* branch = succ.second;
-		if (Cudd_IsConstant(branch)){
-			bool isTrue = !Cudd_IsComplement(branch);
-			//if (implicationalTseitsin) isTrue = !(negationStatus != Cudd_IsComplement(branch));  // read != as XOR
-			//else isTrue = ;
-
-			if (isTrue){
-				//cout << "V" << condition_var << " <-> " << "T" << thisVar << endl;
-				
-				implies(solver,condition_var, thisVar);
-			} else {
-				//cout << "V" << condition_var << " <-> " << "T" << -thisVar << endl;
-				implies(solver,condition_var,-thisVar);
+				// and the conditions are then propagated further down the tree
+				bdd_to_cnf(otherbranch, currentConditions, factorVars, labelVars, nextFactorVars, solver, capsule);
+				// this can happen for only one branch (otherwise BDD is not reduced)
+				return;
 			}
-		} else {
-			int branchvar = bdd_to_cnf(branch, factorVars, labelVars, nextFactorVars, solver, capsule);
-			//cout << "V" << condition_var << " & " << "T" << thisVar << " -> " << "T" << branchvar << endl;
-			andImplies(solver, condition_var, thisVar, branchvar);
-			if (!implicationalTseitsin){
-				// in implicational Tseitin mode, we only care about the true outcome -- every Tseitin var will be forced to true anyway.
-				// Then we don't need to implication in the backwards direction.
-				//cout << "V" << var_to_branch << " & " << "T-" << thisVar << " -> " << "T-" << branchvar << endl;
-				andImplies(solver, condition_var, -thisVar, -branchvar);
+			if (Cudd_IsConstant(branch) && !Cudd_IsComplement(branch)){
+				// this branch immediately leads to true. The other branch is only relevant if condition is false.
+				// This means that the negation of the branch variable essentially becomes a new condition.
+				vector<int> newConditions = currentConditions;
+				newConditions.push_back(-branch_var);
+				
+				bdd_to_cnf(otherbranch, newConditions, factorVars, labelVars, nextFactorVars, solver, capsule);
+				return;
 			}
 		}
 	}
 
-	if (!implicationalTseitsin && Cudd_IsComplement(node)) return -thisVar;
-	return thisVar;
+
+	// we now know that we (may) need to create a new decision variable here.
+	// TODO: in theory, we could extend the condition with the branch vars,
+	// but only up to a point as otherwise this will be an exponential encoding
+
+
+	// compute lookup node. For the biimplicational encoding we only keep one copy,
+	// for tseitsin we need both positive and negative versions
+	DdNode * lookup;
+	if (implicationalTseitsin) lookup = node; else lookup = Cudd_Regular(node);
+
+	if (tseitsinVars.count(lookup)){
+		int myVar = tseitsinVars[lookup];
+		if (!implicationalTseitsin && Cudd_IsComplement(node)) myVar *= -1;
+		andImplies(solver,currentConditions, myVar);
+		return;
+	}
+
+	// create formula for this BDD for the first time, so we need to generate a variable representing its truth
+	int thisVar = capsule.new_variable();
+	DEBUG(capsule.registerVariable(thisVar, "BDD_eval_var_" + to_string(tseitsinVars.size())));
+	tseitsinVars[lookup] = thisVar;
+
+	// variable for this node becomes the new condition
+	vector<int> trueVarVector = {thisVar, var_to_branch};
+	vector<int> falseVarVector = {thisVar, -var_to_branch};
+	
+	bdd_to_cnf(true_branch, trueVarVector, factorVars, labelVars, nextFactorVars, solver, capsule);
+	bdd_to_cnf(false_branch, falseVarVector, factorVars, labelVars, nextFactorVars, solver, capsule);
+	if (!implicationalTseitsin){
+		// if the variable for this one is false, and we take a branch, than that variable also must be false.
+		trueVarVector[0] *= -1;	
+		falseVarVector[0] *= -1;	
+		bdd_to_cnf(Cudd_Not(true_branch), trueVarVector, factorVars, labelVars, nextFactorVars, solver, capsule);
+		bdd_to_cnf(Cudd_Not(false_branch), falseVarVector, factorVars, labelVars, nextFactorVars, solver, capsule);
+		if (Cudd_IsComplement(node)) thisVar *= -1;
+	}
+	
+	andImplies(solver,currentConditions,thisVar);
 }
 
 bool SATSearch::isIrrelevantLabel(int ts, int label){
@@ -811,9 +842,8 @@ SearchStatus SATSearch::step() {
 			for(int fac = 0 ; fac < fts->get_size() ; fac++){
 				if (combineAllBDDsIntoOne){
 					tseitsinVars.clear();
-					int transitionVar = bdd_to_cnf(transition_BDDs_per_factor[fac].getNode(), previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
-
-					assertYes(solver,transitionVar);
+					vector<int> __no_conditions;
+					bdd_to_cnf(transition_BDDs_per_factor[fac].getNode(), __no_conditions, previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
 				} else {
 					const task_representation::TransitionSystem & factor = fts->get_ts(fac);
 					for (int s = 0; s < factor.get_size(); s++){
@@ -832,9 +862,8 @@ SearchStatus SATSearch::step() {
 							tseitsinVars.clear();
 							// Providing the previous and next state here is useless -- they will not be accessed anyway.
 							// But the function API requires them.
-							int transitionVar = bdd_to_cnf(transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode(), previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
-
-							andImplies(solver,previousStateVars[fac][s], nextStateVars[fac][ss], transitionVar);
+							vector<int> conditions = {previousStateVars[fac][s], nextStateVars[fac][ss]};
+							bdd_to_cnf(transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode(), conditions, previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
 						}
 					}
 				}

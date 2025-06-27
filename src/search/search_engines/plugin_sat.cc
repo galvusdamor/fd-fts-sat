@@ -38,6 +38,10 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
             "use implicational version of Tseitsin encoding for BDDs",
             "true");
                 parser.add_option<bool>(
+            "omitforcedvariables",
+            "omit variables in the BDD encoding that are forced by the BDD. Only useful in impltseitsin",
+            "true");
+                parser.add_option<bool>(
             "combinebdds",
             "combine all BDDs for each factor into one. Otherwise transitions will be encoded for each pair of states in each factor",
             "false");

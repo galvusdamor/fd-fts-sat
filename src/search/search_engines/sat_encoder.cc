@@ -107,6 +107,16 @@ void impliesAnd(void* solver, int i, int j, int k){
 	number_of_clauses++;
 }
 
+void impliesAnd(void* solver, int i, std::vector<int> j){
+	for (int & x : j){
+		assert(x);
+		ipasir_add(solver,-i);
+		ipasir_add(solver,x);
+		ipasir_add(solver,0);
+		number_of_clauses++;
+	}
+}
+
 void impliesNot(void* solver, int i, int j){
 	assert(i != 0);
 	assert(j != 0);
@@ -197,7 +207,22 @@ void andImplies(void* solver, std::set<int> i, int j){
 	number_of_clauses++;
 }
 
+void andImplies(void* solver, std::vector<int> i, int j){
+	for (const int & x : i)
+		ipasir_add(solver,-x);
+	ipasir_add(solver,j);
+	ipasir_add(solver,0);
+	number_of_clauses++;
+}
+
 void notAll(void* solver, std::set<int> & i){
+	for (const int & x : i)
+		ipasir_add(solver,-x);
+	ipasir_add(solver,0);
+	number_of_clauses++;
+}
+
+void notAll(void* solver, std::vector<int> & i){
 	for (const int & x : i)
 		ipasir_add(solver,-x);
 	ipasir_add(solver,0);
@@ -307,6 +332,13 @@ void atMostK(void* solver, sat_capsule & capsule, int K, std::vector<int> & is){
 }
 
 void atLeastOne(void* solver, __attribute__((unused)) sat_capsule & capsule, std::vector<int> & is){
+	for (int & i : is)
+		ipasir_add(solver, i);
+	ipasir_add(solver,0);
+	number_of_clauses++;
+}
+
+void atLeastOne(void* solver, std::vector<int> & is){
 	for (int & i : is)
 		ipasir_add(solver, i);
 	ipasir_add(solver,0);
