@@ -572,16 +572,39 @@ void SATSearch::initialize() {
 							pathsToForbit[s][ss] = !allPossiblePaths[s][ss]; 
 						}
 					}
+
+					// We are trying to find smaller conditions/BDDs that express some of the constraints that are always true/false
+					// The idea is that these extra constraints will provide for overall smaller BDDs and more concise constructions
+					//
+					// In this loop, we try to find
+					//   labels that for a specific source or target state are always true or false
+					// These give implications of the form
+					//   state -> (+-) label
+					//
+					// Implications of the type
+					//   label -> state
+					// Can be inferred from the state -> -label implications. If for a label all implications,
+					// but one are true, the label -> state implication is true 
+					
+					map<int, vector<int> > prev_state_implies_pos_label;
+					map<int, vector<int> > prev_state_implies_neg_label;
+					map<int, vector<int> > next_state_implies_pos_label;
+					map<int, vector<int> > next_state_implies_neg_label;
+					
+					map<int, vector<int> > pos_label_implies_prev_state;
+					map<int, vector<int> > pos_label_implies_next_state;
+					
 					for(int label = 0; label < fts->get_num_labels(); label++){
 						task_representation::LabelID labelID (label);
 						if (!factor.is_relevant_label(labelID) && factor.is_selfloop_everywhere(labelID)) {
 							continue;
 						}
 
+						vector<int> prev_states_implying_this_neg;
+						vector<int> next_states_implying_this_neg;
+
 						for (int mode = 0; mode < 2; mode++){
 							bool m = mode == 0;
-							
-							
 							// source
 							for (int s = 0; s < factor.get_size(); s++){
 								// check whether it is false
@@ -598,6 +621,8 @@ void SATSearch::initialize() {
 								if (isFalse){
 									cout << "Relevant label " << label << " is constantly " << (m?"false":"true") << " for source state " << s << " in factor " << fac << endl;
 
+									if (m) {prev_state_implies_neg_label[s].push_back(label);prev_states_implying_this_neg.push_back(s);}
+									else   prev_state_implies_pos_label[s].push_back(label);
 								}
 							}
 
@@ -614,12 +639,111 @@ void SATSearch::initialize() {
 									}
 								}
 
-								if (isFalse)
+								if (isFalse){
 									cout << "Relevant label " << label << " is constantly " << (m?"false":"true") << " for target state " << ss << " in factor " << fac << endl;
+									if (m) {next_state_implies_neg_label[ss].push_back(label);next_states_implying_this_neg.push_back(ss);}
+									else   next_state_implies_pos_label[ss].push_back(label);
+								}
+							}
+						}
+					
+
+						// trying to find cases where a state implies a specific label
+						// We have to have at least that all other states imply that the label is false
+
+						// if equal this label would never be executable!!
+						assert(int(prev_states_implying_this_neg.size()) != factor.get_size());
+
+						// if all but one state implies that the label is not there, then the label implies the remaining state
+						if (int(prev_states_implying_this_neg.size()) + 1 == factor.get_size()){
+							// find missing state. We have inserted them in order
+							bool found = false;
+							for (int i = 0; i < int(prev_state_implies_neg_label.size()); i++){
+								if (i != prev_states_implying_this_neg[i]){
+									pos_label_implies_prev_state[label].push_back(i);
+									cout << "Source state " << i << " in factor " << fac << " implies label " << label << endl;
+									found = true;
+									break;
+								}
+							}
+							// then it must be the last state
+							if (! found){
+								pos_label_implies_prev_state[label].push_back(factor.get_size()-1);
+								cout << "Source state " << factor.get_size()-1 << " in factor " << fac << " implies label " << label << endl;
+							}
+						}
+						if (int(next_states_implying_this_neg.size()) + 1 == factor.get_size()){
+							// find missing state. We have inserted them in order
+							bool found = false;
+							for (int i = 0; i < int(next_states_implying_this_neg.size()); i++){
+								if (i != next_states_implying_this_neg[i]){
+									pos_label_implies_next_state[label].push_back(i);
+									cout << "Target state " << i << " in factor " << fac << " implies label " << label << endl;
+									found = true;
+									break;
+								}
+							}
+							// then it must be the last state
+							if (! found){
+								pos_label_implies_next_state[label].push_back(factor.get_size()-1);
+								cout << "Target state " << factor.get_size()-1 << " in factor " << fac << " implies label " << label << endl;
+							}
+						}
+
+
+
+						// cross-implication between labels
+						for(int otherLabel = label+1; otherLabel < fts->get_num_labels(); otherLabel++){
+							task_representation::LabelID otherLabelID (otherLabel);
+							if (!factor.is_relevant_label(otherLabelID) && factor.is_selfloop_everywhere(otherLabelID)) {
+								continue;
+							}
+
+							// check whether it is possible for these two to appear together in any transition
+							BDD testBDD = _manager->bddVar(label + num_factor_vars) * _manager->bddVar(otherLabel + num_factor_vars);
+							bool isFalse = true;
+							for (int s = 0; s < factor.get_size(); s++){
+								for (int ss = 0; ss < factor.get_size(); ss++){
+									if (testBDD * allPossiblePaths[s][ss] != _manager->bddZero()){
+										isFalse = false;
+										break;
+									}
+								}
+								if (isFalse == false) break;
+							}
+
+							if (isFalse){
+								cout << "In Factor " << fac << " labels " << label << " and " << otherLabel << " cannot appear together." << endl;
 							}
 						}
 					}
 
+
+					// 2. Step: now we try to simplify the overall BDDs
+				
+					for (const auto & [s,forbiddenLabels] : prev_state_implies_neg_label){
+						// for the BDDs starting at state s, we don't have to assert any more that the forbidden labels
+						// are actually false.
+						//
+						// Effectively, they represent the fact that all states in which "forbidden label" appears, are forbidden.
+						// To we can remove these states from the set of states to be forbidden
+						for (const int & forbiddenLabel : forbiddenLabels){
+							BDD forcedBDD = !_manager->bddVar(forbiddenLabel + num_factor_vars);
+							BDD forbiddenBDD = !forcedBDD;
+							// TODO forced BDD must be added as a constraint
+
+							cout << "Factor " << fac << " forbidding label " << forbiddenLabel << " from state " << s << endl;
+							for (int ss = 0; ss < factor.get_size(); ss++){
+								BDD old = pathsToForbit[s][ss];
+								pathsToForbit[s][ss] = (pathsToForbit[s][ss] * forcedBDD).ExistAbstract(forbiddenBDD); 
+								cout << "BDD changed from " << old.nodeCount() << " to " << pathsToForbit[s][ss].nodeCount() << endl;
+								string name = "dots/forbid-"+to_string(fac) + "-" + to_string(s)+ "-" + to_string(forbiddenLabel)+ "-" + to_string(ss)+"-old.dot";
+								bdd_to_dot(old, name);
+								name = "dots/forbid-"+to_string(fac) + "-" + to_string(s)+ "-" + to_string(forbiddenLabel)+ "-" + to_string(ss)+"-new.dot";
+								bdd_to_dot(pathsToForbit[s][ss], name);
+							}
+						}
+					}
 				}
 
 				cout << "Factor Overall: before limiting " << summedSizeBefore << " after limiting " << summedSizeAfter  << " all transitions: " << allTrans << " possible 1-step transitions: " << possibleSingleTrans <<  endl;
