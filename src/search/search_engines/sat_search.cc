@@ -1169,7 +1169,7 @@ SearchStatus SATSearch::step() {
 					set<int> negatedRelevantLabels;
 					negatedRelevantLabels.insert(previousStateVars[ts][states]);
 					for(size_t relevantLabel = 0 ; relevantLabel < relevantLabels[ts].size() ; relevantLabel++){
-						if(!isAlwaysSelfLoop(ts, relevantLabels[ts][relevantLabel])){//Should I also add a condition for labels which are not irrelevant but always self loops??????? YES!!!!
+						if(!isAlwaysSelfLoop(ts, relevantLabels[ts][relevantLabel]) && !hasMixedTransitions(ts, relevantLabels[ts][relevantLabel])){//Should I also add a condition for labels which are not irrelevant but always self loops??????? YES!!!!
 							negatedRelevantLabels.insert(-labelVars[relevantLabels[ts][relevantLabel]]);
 						}else if(hasMixedTransitions(ts, relevantLabels[ts][relevantLabel])){
 							for(pair<Transition, int> transition : transitionVars[ts][relevantLabels[ts][relevantLabel]]){
@@ -1383,7 +1383,7 @@ SearchStatus SATSearch::step() {
 								}else{
 									bool addedState = false;
 									for(pair<Transition, int> transition : allTimesTransitionVars[timestep-1][ts][label]){
-										if(ipasir_val(solver, transition.second) > 0){
+										if(ipasir_val(solver, transition.second) > 0 && transition.second != -1){
 											stateReconstructor.push_back(transition.first.target);
 											addedState = true;
 											break;
