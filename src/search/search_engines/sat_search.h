@@ -35,8 +35,8 @@ private:
 
 
 
-	bool do_R2_encoding = true;
-	bool no_selfloop_SATvars = true;
+	bool do_R2_encoding;
+	bool no_selfloop_SATvars;
 	bool do_BDD_encoding;
 	bool considerOnlyOneStepTransitions = true;
 	int bddEncodingSizeLimit = -1; // -1 means no limit
