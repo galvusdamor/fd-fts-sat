@@ -27,6 +27,10 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
             "multiplier",
             "only if length_iteration != -1. Multiplier for C.",
             "1.41");
+                parser.add_option<bool>(
+            "length_by_iteration",
+            "use the iteration formula of Rinanten's slgorithm C to determine plan lengths.",
+            "false");
 
 
 				parser.add_option<int>(
@@ -73,6 +77,10 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
             "multiplier",
             "only if length_iteration != -1. Multiplier for C.",
             "1.41");
+                parser.add_option<int>(
+            "step_time_limit",
+            "time limit for each step of the SAT run. Defaults to -1, which means no limit",
+            "-1");
 
     SearchEngine::add_succ_order_options(parser);
     SearchEngine::add_options_to_parser(parser);

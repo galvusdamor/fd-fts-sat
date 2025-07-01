@@ -20,7 +20,21 @@ namespace sat_search{
 
 class SATSearch : public SearchEngine {
 private: 
+	int stepTimeLimit;
+
+	// global limit
 	int planLength;
+
+	// for iteration	
+	int stepNumber;
+	int currentLength;
+	int start_length;
+	double multiplier;
+	
+	bool length_by_iteration; 
+
+
+
 	bool do_R2_encoding = true;
 	bool no_selfloop_SATvars = true;
 	bool do_BDD_encoding;
@@ -68,8 +82,6 @@ private:
 
 	bool bdd_state_reconstruction_dfs(int fac, std::vector<std::vector<int>> & reconstructedStates, int depth, std::vector<int> & plan, std::set<std::pair<int,int>> & visited);
 
-	// for iteration	
-	int currentLength;
 
 protected:
     virtual void initialize() override;

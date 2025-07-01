@@ -137,4 +137,8 @@ IPASIR_API int ipasir_solve (void * solver){
 IPASIR_API int ipasir_val (void * solver, int lit){
 	return kissat_value((kissat*)solver,lit);
 }
+
+void ipasir_terminate (void * solver){
+	kissat_terminate((kissat*)solver);
+}
 }

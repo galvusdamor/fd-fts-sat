@@ -1,3 +1,8 @@
+#include <chrono>
+#include <thread>
+#include <ctime>
+#include <atomic>
+
 #include "sat_search.h"
 
 // #include "../plugins/options.h"
@@ -8,9 +13,17 @@
 using namespace std;
 using namespace task_representation;
 
+extern "C"{
+	void ipasir_terminate (void * solver);
+}
+
 namespace sat_search {
 SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
+	stepTimeLimit(opts.get<int>("step_time_limit")),
 	planLength(opts.get<int>("plan_length")),
+	start_length(opts.get<int>("start_length")),
+	multiplier(opts.get<double>("multiplier")),
+	length_by_iteration(opts.get<bool>("length_by_iteration")),
 	bddEncodingSizeLimit(opts.get<int>("bdd_size_limit")),
 	implicationalTseitsin(opts.get<bool>("impltseitsin")),
 	omitForcedVariables(opts.get<bool>("omitforcedvariables")),
@@ -29,11 +42,12 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	}
 
 	if (opts.get<int>("length_iteration") != -1){
-		planLength = int(0.5 + opts.get<int>("start_length") * pow(opts.get<double>("multiplier"), opts.get<int>("length_iteration")));
+		planLength = int(0.5 + start_length * pow(multiplier, opts.get<int>("length_iteration")));
 		forceAtLeastOneAction = false;
 	} else
 		forceAtLeastOneAction = true;
-	
+
+	if (length_by_iteration) forceAtLeastOneAction = false;
 }
 
 
@@ -876,7 +890,11 @@ void SATSearch::initialize() {
 	if (planLength != -1){
 		currentLength = planLength;
 	} else {
-		currentLength = 1;
+		if (length_by_iteration){
+			stepNumber = 0;
+			currentLength = start_length;
+		} else 
+			currentLength = 1;
 	}
 }
 
@@ -1028,8 +1046,39 @@ map<int, map<int, map<int, vector<int>>>> SATSearch::getSuccessorStates(map<int,
 }
 
 
+struct solver_timer {
+	std::atomic_bool & stop;
+	void* solver; 
+	int time_in_ms;
+	std::chrono::system_clock::time_point t_start;
+	
+	solver_timer(void* _solver, int _time_in_ms,std::atomic_bool& _stop, std::chrono::system_clock::time_point _t_start) :
+		stop(_stop), solver(_solver), time_in_ms(_time_in_ms), t_start(_t_start) {}
+	solver_timer(solver_timer const& other) : stop(other.stop), solver(other.solver), time_in_ms(other.time_in_ms), t_start(other.t_start) {}
+	solver_timer(solver_timer&& other ) : stop(other.stop), solver(other.solver), time_in_ms(other.time_in_ms), t_start(other.t_start) {}
+
+
+	void operator() () {
+	    std::chrono::milliseconds delay(time_in_ms);
+	    while(!stop) {
+	      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+	      auto t_now = std::chrono::system_clock::now();
+	      std::chrono::milliseconds elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_start);
+	      if (stop) break;
+		  if(delay <= elapsed) {
+	          ipasir_terminate(solver);
+			  cout << "SAT solver exceeded time limit. Terminating." << endl;
+			  return;
+	      }
+	    }
+	}
+};
+
+
+
 SearchStatus SATSearch::step() {
-	cout << "HI doing step! SAT: " << ipasir_signature() << endl;
+	auto t_start = std::chrono::system_clock::now();
+	cout << "HI doing step! SAT: " << ipasir_signature() << " starting at " << t_start << endl;
 	//bool parallelism = false;
 	vector<vector<vector<int>>> allTimesStateVars;
 	vector<vector<int>> allTimesLabelVars;
@@ -1314,6 +1363,17 @@ SearchStatus SATSearch::step() {
 		swap(previousStateVars, nextStateVars);
 
 		cout << "Constructed time " << timestep << " of " << currentLength << ". Now " << get_number_of_clauses() << " clauses and " << capsule.number_of_variables << " variables." << endl;
+	
+		if (stepTimeLimit != -1){
+			auto t_now = std::chrono::system_clock::now();
+			std::chrono::milliseconds elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_start);
+			std::chrono::milliseconds time_limit(stepTimeLimit * 1000);
+			if(time_limit <= elapsed) {
+				// generation of formula ran out of time
+				cout << "Generation of SAT formula exceeded time limit. Aborting overall run." << endl;
+				return FAILED;
+			}
+		}
 	}
 
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
@@ -1331,11 +1391,27 @@ SearchStatus SATSearch::step() {
 	//DEBUG(capsule.printVariables());
 
 	cout << "Formula has " << get_number_of_clauses() << " clauses and " << capsule.number_of_variables << " variables." << endl;
-	int solverState = ipasir_solve(solver);
+
+	
+	int solverState;
+
+	if (stepTimeLimit == -1){
+		solverState = ipasir_solve(solver);
+	} else {
+		std::atomic_bool stop(false);
+		solver_timer timer(solver,stepTimeLimit * 1000,stop,t_start);
+	    std::thread thread_for_timer(timer);
+		
+		solverState = ipasir_solve(solver);
+		
+		// Stop it
+	    timer.stop = true;
+		thread_for_timer.detach();
+	}
+ 
 	cout << "SAT solver state: " << solverState << endl;
 
 	if (solverState == 10){
-
 		/* cout << allTimesStateVars[1][1][0] << endl;
 		cout << allTimesStateVars[1][1][1] << endl;
 		cout << allTimesLabelVars[1][7] << endl;
@@ -1478,7 +1554,12 @@ SearchStatus SATSearch::step() {
 	else {
 		allTimesStateVars.clear();
 		allTimesLabelVars.clear();
-		currentLength++; // TODO better strategies for satisficing
+
+		if (length_by_iteration){
+			stepNumber++;
+			currentLength = int(0.5 + start_length * pow(multiplier, stepNumber));
+		} else // simple sequential iteration
+			currentLength++;
 		return IN_PROGRESS;
 	}
 }
