@@ -31,6 +31,10 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
             "length_by_iteration",
             "use the iteration formula of Rinanten's slgorithm C to determine plan lengths.",
             "false");
+                parser.add_option<int>(
+            "maximum_iteration",
+            "if length by iteration, continue iteration also if plan has been found up to and including this iteration. If -1 stop at first plan found",
+            "-1");
 
 
 				parser.add_option<int>(

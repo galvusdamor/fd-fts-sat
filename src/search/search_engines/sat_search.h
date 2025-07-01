@@ -32,6 +32,7 @@ private:
 	double multiplier;
 	
 	bool length_by_iteration; 
+	int maximum_iteration;
 
 
 

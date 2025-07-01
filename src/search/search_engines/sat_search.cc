@@ -24,6 +24,7 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	start_length(opts.get<int>("start_length")),
 	multiplier(opts.get<double>("multiplier")),
 	length_by_iteration(opts.get<bool>("length_by_iteration")),
+	maximum_iteration(opts.get<int>("maximum_iteration")),
 	bddEncodingSizeLimit(opts.get<int>("bdd_size_limit")),
 	implicationalTseitsin(opts.get<bool>("impltseitsin")),
 	omitForcedVariables(opts.get<bool>("omitforcedvariables")),
@@ -1543,13 +1544,16 @@ SearchStatus SATSearch::step() {
 		check_goal_and_set_plan(goalState, states, std::move(labels), fts);
 
 		ipasir_release(solver);
-		return SOLVED;
+	
+		if (maximum_iteration == -1)
+			return SOLVED;
+	} else {
+		ipasir_release(solver);
 	}
 
 
-	ipasir_release(solver);
 	// otherwise
-	if (planLength == currentLength)
+	if (planLength == currentLength || stepNumber == maximum_iteration)
 		return FAILED;
 	else {
 		allTimesStateVars.clear();
