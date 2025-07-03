@@ -86,6 +86,11 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
             "time limit for each step of the SAT run. Defaults to -1, which means no limit",
             "-1");
 
+                parser.add_option<bool>(
+            "solver_quiet",
+            "if possible try to put the SAT solver into quiet mode (less output to parse for experiments)",
+            "false");
+
     SearchEngine::add_succ_order_options(parser);
     SearchEngine::add_options_to_parser(parser);
     Options opts = parser.parse();

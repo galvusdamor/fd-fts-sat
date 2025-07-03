@@ -13,6 +13,9 @@
 using namespace std;
 using namespace task_representation;
 
+
+bool kissat_quietMode;
+
 extern "C"{
 	void ipasir_terminate (void * solver);
 }
@@ -33,6 +36,8 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	bddCutting(opts.get<bool>("cutbdds")),
 	bddCovering(opts.get<bool>("coverbdds")),
 	fts(g_main_task){
+
+	kissat_quietMode = opts.get<bool>("solver_quiet");
 
 	switch (opts.get<int>("encoding")){
 		case 0: do_BDD_encoding = false; do_R2_encoding = false; break;

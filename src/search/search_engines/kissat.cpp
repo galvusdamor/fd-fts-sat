@@ -5,6 +5,7 @@
 #include <vector>
 
 int clauseCount = 0;
+extern bool kissat_quietMode;
 
 
 #include <iostream>
@@ -39,7 +40,10 @@ IPASIR_API const char * ipasir_signature (){
 IPASIR_API void * ipasir_init (){
 	formula.clear();
 	maxVar = -1;
-	return kissat_init();
+	kissat* solver = kissat_init();
+	if (kissat_quietMode)
+		kissat_set_option(solver, "quiet", 1);	
+	return solver;
 }
 
 /**
