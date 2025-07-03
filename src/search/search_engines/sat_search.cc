@@ -1079,7 +1079,7 @@ struct solver_timer {
 
 SearchStatus SATSearch::step() {
 	auto t_start = std::chrono::system_clock::now();
-	cout << "HI doing step! SAT: " << ipasir_signature() << " starting at " << t_start << endl;
+	cout << "HI doing step! SAT: " << ipasir_signature() << endl; // << " starting at " << t_start << endl;
 	//bool parallelism = false;
 	vector<vector<vector<int>>> allTimesStateVars;
 	vector<vector<int>> allTimesLabelVars;
