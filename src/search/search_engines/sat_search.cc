@@ -7,6 +7,7 @@
 
 // #include "../plugins/options.h"
 #include "../utils/logging.h"
+#include "../utils/timer.h"
 #include "ipasir.h"
 #include "sat_encoder.h"
 
@@ -367,6 +368,7 @@ void exitOutOfMemory(size_t) {
 
 
 void SATSearch::initialize() {
+	utils::Timer sat_init_timer;
 	cout << "Initialising" << endl;
 	cout << "My FTS task has " << fts->get_size() << " systems and " << fts->get_num_labels() << " labels." << endl;
 
@@ -902,6 +904,8 @@ void SATSearch::initialize() {
 		} else 
 			currentLength = 1;
 	}
+
+    cout << "SAT init time: " << sat_init_timer << endl;
 }
 
 vector<vector<int>> SATSearch::generateStateVars(void* solver, sat_capsule & capsule/* , int timestep */){
@@ -1083,6 +1087,7 @@ struct solver_timer {
 
 
 SearchStatus SATSearch::step() {
+    utils::Timer step_timer;
 	auto t_start = std::chrono::system_clock::now();
 	cout << "HI doing step! SAT: " << ipasir_signature() << endl; // << " starting at " << t_start << endl;
 	//bool parallelism = false;
@@ -1412,7 +1417,7 @@ SearchStatus SATSearch::step() {
 		
 		// Stop it
 	    timer.stop = true;
-		thread_for_timer.detach();
+		thread_for_timer.join();
 	}
  
 	cout << "SAT solver state: " << solverState << endl;
@@ -1523,12 +1528,12 @@ SearchStatus SATSearch::step() {
 		}
 
 		vector<int> GS = statesPerTimestep.back();
-		for(auto x : statesPerTimestep){
-			cout << x.size() << ":";
-			for (size_t f = 0; f < x.size() ; f++)
-				cout << " " << f << "=" << x[f];
-			cout << endl;
-		}
+		//for(auto x : statesPerTimestep){
+		//	cout << x.size() << ":";
+		//	for (size_t f = 0; f < x.size() ; f++)
+		//		cout << " " << f << "=" << x[f];
+		//	cout << endl;
+		//}
 		PlanState goalState = PlanState(std::move(GS));
 		vector<PlanState> states;
 		for(size_t s = 0 ; s < statesPerTimestep.size() ; s++){
@@ -1549,10 +1554,21 @@ SearchStatus SATSearch::step() {
 		check_goal_and_set_plan(goalState, states, std::move(labels), fts);
 
 		ipasir_release(solver);
-	
-		if (maximum_iteration == -1)
+		
+		cout << "STEP " << stepNumber << " length " << currentLength
+				<< " SAT time " << step_timer
+				<< " clauses " << get_number_of_clauses() << " vars " << capsule.number_of_variables
+				<< " labels " << labels.size() << " timesteps with label " << timesteps_with_labels.size()
+				<< " compression " << double(labels.size()) / timesteps_with_labels.size()
+				<< endl;
+		if (maximum_iteration == -1){
 			return SOLVED;
+		}
 	} else {
+		cout << "STEP " << stepNumber << " length " << currentLength
+				<< " UNSAT time " << step_timer
+				<< " clauses " << get_number_of_clauses() << " vars " << capsule.number_of_variables
+				<< endl;
 		ipasir_release(solver);
 	}
 
