@@ -10,6 +10,10 @@ namespace plugin_sat {
 static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
     parser.document_synopsis("SAT Search", "");
 
+    parser.add_option<shared_ptr<label_order_finder::LabelOrderFinder>>(
+"label_order",
+"order for labels",
+"label_order_linear()");
 
                 parser.add_option<int>(
             "plan_length",
