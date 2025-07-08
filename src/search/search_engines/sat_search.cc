@@ -1495,6 +1495,17 @@ SearchStatus SATSearch::step() {
 					}
 				}
 			}
+			if (selectedLabels.size()){
+				set<int> labelSet(selectedLabels.begin(), selectedLabels.end());
+				selectedLabels.clear();
+				for (const int & l : labelOrder)
+					if (labelSet.count(l)){
+						cout << "Actual Order label: " << l << endl;
+						selectedLabels.push_back(l);
+					}
+			}
+
+
 			labelsPerTimestep.push_back(selectedLabels);
 			// For the BDD-based encoding, we need to reconstruct the plan via search (labels are non-deterministic)
 			// What we have: the labels to be applied in which order (in selectedLabels) and the previous and next overall state
@@ -1502,7 +1513,10 @@ SearchStatus SATSearch::step() {
 			// that the determination of the intermediate states is independent between all factors.
 			// So we can reconstruct the visited states per factor
 			if (do_BDD_encoding && selectedLabels.size()){ // if we don't execute any label, we don't have to extract a new state.
-				
+				// the labels are sorted in their natural order -- that is from 1 to L, but we might have used a different label ordering.
+				// we need to re-order them
+			
+
 				vector<vector<int>> reconstructedStates(selectedLabels.size() + 1);
 				for (size_t i = 1; i < selectedLabels.size(); i++) reconstructedStates[i].resize(fts->get_size());
 				reconstructedStates[0] = statesPerTimestep.back();
