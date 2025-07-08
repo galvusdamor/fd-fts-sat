@@ -621,6 +621,7 @@ void SATSearch::initialize() {
 						if (!factor.is_relevant_label(labelID) && factor.is_selfloop_everywhere(labelID)) {
 							continue;
 						}
+						cout << "Checking label " << label << endl;
 
 						vector<int> prev_states_implying_this_neg;
 						vector<int> next_states_implying_this_neg;
@@ -716,6 +717,7 @@ void SATSearch::initialize() {
 
 						// cross-implication between labels
 						for(int otherLabel = label+1; otherLabel < fts->get_num_labels(); otherLabel++){
+							break;
 							task_representation::LabelID otherLabelID (otherLabel);
 							if (!factor.is_relevant_label(otherLabelID) && factor.is_selfloop_everywhere(otherLabelID)) {
 								continue;
@@ -759,10 +761,10 @@ void SATSearch::initialize() {
 								BDD old = pathsToForbit[s][ss];
 								pathsToForbit[s][ss] = (pathsToForbit[s][ss] * forcedBDD).ExistAbstract(forbiddenBDD); 
 								cout << "BDD changed from " << old.nodeCount() << " to " << pathsToForbit[s][ss].nodeCount() << endl;
-								string name = "dots/forbid-"+to_string(fac) + "-" + to_string(s)+ "-" + to_string(forbiddenLabel)+ "-" + to_string(ss)+"-old.dot";
-								bdd_to_dot(old, name);
-								name = "dots/forbid-"+to_string(fac) + "-" + to_string(s)+ "-" + to_string(forbiddenLabel)+ "-" + to_string(ss)+"-new.dot";
-								bdd_to_dot(pathsToForbit[s][ss], name);
+								//string name = "dots/forbid-"+to_string(fac) + "-" + to_string(s)+ "-" + to_string(forbiddenLabel)+ "-" + to_string(ss)+"-old.dot";
+								//bdd_to_dot(old, name);
+								//name = "dots/forbid-"+to_string(fac) + "-" + to_string(s)+ "-" + to_string(forbiddenLabel)+ "-" + to_string(ss)+"-new.dot";
+								//bdd_to_dot(pathsToForbit[s][ss], name);
 							}
 						}
 					}
