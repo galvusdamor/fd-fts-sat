@@ -10,16 +10,22 @@
 
 // include for BDDs
 #include "cuddObj.hh"
+#include "../task_utils/label_order_finder.h"
 
 namespace plugins {
 class Feature;
 }
 
+namespace label_order_finder {
+	class LabelOrderFinder;
+}
 
 namespace sat_search{
 
 class SATSearch : public SearchEngine {
-private: 
+private:
+	std::shared_ptr<label_order_finder::LabelOrderFinder> label_order_finder;
+
 	int stepTimeLimit;
 
 	// global limit

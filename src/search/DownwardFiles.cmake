@@ -557,6 +557,7 @@ fast_downward_plugin(
     SOURCES
         search_engines/sat_search
         search_engines/sat_encoder
+		task_utils/label_order_finder
 		#search_engines/sat_encoder
     DEPENDENCY_ONLY
 )

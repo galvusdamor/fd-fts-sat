@@ -10,6 +10,7 @@
 #include "../utils/timer.h"
 #include "ipasir.h"
 #include "sat_encoder.h"
+#include "../task_utils/label_order_finder.h"
 
 using namespace std;
 using namespace task_representation;
@@ -23,6 +24,7 @@ extern "C"{
 
 namespace sat_search {
 SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
+	label_order_finder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order")),
 	stepTimeLimit(opts.get<int>("step_time_limit")),
 	planLength(opts.get<int>("plan_length")),
 	start_length(opts.get<int>("start_length")),
@@ -36,7 +38,7 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	combineAllBDDsIntoOne(opts.get<bool>("combinebdds")),
 	bddCutting(opts.get<bool>("cutbdds")),
 	bddCovering(opts.get<bool>("coverbdds")),
-	fts(g_main_task){
+	fts(g_main_task) {
 
 	kissat_quietMode = opts.get<bool>("solver_quiet");
 
@@ -372,10 +374,8 @@ void SATSearch::initialize() {
 	cout << "Initialising" << endl;
 	cout << "My FTS task has " << fts->get_size() << " systems and " << fts->get_num_labels() << " labels." << endl;
 
-	labelOrder.resize(fts->get_num_labels());
-	// for now just the natural ordering
-	for(int l = 0; l < fts->get_num_labels(); l++) labelOrder[l] = l;
- 
+	labelOrder = label_order_finder->find_order(*fts);
+
 	if (do_BDD_encoding){
 		bdd_num_vars = fts->get_num_labels();
 		num_factor_vars = 0;
