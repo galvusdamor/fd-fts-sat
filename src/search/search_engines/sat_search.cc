@@ -896,15 +896,17 @@ void SATSearch::initialize() {
 			iota(relevantLabels[ts].begin(), relevantLabels[ts].end(), 0);
 		}
 	}
+	
+	stepNumber = 0;
 
 	if (planLength != -1){
 		currentLength = planLength;
 	} else {
 		if (length_by_iteration){
-			stepNumber = 0;
 			currentLength = start_length;
-		} else 
+		} else {
 			currentLength = 1;
+		}
 	}
 
     cout << "SAT init time: " << sat_init_timer << endl;
@@ -1590,14 +1592,14 @@ SearchStatus SATSearch::step() {
 
 
 	// otherwise
-	if (planLength == currentLength || stepNumber == maximum_iteration)
+	if (planLength == currentLength || (length_by_iteration && stepNumber == maximum_iteration))
 		return FAILED;
 	else {
 		allTimesStateVars.clear();
 		allTimesLabelVars.clear();
-
+		
+		stepNumber++;
 		if (length_by_iteration){
-			stepNumber++;
 			currentLength = int(0.5 + start_length * pow(multiplier, stepNumber));
 		} else // simple sequential iteration
 			currentLength++;
