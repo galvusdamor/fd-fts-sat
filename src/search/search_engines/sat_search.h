@@ -6,11 +6,21 @@
 #include "../plugin.h"
 #include "sat_encoder.h"
 #include "../task_representation/transition_system.h"
+#include "../task_representation/label_equivalence_relation.h"
 
 
 // include for BDDs
 #include "cuddObj.hh"
 #include "../task_utils/label_order_finder.h"
+
+struct BlockInfo {
+    std::vector<int> empty_rows;
+    std::vector<int> empty_columns;
+    std::map<int, std::vector<int>> extra_ones_per_row;    // rows with 1's outside block
+    std::map<int, std::vector<int>> extra_ones_per_column; // columns with 1's outside block
+};
+
+
 
 namespace plugins {
 class Feature;
@@ -45,6 +55,14 @@ private:
 	bool do_R2_encoding;
 	bool no_selfloop_SATvars;
 	bool do_BDD_encoding;
+	bool computing_block;
+	bool parallelism;
+	bool irrelevantLabelParallelism;
+	bool for_all_no_loopy;
+	bool for_all_loopy;
+	bool basic_per_row;
+	bool eliminating_rows_and_columns;
+	bool eliminating_rnc_and_pairs;
 	bool considerOnlyOneStepTransitions = true;
 	int bddEncodingSizeLimit = -1; // -1 means no limit
 	bool implicationalTseitsin;
@@ -60,6 +78,15 @@ private:
 
     std::vector<int> labelOrder;
     std::vector<std::vector<int>> relevantLabels;
+	std::map<int, std::map<int, BlockInfo>> labelBasedEncodingInfo;
+	std::vector<std::vector<int>> labelsWithoutOnlySelfLoops;
+	std::map<int, std::map<int, std::vector<int>>> labelsWithEffectOnValue;
+	std::map<int, std::map<int, std::set<int>>> empty_rows, empty_cols;
+	std::map<int, std::map<int, std::map<int, std::set<int>>>> ones_per_row/* , ones_per_column */;
+	std::map<int, std::vector<std::vector<int>>> labelProjection;
+	std::map<int, std::map<int, std::vector<int>>> empty_projected_cells_per_row;//ts->row->cols
+
+	std::map<int,std::vector<std::vector<int>>> labelGroups;
 
 
 
@@ -97,6 +124,8 @@ protected:
 	virtual bool isAlwaysSelfLoop(int ts, int label);
 	bool hasMixedTransitions(int ts, int label);
 	int findPreviousValidAuxVar(std::vector<int> &auxVars, int label);
+	BlockInfo find_largest_block(const std::vector<std::vector<int>>& filled_columns_per_row);
+	bool hasSelfLoopOnValue(int ts, int value, int label);
 	virtual void checkSolution(std::vector<std::vector<std::vector<int>>> &allTimesStateVars, std::vector<std::vector<int>> &allTimesLabelVars, 
 		std::vector<std::map<int, std::map<int, std::vector<std::pair<task_representation::Transition, int>>>>> &allTimesTransitionVars, int length, void* solver);
     virtual SearchStatus step() override;
@@ -104,6 +133,8 @@ protected:
     virtual std::map<int, std::map<int, std::vector<std::pair<task_representation::Transition, int>>>> generateTransitionVars(void* solver, sat_capsule &capsule);
     virtual std::map<int, std::map<int, std::vector<int>>> generateAuxVars(sat_capsule &capsule);
     virtual std::vector<int> generateLabelVars(void* solver, sat_capsule & capsule/* , int timestep */);
+	std::map<int, std::vector<int>> generateLabelGroupVars(void* solver, sat_capsule & capsule, std::vector<int> &labelVars/* , int timestep */);
+	std::map<int, std::map<int, std::vector<int>>> generateHelperVars(sat_capsule & capsule/* , int timestep */);
     virtual std::map<int, std::map<int, std::vector<int>>> getApplicableLabels();
     virtual std::map<int, std::map<int, std::map<int, std::vector<int>>>> getSuccessorStates(std::map<int, std::map<int, std::vector<int>>> applicableLabels);
 
