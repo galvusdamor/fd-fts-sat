@@ -13,6 +13,29 @@ def adjust_planner_memory(props):
         # Madagascar's output is in GB, the default in lab reports is Kbytes
         props["planner_memory"] = int(props["planner_memory_gb"] * 1000 * 1000)
 
+
+
+def int_from_pattern(pattern, content):
+    regex = re.compile(pattern)
+    match = regex.search(content)
+    if match:
+         try:
+             value = match.group(1)
+         except IndexError:
+             tools.add_unexplained_error(
+                 props,
+                 f"Pattern {pattern} not found.",
+             )
+         else:
+             return int(value)
+
+
+
+def set_number_of_variables(content, props):
+    if props["coverage"] == 1:
+        steps = props["steps"]
+        props["sat_variables"] = int_from_pattern(f"Horizon {steps}: ([^s]+) variables", content)
+
     
 def set_planner_error_and_coverage(content, props):
     # NOTE: on timeout, exit code is 0, on out of memory it's 1
@@ -71,6 +94,8 @@ class MadagascarParser(Parser):
         self.add_pattern("node", r"node: (.+)\n", type=str, file="driver.log", required=True)
         self.add_pattern("planner_exit_code", r"planner exit code: (.+)\n", type=int, file="driver.log")
         self.add_pattern("validate_exit_code", r"validate exit code: (.+)\n", type=int, file="driver.log")
+        self.add_pattern("planner_time", r"planner wall-clock time: (.+)s\n", type=float, file="driver.log")
 
         self.add_function(set_planner_error_and_coverage)
+        self.add_function(set_number_of_variables)
 
