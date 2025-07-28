@@ -95,6 +95,16 @@ AXIOMS_CONDEFFS_SUITE = [
     'psr-large', 'psr-middle', 'robot-horndl', 'robotConj-horndl', 'snowman-basic', 
     'snowman-cheating', 'snowman-reachability', 'sum', 'taskassign-horndl', 'word-rooms'
 ]
+      
+
+FTS_SUITE = [
+    'burnt-pancakes',
+    'cavediving-adl14',
+    'matrix-multiplication',
+    'pancakes',
+    'rubiks-cube',
+    'topspin',
+]
 
 ATTRIBUTES = [
     "cost",
