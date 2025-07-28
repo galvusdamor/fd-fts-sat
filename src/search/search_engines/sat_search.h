@@ -56,13 +56,19 @@ private:
 	bool no_selfloop_SATvars;
 	bool do_BDD_encoding;
 	bool computing_block;
-	bool parallelism;
-	bool irrelevantLabelParallelism;
-	bool for_all_no_loopy;
-	bool for_all_loopy;
+
+
+	bool sequential;
+	bool selfloopParallelism;
+	bool chainsParallelism;
+
+	bool useLabelGroups;
+	bool useSelfloopOptimisation;
+
 	bool basic_per_row;
-	bool eliminating_rows_and_columns;
 	bool eliminating_rnc_and_pairs;
+
+	
 	bool considerOnlyOneStepTransitions = true;
 	int bddEncodingSizeLimit = -1; // -1 means no limit
 	bool implicationalTseitsin;
