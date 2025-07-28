@@ -43,19 +43,37 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	kissat_quietMode = opts.get<bool>("solver_quiet");
 
 	switch (opts.get<int>("encoding")){
-		case 0: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; basic_per_row = true; sequential = true; break;
-		case 1: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; basic_per_row = true; useSelfloopOptimisation = true; selfloopParallelism = true; break;
-		case 2: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; basic_per_row = true; useSelfloopOptimisation = true; chainsParallelism = true; break;
-		case 3: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; eliminating_rnc_and_pairs = true; sequential = true; break;
-		case 4: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; selfloopParallelism = true; break;
-		case 5: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; chainsParallelism = true; break;
-		case 6: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; selfloopParallelism = true; break;
-		case 7: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; chainsParallelism = true; break;
 
-		case 10: do_BDD_encoding = false; do_R2_encoding = true; no_selfloop_SATvars = false; break;
-		case 11: do_BDD_encoding = false; do_R2_encoding = true; no_selfloop_SATvars = true; break;
-		case 8: do_BDD_encoding = true; considerOnlyOneStepTransitions = false; break;
-		case 9: do_BDD_encoding = true; considerOnlyOneStepTransitions = true; break;
+		case 0: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; chainsParallelism = true; break;
+		case 1: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; selfloopParallelism = true; break;
+		case 2: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; sequential = true; break;
+
+		case 3: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; chainsParallelism = true; break;
+		case 4: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; selfloopParallelism = true; break;
+		case 5: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; sequential = true; break;
+
+		case 6: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; eliminating_rnc_and_pairs = true; useLabelGroups = true; sequential = true; break;
+
+		case 7: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; eliminating_rnc_and_pairs = true; sequential = true; break;
+
+
+		case 8: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; chainsParallelism = true; break;
+		case 9: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; selfloopParallelism = true; break;
+		case 10: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; sequential = true; break;
+
+		case 11: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; basic_per_row = true; useSelfloopOptimisation = true; chainsParallelism = true; break;
+		case 12: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; basic_per_row = true; useSelfloopOptimisation = true; selfloopParallelism = true; break;
+		case 13: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; basic_per_row = true; useSelfloopOptimisation = true; sequential = true; break;
+
+		case 14: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; basic_per_row = true; useLabelGroups = true; sequential = true; break;
+
+		case 15: do_BDD_encoding = false; do_R2_encoding = false; computing_block = false; basic_per_row = true; sequential = true; break;
+
+
+		case 100: do_BDD_encoding = false; do_R2_encoding = true; no_selfloop_SATvars = false; break;
+		case 101: do_BDD_encoding = false; do_R2_encoding = true; no_selfloop_SATvars = true; break;
+		case 102: do_BDD_encoding = true; considerOnlyOneStepTransitions = false; break;
+		case 103: do_BDD_encoding = true; considerOnlyOneStepTransitions = true; break;
 	}
 
 	if (opts.get<int>("length_iteration") != -1){
