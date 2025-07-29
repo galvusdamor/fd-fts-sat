@@ -58,15 +58,15 @@ private:
 	bool computing_block;
 
 
-	bool sequential;
-	bool selfloopParallelism;
-	bool chainsParallelism;
+	bool sequential = false;
+	bool selfloopParallelism = false;
+	bool chainsParallelism = false;
 
-	bool useLabelGroups;
-	bool useSelfloopOptimisation;
+	bool useLabelGroups = false;
+	bool useSelfloopOptimisation = false;
 
-	bool basic_per_row;
-	bool eliminating_rnc_and_pairs;
+	bool basic_per_row = false;
+	bool eliminating_rnc_and_pairs = false;
 
 	
 	bool considerOnlyOneStepTransitions = true;

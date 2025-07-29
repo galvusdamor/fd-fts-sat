@@ -2037,7 +2037,7 @@ SearchStatus SATSearch::step() {
 				for(size_t l = 0 ; l < selectedLabels.size() - 1 ; l++){
 					vector<int> intermediateState;
 					for(int ts = 0 ; ts < fts->get_size() ; ts++){
-						if(isIrrelevantLabel(ts, selectedLabels[l])){
+						if(isAlwaysSelfLoop(ts, selectedLabels[l])){
 							intermediateState.push_back(statesPerTimestep.back()[ts]);
 						}else{
 							intermediateState.push_back(stateReconstructor[ts]);
@@ -2055,7 +2055,7 @@ SearchStatus SATSearch::step() {
 				notRepeated.clear();
 			}
 
-			cout << statesPerTimestep << endl;
+			//cout << statesPerTimestep << endl;
 			
 			if (selectedLabels.size()){
 				set<int> labelSet(selectedLabels.begin(), selectedLabels.end());
