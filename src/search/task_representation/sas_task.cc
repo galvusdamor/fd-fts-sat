@@ -218,13 +218,13 @@ void SASTask::read_operators(istream &in) {
                 condition_variables.insert(cond.var);
             }
         }
-        if (condition_variables.empty()) {
+        //if (condition_variables.empty()) {
             g_operators.push_back(op);
-        } else {
-            vector<int> cvars(condition_variables.begin(), condition_variables.end());
-            vector<SASCondition> multiplied_conditions;
-            multiply_out_conditions(op, cvars, 0, multiplied_conditions);
-        }
+        //} else {
+        //    vector<int> cvars(condition_variables.begin(), condition_variables.end());
+        //    vector<SASCondition> multiplied_conditions;
+        //    multiply_out_conditions(op, cvars, 0, multiplied_conditions);
+       // }
 
 
     }
