@@ -22,7 +22,7 @@ from snellius import SnelliusEnvironment
 DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
 BENCHMARKS_DIR = os.environ["DOWNWARD_BENCHMARKS"]
-REVISION = "d62ed3c5b92390eac00fb9224a83fe8b39e8d560"
+REVISION = "a9943c197e3a89f7b716253a46a3dd94d56bf447"
 REVISIONS = [REVISION]
 
 CONFIGS = []
@@ -30,21 +30,30 @@ factorings = {
     'LP-F0.2s1M':        'lp(min_number_leaves=2, factoring_time_limit=30, strategy=mfa, add_cg_sccs=true, min_flexibility=0.2, max_leaf_size=1000000)',
 #    'LP-L1.0s1M':        'lp(min_number_leaves=2, factoring_time_limit=30, strategy=mml, add_cg_sccs=true, min_flexibility=1.0, max_leaf_size=1000000)',
 }
-searches = {"blind" : "astar(blind(), cost_type=one)",
-            "ff" : "lazy_greedy([ff(transform=adapt_costs(cost_type=one))], cost_type=one)",
-            "sat": "sat()",
+searches = {#"blind" : "astar(blind(), cost_type=one)",
+            #"ff" : "lazy_greedy([ff(transform=adapt_costs(cost_type=one))], cost_type=one)",
+            "ff" : "lazy_greedy([ff()], cost_type=one)",
+            "bdd-impl-nocomb-cut": "sat(encoding=1,impltseitsin=true,combinebdds=false,cutbdds=true)",
+            "bdd-impl-nocomb-nocut": "sat(encoding=1,impltseitsin=true,combinebdds=false,cutbdds=false)",
+            "R^2E": "sat(encoding=0)",
 }
 
 DRIVER_OPTS = ["--overall-time-limit", "30m", "--overall-memory-limit", "1500m"]
+TRANSFORM_OPTS = ["--transform", "transform_merge_and_shrink(shrink_strategy=shrink_weak_bisimulation(ignore_irrelevant_tau_groups=false),label_reduction=exact(max_time=300,atomic_fts=true,before_shrinking=true,before_merging=false),shrink_atomic_fts=true,run_main_loop=false,max_time=900,cost_type=one,prune_transitions_from_goal=true,prune_transitions_from_goal=true)"]
+
+#REVISION = "95bb325ae8c1a8179a7e5fdd19953d4c359ee019"
 
 for s_name, s_opt in searches.items():
-    CONFIGS.append(IssueConfig(f'{s_name}', ['--search',  f'{s_opt}'], driver_options=DRIVER_OPTS, build_options=["-s/gpfs/home2/behnkeg/software/kissat-p/build", "--kissat"]))
+    if s_name == "ff":
+        CONFIGS.append(IssueConfig(f'{s_name}', ['--search',  f'{s_opt}'], driver_options=DRIVER_OPTS, build_options=["-j", "-s/gpfs/home2/behnkeg/software/kissat-p/build", "--kissat"]))
+    else:
+        CONFIGS.append(IssueConfig(f'{s_name}', TRANSFORM_OPTS + ['--search',  f'{s_opt}'], driver_options=DRIVER_OPTS, build_options=["-s/gpfs/home2/behnkeg/software/kissat-p/build", "--kissat"]))
     #for d_name, d_opt in factorings.items():
     #    CONFIGS.append(IssueConfig(f'{s_name}-{d_name}', ['--root-task-transform', f"decoupled(factoring={d_opt})", '--search',  f'{s_opt}'], driver_options=DRIVER_OPTS, build_options=["-s/home/x_dangn/bin/lib/", "--kissat"]))
 
 
-#SUITE = common_setup.DEFAULT_SATISFICING_SUITE
-SUITE = ['miconic']
+SUITE = common_setup.DEFAULT_SATISFICING_SUITE
+#SUITE = ['miconic']
 
 ##ENVIRONMENT = TetralithEnvironment(
 ##    email="g.behnke@uva.nl",
@@ -104,17 +113,17 @@ exp.add_report(AbsoluteReport(attributes=attributes, filter=[filter_kissat_oom])
 
 PLOT_FORMAT = "png"
 
-for c1, c2 in [("blind-LP-F0.2s1M", "sat-LP-F0.2s1M"), ("blind-LP-L1.0s1M", "sat-LP-L1.0s1M")]:
-    exp.add_report(
-        ScatterPlotReport(
-            attributes=["planner_time"],
-            filter_algorithm=[c1, c2],
-            get_category=lambda x,y: x["domain"],
-            format=PLOT_FORMAT,
-            show_missing=True,
-        ),
-        name=f"scatterplot-planner-time-{c1}-vs-{c2}",
-    )
+##for c1, c2 in [("blind-LP-F0.2s1M", "sat-LP-F0.2s1M"), ("blind-LP-L1.0s1M", "sat-LP-L1.0s1M")]:
+##    exp.add_report(
+##        ScatterPlotReport(
+##            attributes=["planner_time"],
+##            filter_algorithm=[c1, c2],
+##            get_category=lambda x,y: x["domain"],
+##            format=PLOT_FORMAT,
+##            show_missing=True,
+##        ),
+##        name=f"scatterplot-planner-time-{c1}-vs-{c2}",
+##    )
 
 exp.run_steps()
 

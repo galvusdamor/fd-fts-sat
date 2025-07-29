@@ -1,3 +1,6 @@
+## sleep for random amount of time
+sleep $((RANDOM %% 5)).$((RANDOM %% 1000 + 1))
+
 function print {
     local msg=${1}
     printf "[Slurm task %%05d] %%s\n" "$SLURM_ARRAY_TASK_ID" "$msg"

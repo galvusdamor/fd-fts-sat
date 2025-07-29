@@ -82,6 +82,22 @@ exp.add_parser(fts_parser.FTSParser())
 ## fetch for my own data
 exp.add_fetcher(name='fetch', filter=[filters.remove_revision])
 
+
+tofetch = [
+        ("2025-06-18-thrid-debugging-run", ["ff-trans"]),
+        ("2025-06-13-second-debugging-run", ["ff-pure"]),
+        ("2025-06-23-fourth-debugging-run", ["seq"]),
+        ]
+
+for (idd,(expname,algos)) in enumerate(tofetch):
+    exp.add_fetcher(
+        f"data/{expname}-eval",  # (folder with the old experiments)
+        filter=[filters.remove_revision],  # unnecessary but you can provide a function that will get rid of things that you don't need
+        filter_algorithm=algos,   # This just tells which algorithms you want to fetch the data for
+        name=f"fetch-{expname}-{idd}", # some name for the step I think this is optional
+        merge=True,  # Whether you want to overricde the results.
+    )
+
 ## zipping files
 common_setup.add_compress_and_delete_runs_step(exp)
 
@@ -120,17 +136,39 @@ exp.add_report(AbsoluteReport(attributes=attributes, filter=[filters.filter_bdd_
 
 PLOT_FORMAT = "png"
 
-##for c1, c2 in [("blind-LP-F0.2s1M", "sat-LP-F0.2s1M"), ("blind-LP-L1.0s1M", "sat-LP-L1.0s1M")]:
-##    exp.add_report(
-##        ScatterPlotReport(
-##            attributes=["planner_time"],
-##            filter_algorithm=[c1, c2],
-##            get_category=lambda x,y: x["domain"],
-##            format=PLOT_FORMAT,
-##            show_missing=True,
-##        ),
-##        name=f"scatterplot-planner-time-{c1}-vs-{c2}",
-##    )
+for c1, c2 in [("forall-basic-per-row-onlyshrink", "forall-elim-row-col-onlyshrink"), ("forall-basic-per-row-onlyshrink", "forall-elim-rnc-pairs-onlyshrink"), ("forall-elim-row-col-onlyshrink",  "forall-elim-rnc-pairs-onlyshrink")]:
+    exp.add_report(
+        ScatterPlotReport(
+            attributes=["sat_clauses"],
+            filter_algorithm=[c1, c2],
+            get_category=lambda x,y: x["domain"],
+            format=PLOT_FORMAT,
+            show_missing=True,
+        ),
+        name=f"scatterplot_sat_clauses-{c1}-vs-{c2}",
+    )
+
+    exp.add_report(
+        ScatterPlotReport(
+            attributes=["sat_variables"],
+            filter_algorithm=[c1, c2],
+            get_category=lambda x,y: x["domain"],
+            format=PLOT_FORMAT,
+            show_missing=True,
+        ),
+        name=f"scatterplot-sat_variables-{c1}-vs-{c2}",
+    )
+
+    exp.add_report(
+        ScatterPlotReport(
+            attributes=["planner_time"],
+            filter_algorithm=[c1, c2],
+            get_category=lambda x,y: x["domain"],
+            format=PLOT_FORMAT,
+            show_missing=True,
+        ),
+        name=f"scatterplot-planner-time-{c1}-vs-{c2}",
+    )
 
 exp.run_steps()
 

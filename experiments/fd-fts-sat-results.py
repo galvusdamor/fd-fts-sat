@@ -43,6 +43,8 @@ tofetch = [
         ("2025-07-09-bdd-other-orders", ["bdd-impl-nocomb-nocut-linear-onlyshrink"]),
         ("2025-07-11-fd-sat", ["no-parallel-seq", "Esat-seq"]),
         ("2025-07-11-madagascar", ["MpC-no-parallel-seq", "MpC-no-parallel-RR", "MpC-E-seq", "MpC-E-RR"]),
+        ("2025-07-28-encoding-variants-eval", ["forall-basic-per-row-onlyshrink", "forall-elim-rnc-pairs-onlyshrink", "forall-elim-row-col-onlyshrink"])
+
         ]
 
 for (idd,(expname,algos)) in enumerate(tofetch):
