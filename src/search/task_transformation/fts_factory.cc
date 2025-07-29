@@ -33,6 +33,8 @@ class FTSFactory {
 
         unique_ptr<LabelEquivalenceRelation> label_equivalence_relation;
         std::unordered_map<std::pair<int, int>, int> pre_eff_pair_to_label_group;
+        std::unordered_map<std::vector<int>, int> factored_transition_to_label_group;
+
 
         vector<vector<Transition>> transitions_by_label_group;
         vector<vector<int>> label_groups;
@@ -62,6 +64,32 @@ class FTSFactory {
             label_equivalence_relation =
                 utils::make_unique_ptr<LabelEquivalenceRelation>(labels,
                                                                  label_groups);
+        }
+
+        void add_factored_transition(int label_no, const std::vector<int> & target_values) {
+            relevant_labels[label_no] = true ;
+
+            assert((size_t)num_states == target_values.size());
+            auto pos = factored_transition_to_label_group.find(target_values);
+            if (pos == factored_transition_to_label_group.end()) {
+                int new_label_group = label_groups.size();
+                label_groups.push_back(vector<int>());
+                label_groups.back().push_back(label_no);
+                factored_transition_to_label_group [target_values] = new_label_group;
+
+                vector<Transition> transitions;
+                for (int src = 0; src < num_states; ++src) {
+                    int dest_value = target_values[src];
+                    assert(dest_value < num_states);
+                    if (dest_value >= 0) {
+                        transitions.push_back(Transition(src, dest_value));
+                    }
+                }
+                transitions_by_label_group.push_back(transitions);
+
+            } else {
+                label_groups[pos->second].push_back(label_no);
+            }
         }
 
         void add_transition(int label_no, int src_value, int dest_value) {
@@ -204,83 +232,51 @@ void FTSFactory::build_transitions() {
             pre_val[precondition.var] = precondition.val;
         }
         vector <bool> has_effect_on_var(sas_task.get_num_variables(), false);
+        std::unordered_map<int, vector<int>> factored_variables;
 
         for (const SASEffect & effect : op.get_effects()) {
             int var_no = effect.var;
             has_effect_on_var[var_no] = true;
             int post_value = effect.val;
 
-            //Alvaro: commented out support of conditional effects
-            if (!effect.conditions.empty()) {
-                cerr << "Error: conditional effects are not supported." << endl;
-                cerr << "Conditional effect on " << op.get_name() << endl;
-                utils::exit_with(utils::ExitCode::UNSUPPORTED);
-            }
             int pre_value = -1;
             auto pre_val_it = pre_val.find(var_no);
             if (pre_val_it != pre_val.end()) {
                 pre_value = pre_val_it->second;
             }
 
-            transition_system_data_by_var[var_no].add_transition(label_no, pre_value , post_value);
+            if (effect.conditions.empty()) {
+                transition_system_data_by_var[var_no].add_transition(label_no, pre_value , post_value);
+            } else {
+               //Alvaro: modified support of conditional effects to assume factored tasks
+                if (effect.conditions.size() == 1 && effect.var == effect.conditions[0].var) {
+                    if (pre_value != -1 && pre_value != effect.conditions[0].val) {
+                        //Alvaro: we can just ignore this effect, but we raise an error just to check this does not happen
+                        cerr << "Error: inconsistent precondition and conditional effect." << endl;
+                        cerr << "Precondition: " << op.get_name() << " var: " << effect.var
+                             << " value: " << pre_value << endl;
+                        cerr << "Conditional effect: " << op.get_name() << " var: "
+                             << effect.var << " value: " << effect.conditions[0].val << endl;
+                        utils::exit_with(utils::ExitCode::UNSUPPORTED);
+                    }
+                    cout << "Encoding factored conditional effect" << op.get_name() << endl;
+                    auto & values = factored_variables[effect.var];
+                    if (values.empty()) {
+                        for (int val = 0; val < sas_task.get_variable_domain_size(effect.var); ++val) {
+                            values.push_back(val);
+                        }
+                    }
+                    values[effect.conditions[0].val] = post_value;
+                } else {
+                    cerr << "Error: general conditional effects are not supported." << endl;
+                    cerr << "Conditional effect on " << op.get_name() << endl;
+                    utils::exit_with(utils::ExitCode::UNSUPPORTED);
+                }
+            }
+        }
 
-            // // Determine possible values that var can have when this
-            // // operator is applicable.
-            // int pre_value = -1;
-            // auto pre_val_it = pre_val.find(var_no);
-            // if (pre_val_it != pre_val.end())
-            //     pre_value = pre_val_it->second;
-            // int pre_value_min, pre_value_max;
-            // if (pre_value == -1) {
-            //     pre_value_min = 0;
-            //     pre_value_max = sas_task.get_variable_domain_size(var_no);
-            // } else {
-            //     pre_value_min = pre_value;
-            //     pre_value_max = pre_value + 1;
-            // }
-
-            // /*
-            //   cond_effect_pre_value == x means that the effect has an
-            //   effect condition "var == x".
-            //   cond_effect_pre_value == -1 means no effect condition on var.
-            //   has_other_effect_cond is true iff there exists an effect
-            //   condition on a variable other than var.
-            // */
-            // int cond_effect_pre_value = -1;
-            // bool has_other_effect_cond = false;
-            // for (const auto & condition : effect.conditions) {
-            //     if (condition.var == var_no) {
-            //         cond_effect_pre_value = condition.val;
-            //     } else {
-            //         has_other_effect_cond = true;
-            //     }
-            // }
-
-            // // Handle transitions that occur when the effect triggers.
-            // for (int value = pre_value_min; value < pre_value_max; ++value) {
-            //     /*
-            //       Only add a transition if it is possible that the effect
-            //       triggers. We can rule out that the effect triggers if it has
-            //       a condition on var and this condition is not satisfied.
-            //     */
-            //     if (cond_effect_pre_value == -1 || cond_effect_pre_value == value)
-            //         add_transition(var_no, label_no, value, post_value);
-            // }
-
-            // // Handle transitions that occur when the effect does not trigger.
-            // if (!effect.conditions.empty()) {
-            //     for (int value = pre_value_min; value < pre_value_max; ++value) {
-            //         /*
-            //           Add self-loop if the effect might not trigger.
-            //           If the effect has a condition on another variable, then
-            //           it can fail to trigger no matter which value var has.
-            //           If it only has a condition on var, then the effect
-            //           fails to trigger if this condition is false.
-            //         */
-            //         if (has_other_effect_cond || value != cond_effect_pre_value)
-            //             add_transition(var_no, label_no, value, value);
-            //     }
-            // }
+        for (const auto & [var, values] : factored_variables) {
+            transition_system_data_by_var[var].add_factored_transition(label_no, values);
         }
 
         /*
@@ -304,31 +300,6 @@ void FTSFactory::build_transitions() {
             }
         }
     }
-
-    if (sas_task.has_conditional_effects()) {
-        //Alvaro: commented out support of conditional effects
-        cerr << "Error: conditional effects are not supported." << endl;
-        utils::exit_with(utils::ExitCode::UNSUPPORTED);
-
-        // /*
-        //   TODO: Our method for generating transitions is only guarantueed to generate
-        //   sorted and unique transitions if the task has no conditional effects. We could
-        //   replace the instance variable by a call to has_conditional_effects(task_proxy).
-        //   Generally, the questions is whether we rely on sorted transitions anyway.
-        // */
-        // for (int var_no = 0; var_no < num_variables; ++var_no) {
-        //     vector<vector<Transition>> &transitions_by_label =
-        //         transition_system_data_by_var[var_no].transitions_by_label;
-        //     for (vector<Transition> &transitions : transitions_by_label) {
-        //         sort(transitions.begin(), transitions.end());
-        //         transitions.erase(unique(transitions.begin(),
-        //                                  transitions.end()),
-        //                           transitions.end());
-        //     }
-        // }
-    }
-
-
 }
 
 vector<unique_ptr<TransitionSystem>> FTSFactory::create_transition_systems() {

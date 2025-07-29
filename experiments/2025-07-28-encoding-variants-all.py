@@ -27,20 +27,41 @@ from snellius import SnelliusEnvironment
 DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
 BENCHMARKS_DIR = os.environ["DOWNWARD_BENCHMARKS"]
-REVISION = "28715a344c2902f48313eae89b9e046a71486e03"
+REVISION = "7d55c98e9f4d430cfb481614a2ce24aace44f2ce"
 REVISIONS = [REVISION]
 
 CONFIGS = []
 searches = {
-            "seq-basic-per-row": "sat(encoding=0,solver_quiet=true,label_order=label_order_linear)",
-            "seq-elim-row-col": "sat(encoding=1,solver_quiet=true,label_order=label_order_linear)",
-            "seq-elim-rnc-pairs": "sat(encoding=2,solver_quiet=true,label_order=label_order_linear)",
+		"el_rnc_slfloopt_labgr_chain": "sat(encoding=0,solver_quiet=true,label_order=label_order_linear)",
+		"el_rnc_slfloopt_labgr_loop": "sat(encoding=1,solver_quiet=true,label_order=label_order_linear)",
+		"el_rnc_slfloopt_labgr_seq": "sat(encoding=2,solver_quiet=true,label_order=label_order_linear)",
+
+		"el_rnc_slfloopt_chain": "sat(encoding=3,solver_quiet=true,label_order=label_order_linear)",
+		"el_rnc_slfloopt_loop": "sat(encoding=4,solver_quiet=true,label_order=label_order_linear)",
+		"el_rnc_slfloopt_seq": "sat(encoding=5,solver_quiet=true,label_order=label_order_linear)",
+
+		"el_rnc_labgr_seq": "sat(encoding=6,solver_quiet=true,label_order=label_order_linear)",
+
+		"el_rnc_seq": "sat(encoding=7,solver_quiet=true,label_order=label_order_linear)",
+
+
+		"row_slfloopt_labgr_chain": "sat(encoding=8,solver_quiet=true,label_order=label_order_linear)",
+		"row_slfloopt_labgr_loop": "sat(encoding=9,solver_quiet=true,label_order=label_order_linear)",
+		"row_slfloopt_labgr_seq": "sat(encoding=10,solver_quiet=true,label_order=label_order_linear)",
+                                 
+		"row_slfloopt_chain": "sat(encoding=11,solver_quiet=true,label_order=label_order_linear)",
+		"row_slfloopt_loop": "sat(encoding=12,solver_quiet=true,label_order=label_order_linear)",
+		"row_slfloopt_seq": "sat(encoding=13,solver_quiet=true,label_order=label_order_linear)",
+                                 
+		"row_labgr_seq": "sat(encoding=14,solver_quiet=true,label_order=label_order_linear)",
+                                 
+		"row_seq": "sat(encoding=15,solver_quiet=true,label_order=label_order_linear)",
 }
 
 DRIVER_OPTS = ["--overall-time-limit", "30m", "--overall-memory-limit", "1750m"]
 TRANSFORM_OPTS = {
 #        "-notrans" : ["--transform", "cost(cost_type=one)"],
-        "-onlyshrink" : ["--transform", "transform_merge_and_shrink(shrink_strategy=shrink_weak_bisimulation(ignore_irrelevant_tau_groups=false),label_reduction=exact(max_time=300,atomic_fts=true,before_shrinking=true,before_merging=false),shrink_atomic_fts=true,run_main_loop=false,max_time=900,cost_type=one,prune_transitions_from_goal=true,prune_transitions_from_goal=true)"],
+        "-shr" : ["--transform", "transform_merge_and_shrink(shrink_strategy=shrink_weak_bisimulation(ignore_irrelevant_tau_groups=false),label_reduction=exact(max_time=300,atomic_fts=true,before_shrinking=true,before_merging=false),shrink_atomic_fts=true,run_main_loop=false,max_time=900,cost_type=one,prune_transitions_from_goal=true,prune_transitions_from_goal=true)"],
 #        "-merge" : ["--transform", "transform_merge_and_shrink(shrink_strategy=shrink_bisimulation(greedy=false),merge_strategy=merge_stateless(merge_selector=score_based_filtering(scoring_functions=[product_size(1000),sf_miasm(shrink_strategy=shrink_bisimulation(greedy=false),max_states=100,threshold_before_merge=1),total_order(atomic_ts_order=reverse_level,product_ts_order=new_to_old,atomic_before_product=false)])),label_reduction=exact(max_time=300,atomic_fts=true,before_shrinking=true,before_merging=false),shrink_atomic_fts=true,run_main_loop=true,max_time=900)"],
         }
 
