@@ -7,7 +7,8 @@ import os
 from pathlib import Path
 import subprocess
 
-from lab.environments import TetralithEnvironment, LocalEnvironment
+from lab.deis_mcc import DEISSlurmEnvironment
+
 from lab.reports import Attribute, geometric_mean, arithmetic_mean
 from lab import tools
 from lab.parser import Parser
@@ -26,9 +27,9 @@ from snellius import SnelliusEnvironment
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
-BENCHMARKS_DIR = os.environ["DOWNWARD_BENCHMARKS"]
-BENCHMARKS_FTS_DIR = os.environ["FTS_BENCHMARKS"]
-REVISION = "28715a344c2902f48313eae89b9e046a71486e03"
+BENCHMARKS_DIR = '/nfs/home/cs.aau.dk/bx56lg/joao/benchmarks/downward-benchmarks'
+BENCHMARKS_FTS_DIR = '/nfs/home/cs.aau.dk/bx56lg/joao/benchmarks/fts-benchmarks'
+REVISION = "4adfb7c07a01a669ea9dde649a4c2cbd9ea4981a"
 REVISIONS = [REVISION]
 
 CONFIGS = []
@@ -56,15 +57,13 @@ for s_name, s_opt in searches.items():
 SUITE = common_setup.FTS_SUITE
 
 
-#ENVIRONMENT = LocalEnvironment(processes=1)
-ENVIRONMENT = SnelliusEnvironment(
-        email="g.behnke@uva.nl",
-        )
+ENVIRONMENT = DEISSlurmEnvironment(partition='rome', email="alto@cs.aau.dk")
 
 exp = IssueExperiment(
     revisions=REVISIONS,
     configs=CONFIGS,
     environment=ENVIRONMENT,
+    revision_cache='/nfs/home/cs.aau.dk/bx56lg/joao/revision-cache/'
 )
 
 exp.add_suite(BENCHMARKS_FTS_DIR, SUITE)
@@ -134,4 +133,5 @@ PLOT_FORMAT = "png"
 ##    )
 
 exp.run_steps()
+
 
