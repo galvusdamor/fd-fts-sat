@@ -22,6 +22,292 @@ extern "C"{
 	void ipasir_terminate (void * solver);
 }
 
+namespace fts_base_manager{
+	FTSBaseManager::FTSBaseManager(std::shared_ptr<task_representation::FTSTask> __fts):fts(__fts){}
+}
+
+namespace transitions_encoding{
+
+TransitionsEncoding::TransitionsEncoding(std::shared_ptr<task_representation::FTSTask> __fts) : FTSBaseManager(__fts){}
+
+FullTransitionsEncoding::FullTransitionsEncoding(bool __no_selfloop_SATvars, std::shared_ptr<task_representation::FTSTask> __fts):
+	TransitionsEncoding(__fts), no_selfloop_SATvars(__no_selfloop_SATvars){}
+
+void FullTransitionsEncoding::appendNewTransitionVars(map<int, map<int, vector<pair<Transition, int>>>> &newVars){
+	allTimesTransitionVars.push_back(newVars);
+}
+
+void FullTransitionsEncoding::generateTransitionVars(void* solver, sat_capsule &capsule) {
+	map<int, map<int, vector<pair<Transition, int>>>> transitionVars;
+	for(int ts = 0 ; ts < fts->get_size() ; ts++){
+		for(int label = 0 ; label < fts->get_num_labels() ; label++){
+			if(no_selfloop_SATvars && lm->isIrrelevantLabel(ts, label)){
+				continue;
+			}
+			auto transitions = fts->get_ts(ts).get_transitions_with_label(lm->getOrderedLabel(label));
+			vector<int> SATVars;
+			for(size_t t = 0 ; t < transitions.size() ; t++){
+				if(no_selfloop_SATvars && transitions[t].src == transitions[t].target){
+					transitionVars[ts][label].push_back({transitions[t],-1});
+					continue;
+				}
+				int transitionVar = capsule.new_variable();
+				SATVars.push_back(transitionVar);
+				transitionVars[ts][label].push_back({transitions[t],transitionVar});
+				DEBUG(capsule.registerVariable(transitionVar,"TS:"+to_string(ts)+";Label:"+to_string(label)+"--"+to_string(transitions[t].src)+"->"+to_string(transitions[t].target)));
+			}
+			atMostOne(solver, capsule, SATVars);
+		}
+	}
+	appendNewTransitionVars(transitionVars);
+}
+
+void FullTransitionsEncoding::appendPreconditions(vector<int> &impliesOrPrec, int ts, int relevantLabelPrec, int src){
+	for(pair<Transition, int> transition_prec : allTimesTransitionVars.back()[ts][lm->getRelevantLabel(ts, relevantLabelPrec)]){
+		if(transition_prec.first.target == src && !isSelfLoop(transition_prec.first)){
+			//Save transition vars whose target matches the source of the transition we are currently looking at
+			impliesOrPrec.push_back(transition_prec.second);
+		}
+	}
+}
+
+vector<int> TransitionsEncoding::getPreconditions(int src, int ts, int relevantLabel){
+	vector<int> impliesOrPrec;
+	for(int relevantLabelPrec = 0 ; relevantLabelPrec < relevantLabel ; relevantLabelPrec++){
+		appendPreconditions(impliesOrPrec, ts, relevantLabelPrec, src);
+	}
+	return impliesOrPrec;
+}
+
+void FullTransitionsEncoding::appendEffects(vector<int> &impliesOrEff, int ts, int relevantLabelEff, int target){
+	for(pair<Transition, int> transition_eff : allTimesTransitionVars.back()[ts][lm->getRelevantLabel(ts, relevantLabelEff)]){
+		if(transition_eff.first.target != target && !isSelfLoop(transition_eff.first)){
+			//Saving transitions that have a different target than the current transition and that are from a label that appears later
+			impliesOrEff.push_back(transition_eff.second);
+		}
+	}
+}
+
+vector<int> TransitionsEncoding::get_all_later_vars_moving_to_different_state(int target, int ts, int relevantLabel){
+	tuple<int,int,int> access = make_tuple(target,ts,relevantLabel);
+	auto it = moving_to_different_state_vars.find(access);
+	if (it == moving_to_different_state_vars.end()){
+		vector<int> impliesOrEff;
+		for(int relevantLabelEff = relevantLabel+1 ; relevantLabelEff < lm->getNumRelevantLabels(ts) ; relevantLabelEff++){
+			appendEffects(impliesOrEff, ts, relevantLabelEff, target);
+		}
+		moving_to_different_state_vars[access] = impliesOrEff;
+		return impliesOrEff;
+	}
+	return it->second;
+}
+
+
+bool FullTransitionsEncoding::has_to_encode_transition(Transition transition){
+	if (!no_selfloop_SATvars) return true;
+	return !isSelfLoop(transition);
+}
+
+
+bool SplitTransitionsEncoding::has_to_encode_transition(Transition transition){
+	return transition.src > 0;//the same as "return true" but just a "hacky way" to still use the argument so the compiler doesn't complain
+	//return true;
+}
+
+
+/**
+ * all SAT variables that represent moving *to* state "state" using the label "label" -- except for self-loop transitions
+*/
+vector<int> FullTransitionsEncoding::get_all_sat_vars_moving_to_state(int ts, int label, int state){
+	tuple<int,int,int> access = make_tuple(ts,label,state);
+	auto it = moving_to_state_vars.find(access);
+	if (it == moving_to_state_vars.end()){
+		vector<int> ret;
+		for(/* pair<Transition, int> */ auto transition : allTimesTransitionVars.back()[ts][lm->getRelevantLabel(ts, label)])
+			if (transition.first.target == state && has_to_encode_transition(transition.first))
+				ret.push_back(transition.second);
+		moving_to_state_vars[access] = ret;
+		return ret;
+	}
+	return it->second;
+}
+
+
+/**
+ * all states that have a non-encoded self-loop for this label
+*/
+vector<int> FullTransitionsEncoding::get_all_non_encoded_self_loop_states(int ts, int label){
+	tuple<int,int> access = make_tuple(ts,label);
+	auto it = states_with_non_encoded_transitions.find(access);
+	if (it == states_with_non_encoded_transitions.end()){
+		set<int> ret;
+		for(Transition transition : fts->get_ts(ts).get_transitions_with_label(lm->getOrderedLabel(lm->getRelevantLabel(ts, label))))
+			if (!has_to_encode_transition(transition))
+				ret.insert(transition.target);
+		vector<int> ret_vec(ret.begin(),ret.end());
+		return states_with_non_encoded_transitions[access] = ret_vec;
+	}
+	return it->second;
+}
+
+vector<vector<int>> TransitionsEncoding::compute_possible_label_movements(int ts, int label){
+	set<int> to,from,non;
+	for(Transition transition : fts->get_ts(ts).get_transitions_with_label(lm->getRelevantLabel(ts, label)))
+		if (has_to_encode_transition(transition)){
+			to.insert(transition.target);
+			from.insert(transition.src);
+		} else 
+			non.insert(transition.src);
+	vector<int> to_vec(to.begin(),to.end());
+	vector<int> from_vec(from.begin(),from.end());
+	vector<int> non_vec(non.begin(),non.end());
+
+	vector<vector<int>> from_to_non = {from_vec,to_vec,non_vec};
+	return states_label_can_move_from_to_and_non_encoded_state[make_tuple(ts,label)] = from_to_non;
+}
+
+vector<int> TransitionsEncoding::get_all_states_label_can_move_from(int ts, int label){
+	tuple<int,int> access = make_tuple(ts,label);
+	auto it = states_label_can_move_from_to_and_non_encoded_state.find(access);
+	if (it == states_label_can_move_from_to_and_non_encoded_state.end()){
+		return compute_possible_label_movements(ts,label)[0];
+	}
+	return (it->second)[0];
+}
+
+vector<int> TransitionsEncoding::get_all_states_label_can_move_to(int ts, int label){
+	tuple<int,int> access = make_tuple(ts,label);
+	auto it = states_label_can_move_from_to_and_non_encoded_state.find(access);
+	if (it == states_label_can_move_from_to_and_non_encoded_state.end()){
+		return compute_possible_label_movements(ts,label)[1];
+	}
+	return (it->second)[1];
+}
+
+vector<int> TransitionsEncoding::get_all_non_encoded_self_loop_states(int ts, int label){
+	tuple<int,int> access = make_tuple(ts,label);
+	auto it = states_label_can_move_from_to_and_non_encoded_state.find(access);
+	if (it == states_label_can_move_from_to_and_non_encoded_state.end()){
+		return compute_possible_label_movements(ts,label)[2];
+	}
+	return (it->second)[2];
+}
+
+
+void FullTransitionsEncoding::encode_label_consistency(void* solver, int ts, int relevantLabelIndex){
+	vector<int> labelTransitionSATVars;
+
+	for(pair<Transition, int> transition : allTimesTransitionVars.back()[ts][lm->getRelevantLabel(ts, relevantLabelIndex)])
+		if (has_to_encode_transition(transition.first))
+			labelTransitionSATVars.push_back(transition.second);
+
+	if(labelTransitionSATVars.size() > 0){
+		//Assert double sided implication between labels and transitions
+		if(!(lm->containsSelfLoops(ts, lm->getRelevantLabel(ts, relevantLabelIndex)))){
+			impliesOr(solver, lm->getLabelSATVar(lm->getRelevantLabel(ts, relevantLabelIndex)), labelTransitionSATVars);
+		}
+		for(size_t ltsv = 0 ; ltsv < labelTransitionSATVars.size() ; ltsv++){
+			implies(solver, labelTransitionSATVars[ltsv], lm->getLabelSATVar(lm->getRelevantLabel(ts, relevantLabelIndex)));
+		}
+	}
+}
+
+void TransitionsEncoding::encodeRegularPreconditionsAndEffects(int ts, int relevantLabel){
+	for(int state : get_all_states_label_can_move_from(ts,relevantLabel)){
+		for(int transition_from_state : get_all_sat_vars_moving_from_state(ts,relevantLabel,state)){
+			vector<int> impliesOrPrec = getPreconditions(state, ts, relevantLabel);
+			//Save previous state for possible precondition of a transition
+			impliesOrPrec.push_back(previousStateVars[ts][state]);
+
+			//Constraint enforcing preconditions for a non self-loop transition
+			impliesOr(solver, transition_from_state, impliesOrPrec);
+		}
+	}
+
+	for(int state : get_all_states_label_can_move_to(ts,relevantLabel)){
+		for(int transition_to_state : get_all_sat_vars_moving_to_state(ts,relevantLabel,state)){
+			vector<int> impliesOrEff = get_all_later_vars_moving_to_different_state(state, ts, relevantLabel);
+			impliesOrEff.push_back(nextStateVars[ts][state]);
+			//Constraint enforcing effects for a non self-loop transition
+			impliesOr(solver, move_totransition_to_state_var, impliesOrEff);
+		}
+	}
+
+	///// Encoding self-loops, i.e., transitions that don't get encoded explicitly as transitions
+	vector<int> precsForSelfLoops;
+	for(int state : get_all_non_encoded_self_loop_states(ts,relevantLabel)){
+		vector<int> impliesOrPrec = getPreconditions(state, ts, relevantLabel);
+		//Save the preconditions stored until now to ensure correct possible utilisation of self loops in constraints later
+		precsForSelfLoops.insert(precsForSelfLoops.end(), impliesOrPrec.begin(), impliesOrPrec.end());
+		//Save previous state for possible precondition of a transition
+		precsForSelfLoops.push_back(previousStateVars[ts][state]);
+	}
+
+
+	if(precsForSelfLoops.size() > 0){
+		// all variables that represent a move to a non-self-loop transition
+		vector<int> otherTransitionsInLabelWithSelfLoop;
+		for(int state : get_all_states_label_can_move_from(ts,relevantLabel))
+			for(int transition_from_state : get_all_sat_vars_moving_from_state(ts,relevantLabel,state))
+				otherTransitionsInLabelWithSelfLoop.push_back(transition_from_state);
+
+		//Assert preconditions for self loops
+		//If a label has both types of transitions, then either one of the none self loop transitions is used or one of the preconditions for the self loops is satisfied
+		precsForSelfLoops.insert(precsForSelfLoops.end(), otherTransitionsInLabelWithSelfLoop.begin(), otherTransitionsInLabelWithSelfLoop.end());
+		impliesOr(solver, labelVars[relevantLabels[ts][relevantLabel]], precsForSelfLoops);
+	}
+}
+
+bool TransitionsEncoding::isIrrelevantLabel(int ts, int label) const {
+	auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
+	if((int)transitions.size() != fts->get_ts(ts).get_size()) return false;
+	for(size_t t = 0 ; t < transitions.size() ; t++){
+		if(transitions[t].src != transitions[t].target){
+			return false;
+		}
+	}
+	return true;
+}
+
+bool TransitionsEncoding::isSelfLoop(Transition t) const {
+	return t.src == t.target;
+}
+
+};
+
+namespace label_manager{
+
+	int LabelManager::getOrderedLabel(int index){
+		return labelOrder[index];
+	}
+
+	int LabelManager::getRelevantLabel(int ts, int labelIndex){
+		return relevantLabels[ts][labelIndex];
+	}
+
+	int LabelManager::getNumRelevantLabels(int ts){
+		return relevantLabels[ts].size();
+	}
+
+	int LabelManager::getLabelSATVar(int label){
+		return allTimesLabelVars.back()[label];
+	}
+
+	
+};
+
+namespace states_manager{
+	
+	int StatesManager::getPreviousStateSATVar(int ts, int state){
+	
+	}
+
+	int StatesManager::getNextStateSATVar(int ts, int state){
+	
+	}
+
+};
+
 namespace sat_search {
 SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	label_order_finder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order")),
@@ -76,20 +362,9 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	if (length_by_iteration) forceAtLeastOneAction = false;
 }
 
-bool SATSearch::isIrrelevantLabel(int ts, int label){
-	auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
-	if((int)transitions.size() != fts->get_ts(ts).get_size()) return false;
-	for(size_t t = 0 ; t < transitions.size() ; t++){
-		if(transitions[t].src != transitions[t].target){
-			return false;
-		}
-	}
-	return true;
-}
 
-bool isSelfLoop(Transition t){
-	return t.src == t.target;
-}
+
+
 
 bool SATSearch::containsSelfLoops(int ts, int label){
 	auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
@@ -670,24 +945,30 @@ SearchStatus SATSearch::step() {
 					vector<int> labelTransitionSATVars;
 					for(pair<Transition, int> transition : transitionVars[ts][relevantLabels[ts][relevantLabel]]){
 						if(!isSelfLoop(transition.first)){
+							//Save the transition vars to make the double implication between label vars and transition vars
 							labelTransitionSATVars.push_back(transition.second);
 						}
 						vector<int> impliesOrPrec;
+						//Save previous state for possible precondition of a transition
 						impliesOrPrec.push_back(previousStateVars[ts][transition.first.src]);
 						for(size_t relevantLabelPrec = 0 ; relevantLabelPrec < relevantLabel ; relevantLabelPrec++){
 							for(pair<Transition, int> transition_prec : transitionVars[ts][relevantLabels[ts][relevantLabelPrec]]){
 								if(transition_prec.first.target == transition.first.src && !isSelfLoop(transition_prec.first)){
+									//Save transition vars whose target matches the source of the transition we are currently looking at
 									impliesOrPrec.push_back(transition_prec.second);
 								}
 							}
 						}
 						if(isSelfLoop(transition.first)){
+							//Save the preconditions stored until now to ensure correct possible utilisation of self loops in constraints later
 							precsForSelfLoops.insert(precsForSelfLoops.end(), impliesOrPrec.begin(), impliesOrPrec.end());
 							continue;
 						}
 
+						//Save a non-loop transition from labels that have both types of transitions
 						otherTransitionsInLabelWithSelfLoop.push_back(transition.second);
 
+						//Constraint enforcing preconditions for a non self-loop transition
 						impliesOr(solver, transition.second, impliesOrPrec);
 
 						vector<int> impliesOrEff;
@@ -695,14 +976,17 @@ SearchStatus SATSearch::step() {
 						for(size_t relevantLabelEff = relevantLabel+1 ; relevantLabelEff < relevantLabels[ts].size() ; relevantLabelEff++){
 							for(pair<Transition, int> transition_eff : transitionVars[ts][relevantLabels[ts][relevantLabelEff]]){
 								if(transition_eff.first.target != transition.first.target && !isSelfLoop(transition_eff.first)){
+									//Saving transitions that have a different target than the current transition and that are from a label that appears later
 									impliesOrEff.push_back(transition_eff.second);
 								}
 							}
 						}
+						//Constraint enforcing effects for a non self-loop transition
 						impliesOr(solver, transition.second, impliesOrEff);
 					}
 
 					if(labelTransitionSATVars.size() > 0){
+						//Assert double sided implication between labels and transitions
 						if(!containsSelfLoops(ts, relevantLabels[ts][relevantLabel])){
 							impliesOr(solver, labelVars[relevantLabels[ts][relevantLabel]], labelTransitionSATVars);
 						}
@@ -711,6 +995,8 @@ SearchStatus SATSearch::step() {
 						}
 					}
 					if(precsForSelfLoops.size() > 0){
+						//Assert preconditions for self loops
+						//If a label has both types of transitions, then either one of the none self loop transitions is used or one of the preconditions for the self loops is satisfied
 						precsForSelfLoops.insert(precsForSelfLoops.end(), otherTransitionsInLabelWithSelfLoop.begin(), otherTransitionsInLabelWithSelfLoop.end());
 						impliesOr(solver, labelVars[relevantLabels[ts][relevantLabel]], precsForSelfLoops);
 					}
