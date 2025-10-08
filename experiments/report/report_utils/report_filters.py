@@ -1,12 +1,12 @@
 def ignore_unexplained_errors(run):
     def ignore_error(error):
         for x in ['planner failed to log peak memory', 'run.err: warning: could not determine peak memory',
-                  'Found multiple occurences of Total time', 'planner finished and wrote', 'BDDError', 'MemoryError', 'planner wall-clock time:','exitcode--15', 'planner exit code:',
+                  'Found multiple occurences of Total time', 'planner finished and wrote', 'BDDError', 'MemoryError', 'planner wall-clock time:','exitcode--15', 'planner exit code:'
                   'cannot allocate memory', 'Fatal glibc error: malloc', 'SystemError: error return without exception set',
                   'rm-tmp-files.py',
                   'planner wrote',
-                  'output-to-slurm.err',
-                  'out-of-memory',
+                  'output-to-slurm.err','exitcode',
+                  'out-of-memory','driver.log',
                   'exitcode-250']:
             if x in error:
                 return True

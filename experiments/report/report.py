@@ -10,6 +10,7 @@ from report_utils.nice_scatter import NiceScatterPlotReport, add_nice_scatter_pl
 from report_utils.remove_file_step import remove_file
 from report_utils.table_relative_expansions import get_table_relative_expansions
 from report_utils.report_filters import joint_domains, invert_min_negative_dominance, unsolvable_wo_mystery, ignore_unexplained_errors, FilterAtr
+from report_utils.total_coverage_table import TotalCoverageTable
 
 
 TARGET_DIR = f"{os.path.dirname(os.path.abspath(__file__))}/report"
@@ -23,10 +24,13 @@ def change_domain(run):
 exp.add_report(AbsoluteReport(attributes=[
     "coverage",
     "cost",
-    "planner_time",
-    "unsolvable_wo_mystery"
-], filter= [change_domain], #,filter_algorithm=['lmcut','lmcut-bisim-dfp50k-bissh-gen']),
+    "planner_time", 'sat_variables', 'sat_clauses'
+    #"unsolvable_wo_mystery"
+], filter= [change_domain,ignore_unexplained_errors], #,filter_algorithm=['lmcut','lmcut-bisim-dfp50k-bissh-gen']),
                               ), name="report", outfile="report.html")
+
+
+exp.add_report(TotalCoverageTable(), name="cov_table", outfile="cov_table.txt")
 
 
 algo_to_latex = {
