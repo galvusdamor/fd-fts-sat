@@ -31,36 +31,37 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	multiplier(opts.get<double>("multiplier")),
 	length_by_iteration(opts.get<bool>("length_by_iteration")),
 	maximum_iteration(opts.get<int>("maximum_iteration")),
+	encoding(encoding_type(opts.get_enum("encoding"))),
 	fts(g_main_task) {
 
 	kissat_quietMode = opts.get<bool>("solver_quiet");
 
 	switch (opts.get<int>("encoding")){
 
-		case 0:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; chainsParallelism = true; break;
-		case 1:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; selfloopParallelism = true; break;
-		case 2:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; sequential = true; break;
+		case 0:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; break;
+		case 1:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; break;
+		case 2:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; break;
 
-		case 3:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; chainsParallelism = true; break;
-		case 4:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; selfloopParallelism = true; break;
-		case 5:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; sequential = true; break;
+		case 3:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; break;
+		case 4:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; break;
+		case 5:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; break;
 
-		case 6:  eliminating_rnc_and_pairs = true; useLabelGroups = true; sequential = true; break;
+		case 6:  eliminating_rnc_and_pairs = true; useLabelGroups = true; break;
 
-		case 7:  eliminating_rnc_and_pairs = true; sequential = true; break;
+		case 7:  eliminating_rnc_and_pairs = true; break;
 
 
-		case 8:  basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; chainsParallelism = true; break;
-		case 9:  basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; selfloopParallelism = true; break;
-		case 10: basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; sequential = true; break;
+		case 8:  basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; break;
+		case 9:  basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; break;
+		case 10: basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; break;
 
-		case 11: basic_per_row = true; useSelfloopOptimisation = true; chainsParallelism = true; break;
-		case 12: basic_per_row = true; useSelfloopOptimisation = true; selfloopParallelism = true; break;
-		case 13: basic_per_row = true; useSelfloopOptimisation = true; sequential = true; break;
+		case 11: basic_per_row = true; useSelfloopOptimisation = true; break;
+		case 12: basic_per_row = true; useSelfloopOptimisation = true; break;
+		case 13: basic_per_row = true; useSelfloopOptimisation = true; break;
 
-		case 14: basic_per_row = true; useLabelGroups = true; sequential = true; break;
+		case 14: basic_per_row = true; useLabelGroups = true; break;
 
-		case 15: basic_per_row = true; sequential = true; break;
+		case 15: basic_per_row = true; break;
 	}
 
 	if (opts.get<int>("length_iteration") != -1){
@@ -308,9 +309,9 @@ vector<int> SATSearch::generateLabelVars(__attribute__((unused)) void* solver, s
 		DEBUG(capsule.registerVariable(labelVar,"Label:"+to_string(label)));
 		//cout << labelVar << endl;
 	}
-	if(sequential){
+	if(encoding == SEQUENTIAL){
 		atMostOne(solver, capsule, labelVars);
-	}else if(selfloopParallelism){
+	}else if(encoding == SELF_LOOP_PARALLEL){
 		for(int ts = 0 ; ts < fts->get_size() ; ts++){
 			vector<int> non_parallelisable_labels;
 			for(int label = 0 ; label < fts->get_num_labels() ; label++){
@@ -546,7 +547,7 @@ SearchStatus SATSearch::step() {
 		if(basic_per_row){
 			map<int, map<int, vector<int>>> topHelperVars;
 			map<int, map<int, vector<int>>> bottomHelperVars;
-			if(chainsParallelism){
+			if(encoding == CHAINS_PARALLEL){
 				topHelperVars = generateHelperVars(capsule/* , int timestep */);
 				bottomHelperVars = generateHelperVars(capsule/* , int timestep */);
 			}
@@ -657,7 +658,7 @@ SearchStatus SATSearch::step() {
 					}
 				}
 
-				if(chainsParallelism){
+				if(encoding == CHAINS_PARALLEL){
 					
 					for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
 						for(size_t l = 0 ; l < labelsWithEffectOnValue[ts][states].size() ; l++){
@@ -685,7 +686,7 @@ SearchStatus SATSearch::step() {
 		}else if(eliminating_rnc_and_pairs){
 			map<int, map<int, vector<int>>> topHelperVars;
 			map<int, map<int, vector<int>>> bottomHelperVars;
-			if(chainsParallelism){
+			if(encoding == CHAINS_PARALLEL){
 				topHelperVars = generateHelperVars(capsule/* , int timestep */);
 				bottomHelperVars = generateHelperVars(capsule/* , int timestep */);
 			}
@@ -835,7 +836,7 @@ SearchStatus SATSearch::step() {
 					}
 				}
 
-				if(chainsParallelism){
+				if(encoding == CHAINS_PARALLEL){
 					
 					for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
 						for(size_t l = 0 ; l < labelsWithEffectOnValue[ts][states].size() ; l++){

@@ -21,6 +21,13 @@ namespace label_order_finder {
 
 namespace sat_search{
 
+enum encoding_type {
+	SEQUENTIAL,
+	SELF_LOOP_PARALLEL,
+	CHAINS_PARALLEL
+};
+
+
 class SATSearch : public SearchEngine {
 private:
 	std::shared_ptr<label_order_finder::LabelOrderFinder> label_order_finder;
@@ -41,10 +48,7 @@ private:
 
 	bool no_selfloop_SATvars;
 
-
-	bool sequential = false;
-	bool selfloopParallelism = false;
-	bool chainsParallelism = false;
+	encoding_type encoding;
 
 	bool useLabelGroups = false;
 	bool useSelfloopOptimisation = false;
