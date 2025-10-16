@@ -5,16 +5,18 @@
 
 #include "sat_search.h"
 
-// #include "../plugins/options.h"
 #include "../utils/logging.h"
 #include "../utils/timer.h"
-#include "ipasir.h"
-#include "sat_encoder.h"
+#include "../sat/ipasir.h"
+#include "../sat/length_strategy.h"
+#include "../sat/sat_encoder.h"
 #include "../task_utils/label_order_finder.h"
+
+#include "../options/options.h"
+
 
 using namespace std;
 using namespace task_representation;
-
 
 bool kissat_quietMode;
 
@@ -23,30 +25,20 @@ extern "C"{
 }
 
 namespace sat_search {
-SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
+SATSearch::SATSearch(const options::Options &opts): SearchEngine(opts),
 	stepTimeLimit(opts.get<int>("step_time_limit")),
-	planLength(opts.get<int>("plan_length")),
-	start_length(opts.get<int>("start_length")),
-	multiplier(opts.get<double>("multiplier")),
-	length_by_iteration(opts.get<bool>("length_by_iteration")),
-	maximum_iteration(opts.get<int>("maximum_iteration")),
-	encoding(encoding_type(opts.get_enum("encoding"))),
 	useLabelGroups(opts.get<bool>("use_label_group")),
 	useSelfloopOptimisation(opts.get<bool>("use_self_loop_optimisation")),
 	useEmptyRows(opts.get<bool>("use_empty_rows")),
 	useEmptyCols(opts.get<bool>("use_empty_cols")),
 	useEmptyPillars(opts.get<bool>("use_empty_pillars")),
-	fts(g_main_task) {
+	encoding(encoding_type(opts.get_enum("encoding"))),
+	length_strategy(opts.get<shared_ptr<LengthStrategy>>("length_strategy")),
+	fts(g_main_task),
+	stepNumber(0), currentLength (length_strategy->get_first_length()) {
 
 	kissat_quietMode = opts.get<bool>("solver_quiet");
 
-	if (opts.get<int>("length_iteration") != -1){
-		planLength = int(0.5 + start_length * pow(multiplier, opts.get<int>("length_iteration")));
-		forceAtLeastOneAction = false;
-	} else
-		forceAtLeastOneAction = true;
-
-	if (length_by_iteration) forceAtLeastOneAction = false;
 }
 
 bool SATSearch::isIrrelevantLabel(int ts, int label){
@@ -80,9 +72,9 @@ bool SATSearch::hasMixedTransitions(int ts, int label){
 	auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
 	for(size_t t = 0 ; t < transitions.size() ; t++){
 		if(transitions[t].src == transitions[t].target){
-			return selfloop = true;
+			return selfloop = true; //TODO: Assignment in return ????
 		}else if(transitions[t].src != transitions[t].target){
-			return normalTransition = true;
+			return normalTransition = true; //TODO: Assignment in return ????
 		}
 	}
 	return (selfloop && normalTransition);
@@ -98,7 +90,7 @@ bool SATSearch::isAlwaysSelfLoop(int ts, int label){
 	return true;
 }
 
-int SATSearch::findPreviousValidAuxVar(vector<int> &auxVars, int label){
+int SATSearch::findPreviousValidAuxVar(const vector<int> &auxVars, int label){
 	for(int prev = label-1 ; prev >=0 ; prev--){
 		if(auxVars[prev] != -1) return auxVars[prev];
 	}
@@ -196,16 +188,7 @@ void SATSearch::initialize() {
 	}
 	
 	stepNumber = 0;
-
-	if (planLength != -1){
-		currentLength = planLength;
-	} else {
-		if (length_by_iteration){
-			currentLength = start_length;
-		} else {
-			currentLength = 1;
-		}
-	}
+	currentLength = length_strategy->get_first_length();
 
     cout << "SAT init time: " << sat_init_timer << endl;
 }
@@ -235,7 +218,7 @@ vector<int> SATSearch::generateLabelVars(__attribute__((unused)) void* solver, s
 	return labelVars;
 }
 
-map<int, vector<int>> SATSearch::generateLabelGroupVars(void* solver, sat_capsule & capsule, vector<int> &labelVars/* , int timestep */){
+map<int, vector<int>> SATSearch::generateLabelGroupVars(void* solver, sat_capsule & capsule, const vector<int> &labelVars/* , int timestep */){
 	map<int, vector<int>> labelGroupVars;
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		for(size_t lg = 0 ; lg < labelGroups[ts].size() ; lg++){
@@ -336,15 +319,15 @@ map<int, map<int, vector<int>>> SATSearch::getApplicableLabels(){
 	return applicableLabels;
 }
 
-map<int, map<int, map<int, vector<int>>>> SATSearch::getSuccessorStates(map<int, map<int, vector<int>>> applicableLabels){
+map<int, map<int, map<int, vector<int>>>> SATSearch::getSuccessorStates(const map<int, map<int, vector<int>>> & applicableLabels){
 	map<int, map<int, map<int, vector<int>>>> successorStates;
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
-			for(size_t label = 0 ; label < applicableLabels[ts][states].size() ; label++){
-				auto transitions = fts->get_ts(ts).get_transitions_with_label(applicableLabels[ts][states][label]);
+			for(int label : applicableLabels.at(ts).at(states)){
+				auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
 				for(size_t t = 0 ; t < transitions.size() ; t++){
 					if(transitions[t].src == states){
-						successorStates[ts][states][applicableLabels[ts][states][label]].push_back(transitions[t].target);
+						successorStates[ts][states][label].push_back(transitions[t].target);
 					}
 				}
 			}
@@ -616,8 +599,9 @@ SearchStatus SATSearch::step() {
 
 		encode_transition(solver,capsule,previousStateVars,labelVars,labelGroupVars,nextStateVars);
 	
-		if (forceAtLeastOneAction)
+		if (length_strategy->forceAtLeastOneAction()) {
 			atLeastOne(solver, capsule, labelVars);
+		}
 		// encode the restrictions on which actions are allowed in parallel as per the encoding
 		if(encoding == SEQUENTIAL)
 			encode_sequential(solver,capsule,labelVars);
@@ -766,9 +750,9 @@ SearchStatus SATSearch::step() {
 				<< " labels " << labels.size() << " timesteps with label " << timesteps_with_labels.size()
 				<< " compression " << double(labels.size()) / timesteps_with_labels.size()
 				<< endl;
-		if (maximum_iteration == -1){
+		//TODO: Why did we have this if???: if (maximum_iteration == -1){
 			return SOLVED;
-		}
+		//}
 	} else {
 		cout << "STEP " << stepNumber << " length " << currentLength
 				<< " UNSAT time " << step_timer
@@ -777,21 +761,19 @@ SearchStatus SATSearch::step() {
 		ipasir_release(solver);
 	}
 
+	stepNumber++;
+	auto next_length = length_strategy->get_next_length(stepNumber, currentLength);
 
-	// otherwise
-	if (planLength == currentLength || (length_by_iteration && stepNumber == maximum_iteration))
+	if (!next_length) {
 		return FAILED;
-	else {
-		allTimesStateVars.clear();
-		allTimesLabelVars.clear();
-		
-		stepNumber++;
-		if (length_by_iteration){
-			currentLength = int(0.5 + start_length * pow(multiplier, stepNumber));
-		} else // simple sequential iteration
-			currentLength++;
-		return IN_PROGRESS;
 	}
+
+	allTimesStateVars.clear();
+	allTimesLabelVars.clear();
+
+	currentLength = next_length.value();
+
+	return IN_PROGRESS;
 }
 
 void SATSearch::print_statistics() const{

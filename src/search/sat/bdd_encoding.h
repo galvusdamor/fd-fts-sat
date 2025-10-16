@@ -2,7 +2,7 @@
 #define SEARCH_ALGORITHMS_SAT_SEARCH
 
 #include "sat_encoding.h"
-#include "../search_engines/sat_encoder.h"
+#include "sat_encoder.h"
 #include "../task_representation/label_equivalence_relation.h"
 
 

@@ -8,7 +8,7 @@
 // #include "../plugins/options.h"
 #include "../utils/logging.h"
 #include "../utils/timer.h"
-#include "../search_engines/ipasir.h"
+#include "ipasir.h"
 #include "../task_utils/label_order_finder.h"
 
 using namespace std;

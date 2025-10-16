@@ -1,32 +1,62 @@
 #ifndef SAT_LENGTH_STRATEGY_H
 #define SAT_LENGTH_STRATEGY_H
+#include <optional>
+
+namespace options {
+    class Options;
+}
 
 namespace sat_search {
     class LengthStrategy {
+    public:
         virtual int get_first_length() const = 0;
-        virtual int get_next_length(int previous_length) const = 0;
+        virtual std::optional<int> get_next_length(int step_number, int previous_length) const = 0;
+        virtual bool forceAtLeastOneAction() const {
+            return false;
+        }
+    };
+
+    class LengthStrategyConstant : public LengthStrategy {
+        const int plan_length;
+    public:
+        explicit LengthStrategyConstant(const options::Options & opts);
+
+        int get_first_length() const override {
+            return plan_length;
+        }
+
+        std::optional<int> get_next_length(int , int) const override {
+            return std::nullopt;
+        }
     };
 
     class LengthStrategyOneByOne : public LengthStrategy {
-
-        int get_first_length() override {
+    public:
+        int get_first_length() const override {
             return 1;
         }
 
-        int get_next_length(int previous_length) override {
+        std::optional<int> get_next_length(int , int previous_length) const override {
             return previous_length + 1;
+        }
+
+        bool forceAtLeastOneAction() const override {
+            return true; //TODO: SHould this be an option?
         }
     };
 
     class LengthStrategyByIteration : public LengthStrategy {
         const int start_length;
         const double multiplier;
+        const int maximum_iteration;
+    public:
+        LengthStrategyByIteration (const options::Options & opts);
 
-        LengthStrategyByIteration (const Options & opts);
-
-        int get_next_length(int previous_length) override {
-            int(0.5 + start_length * pow(multiplier, stepNumber);
+        int get_first_length() const override {
+            return start_length;
         }
+
+        std::optional<int> get_next_length(int step_number, int previous_length) const override;
     };
 }
 
