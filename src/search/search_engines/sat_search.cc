@@ -24,7 +24,6 @@ extern "C"{
 
 namespace sat_search {
 SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
-	label_order_finder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order")),
 	stepTimeLimit(opts.get<int>("step_time_limit")),
 	planLength(opts.get<int>("plan_length")),
 	start_length(opts.get<int>("start_length")),
@@ -118,9 +117,6 @@ void SATSearch::initialize() {
 	utils::Timer sat_init_timer;
 	cout << "Initialising" << endl;
 	cout << "My FTS task has " << fts->get_size() << " systems and " << fts->get_num_labels() << " labels." << endl;
-
-	labelOrder = label_order_finder->find_order(*fts);
-
 
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		map<set<pair<int, int>>, vector<int>> label_groups;
@@ -282,7 +278,7 @@ map<int, map<int, vector<pair<Transition, int>>>> SATSearch::generateTransitionV
 			if(no_selfloop_SATvars && isIrrelevantLabel(ts, label)){
 				continue;
 			}
-			auto transitions = fts->get_ts(ts).get_transitions_with_label(labelOrder[label]);
+			auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
 			vector<int> SATVars;
 			for(size_t t = 0 ; t < transitions.size() ; t++){
 				if(no_selfloop_SATvars && transitions[t].src == transitions[t].target){
@@ -307,7 +303,7 @@ map<int, map<int, vector<int>>> SATSearch::generateAuxVars(sat_capsule &capsule)
 			for(int label = 0 ; label < fts->get_num_labels()-1 ; label++){
 				if(no_selfloop_SATvars){
 					bool is_always_self_loop = true;
-					auto transitions = fts->get_ts(ts).get_transitions_with_label(labelOrder[label]);
+					auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
 					for(size_t t = 0 ; t < transitions.size() ; t++){
 						if(transitions[t].src != transitions[t].target){
 							is_always_self_loop = false;
@@ -331,7 +327,7 @@ map<int, map<int, vector<int>>> SATSearch::getApplicableLabels(){
 	map<int, map<int, vector<int>>> applicableLabels;
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		for(int label = 0 ; label < fts->get_num_labels() ; label++){
-			vector<int> labelPrec = fts->get_ts(ts).get_label_precondition((task_representation::LabelID)labelOrder[label]);
+			vector<int> labelPrec = fts->get_ts(ts).get_label_precondition((task_representation::LabelID)label);
 			for(size_t state = 0 ; state < labelPrec.size() ; state++){
 				applicableLabels[ts][labelPrec[state]].push_back(label);
 			}
@@ -345,7 +341,7 @@ map<int, map<int, map<int, vector<int>>>> SATSearch::getSuccessorStates(map<int,
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
 			for(size_t label = 0 ; label < applicableLabels[ts][states].size() ; label++){
-				auto transitions = fts->get_ts(ts).get_transitions_with_label(labelOrder[applicableLabels[ts][states][label]]);
+				auto transitions = fts->get_ts(ts).get_transitions_with_label(applicableLabels[ts][states][label]);
 				for(size_t t = 0 ; t < transitions.size() ; t++){
 					if(transitions[t].src == states){
 						successorStates[ts][states][applicableLabels[ts][states][label]].push_back(transitions[t].target);
@@ -738,17 +734,6 @@ SearchStatus SATSearch::step() {
 			statesPerTimestep.push_back(notRepeated);
 			stateReconstructor.clear();
 			notRepeated.clear();
-
-			
-			if (selectedLabels.size()){
-				set<int> labelSet(selectedLabels.begin(), selectedLabels.end());
-				selectedLabels.clear();
-				for (const int & l : labelOrder)
-					if (labelSet.count(l)){
-						cout << "Actual Order label: " << l << endl;
-						selectedLabels.push_back(l);
-					}
-			}
 
 			labelsPerTimestep.push_back(selectedLabels);
 		}

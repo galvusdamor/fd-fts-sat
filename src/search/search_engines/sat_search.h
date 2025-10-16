@@ -8,16 +8,11 @@
 #include "../task_representation/transition_system.h"
 #include "../task_representation/label_equivalence_relation.h"
 
-#include "../task_utils/label_order_finder.h"
-
 
 namespace plugins {
 class Feature;
 }
 
-namespace label_order_finder {
-	class LabelOrderFinder;
-}
 
 namespace sat_search{
 
@@ -30,8 +25,6 @@ enum encoding_type {
 
 class SATSearch : public SearchEngine {
 private:
-	std::shared_ptr<label_order_finder::LabelOrderFinder> label_order_finder;
-
 	int stepTimeLimit;
 
 	// global limit
@@ -60,7 +53,6 @@ private:
 	
 	std::shared_ptr<task_representation::FTSTask> fts;
 
-    std::vector<int> labelOrder;
     std::vector<std::vector<int>> relevantLabels;
 	std::vector<std::vector<int>> labelsWithoutOnlySelfLoops;
 	std::map<int, std::map<int, std::vector<int>>> labelsWithEffectOnValue;
