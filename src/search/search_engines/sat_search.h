@@ -10,14 +10,6 @@
 
 #include "../task_utils/label_order_finder.h"
 
-struct BlockInfo {
-    std::vector<int> empty_rows;
-    std::vector<int> empty_columns;
-    std::map<int, std::vector<int>> extra_ones_per_row;    // rows with 1's outside block
-    std::map<int, std::vector<int>> extra_ones_per_column; // columns with 1's outside block
-};
-
-
 
 namespace plugins {
 class Feature;
@@ -48,7 +40,6 @@ private:
 	int maximum_iteration;
 
 	bool no_selfloop_SATvars;
-	bool computing_block;
 
 
 	bool sequential = false;
@@ -67,7 +58,6 @@ private:
 
     std::vector<int> labelOrder;
     std::vector<std::vector<int>> relevantLabels;
-	std::map<int, std::map<int, BlockInfo>> labelBasedEncodingInfo;
 	std::vector<std::vector<int>> labelsWithoutOnlySelfLoops;
 	std::map<int, std::map<int, std::vector<int>>> labelsWithEffectOnValue;
 	std::map<int, std::map<int, std::set<int>>> empty_rows, empty_cols;
@@ -84,7 +74,6 @@ protected:
 	virtual bool isAlwaysSelfLoop(int ts, int label);
 	bool hasMixedTransitions(int ts, int label);
 	int findPreviousValidAuxVar(std::vector<int> &auxVars, int label);
-	BlockInfo find_largest_block(const std::vector<std::vector<int>>& filled_columns_per_row);
 	bool hasSelfLoopOnValue(int ts, int value, int label);
 	virtual void checkSolution(std::vector<std::vector<std::vector<int>>> &allTimesStateVars, std::vector<std::vector<int>> &allTimesLabelVars, 
 		std::vector<std::map<int, std::map<int, std::vector<std::pair<task_representation::Transition, int>>>>> &allTimesTransitionVars, int length, void* solver);

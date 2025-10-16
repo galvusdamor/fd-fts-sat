@@ -37,30 +37,30 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 
 	switch (opts.get<int>("encoding")){
 
-		case 0:  computing_block = false; eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; chainsParallelism = true; break;
-		case 1:  computing_block = false; eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; selfloopParallelism = true; break;
-		case 2:  computing_block = false; eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; sequential = true; break;
+		case 0:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; chainsParallelism = true; break;
+		case 1:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; selfloopParallelism = true; break;
+		case 2:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; sequential = true; break;
 
-		case 3:  computing_block = false; eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; chainsParallelism = true; break;
-		case 4:  computing_block = false; eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; selfloopParallelism = true; break;
-		case 5:  computing_block = false; eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; sequential = true; break;
+		case 3:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; chainsParallelism = true; break;
+		case 4:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; selfloopParallelism = true; break;
+		case 5:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; sequential = true; break;
 
-		case 6:  computing_block = false; eliminating_rnc_and_pairs = true; useLabelGroups = true; sequential = true; break;
+		case 6:  eliminating_rnc_and_pairs = true; useLabelGroups = true; sequential = true; break;
 
-		case 7:  computing_block = false; eliminating_rnc_and_pairs = true; sequential = true; break;
+		case 7:  eliminating_rnc_and_pairs = true; sequential = true; break;
 
 
-		case 8:  computing_block = false; basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; chainsParallelism = true; break;
-		case 9:  computing_block = false; basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; selfloopParallelism = true; break;
-		case 10: computing_block = false; basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; sequential = true; break;
+		case 8:  basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; chainsParallelism = true; break;
+		case 9:  basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; selfloopParallelism = true; break;
+		case 10: basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; sequential = true; break;
 
-		case 11: computing_block = false; basic_per_row = true; useSelfloopOptimisation = true; chainsParallelism = true; break;
-		case 12: computing_block = false; basic_per_row = true; useSelfloopOptimisation = true; selfloopParallelism = true; break;
-		case 13: computing_block = false; basic_per_row = true; useSelfloopOptimisation = true; sequential = true; break;
+		case 11: basic_per_row = true; useSelfloopOptimisation = true; chainsParallelism = true; break;
+		case 12: basic_per_row = true; useSelfloopOptimisation = true; selfloopParallelism = true; break;
+		case 13: basic_per_row = true; useSelfloopOptimisation = true; sequential = true; break;
 
-		case 14: computing_block = false; basic_per_row = true; useLabelGroups = true; sequential = true; break;
+		case 14: basic_per_row = true; useLabelGroups = true; sequential = true; break;
 
-		case 15: computing_block = false; basic_per_row = true; sequential = true; break;
+		case 15: basic_per_row = true; sequential = true; break;
 	}
 
 	if (opts.get<int>("length_iteration") != -1){
@@ -126,86 +126,6 @@ int SATSearch::findPreviousValidAuxVar(vector<int> &auxVars, int label){
 		if(auxVars[prev] != -1) return auxVars[prev];
 	}
 	return -1;
-}
-
-BlockInfo SATSearch::find_largest_block(const vector<vector<int>>& filled_columns_per_row) {
-    unordered_map<int, unordered_set<int>> row_to_cols;
-    unordered_map<int, unordered_set<int>> col_to_rows;
-    unordered_set<int> all_columns;
-
-    int num_rows = filled_columns_per_row.size();
-
-    for (int r = 0; r < num_rows; ++r) {
-        for (int c : filled_columns_per_row[r]) {
-            row_to_cols[r].insert(c);
-            col_to_rows[c].insert(r);
-            all_columns.insert(c);
-        }
-    }
-
-    BlockInfo result;
-
-    // Step 1: Identify empty rows
-    for (int r = 0; r < num_rows; ++r) {
-        if (row_to_cols.find(r) == row_to_cols.end() || row_to_cols[r].empty()) {
-            result.empty_rows.push_back(r);
-        }
-    }
-
-    // Step 2: Identify empty columns
-    if (!all_columns.empty()) {
-        int max_col = *max_element(all_columns.begin(), all_columns.end());
-        for (int c = 0; c <= max_col; ++c) {
-            if (col_to_rows.find(c) == col_to_rows.end() || col_to_rows[c].empty()) {
-                result.empty_columns.push_back(c);
-            }
-        }
-    }
-
-    // Step 3: Find largest block (rows x columns of 1's)
-    int max_area = 0;
-    set<int> best_rows, best_cols;
-
-    for (auto& [base_row, base_cols] : row_to_cols) {
-        map<vector<int>, vector<int>> colset_to_rows;
-        for (int r = 0; r < num_rows; ++r) {
-            vector<int> common;
-            for (int c : row_to_cols[r]) {
-                if (base_cols.count(c)) {
-                    common.push_back(c);
-                }
-            }
-            if (!common.empty()) {
-                sort(common.begin(), common.end());
-                colset_to_rows[common].push_back(r);
-            }
-        }
-
-        for (auto& [cols, rows] : colset_to_rows) {
-            int area = rows.size() * cols.size();
-            if (area > max_area) {
-                max_area = area;
-                best_rows = set<int>(rows.begin(), rows.end());
-                best_cols = set<int>(cols.begin(), cols.end());
-            }
-        }
-    }
-
-    unordered_set<int> row_block_set(best_rows.begin(), best_rows.end());
-    unordered_set<int> col_block_set(best_cols.begin(), best_cols.end());
-
-    // Step 4: Identify extra 1's not in the block
-    for (size_t r = 0; r < filled_columns_per_row.size(); ++r) {
-        for (int c : filled_columns_per_row[r]) {
-            bool in_block = row_block_set.count(r) && col_block_set.count(c);
-            if (!in_block) {
-                result.extra_ones_per_row[r].push_back(c);
-                result.extra_ones_per_column[c].push_back(r);
-            }
-        }
-    }
-
-    return result;
 }
 
 bool SATSearch::hasSelfLoopOnValue(int ts, int value, int label){
@@ -293,36 +213,6 @@ void SATSearch::initialize() {
 		}
 	}
 
-	if(computing_block){
-		labelsWithoutOnlySelfLoops.resize(fts->get_size());
-		for(int ts = 0 ; ts < fts->get_size() ; ts++){
-			for(int label = 0 ; label < fts->get_num_labels() ; label++){
-				if(isIrrelevantLabel(ts, label) || isAlwaysSelfLoop(ts, label)) continue;
-				auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
-				vector<vector<int>> gridInfo(fts->get_ts(ts).get_size());
-				for(size_t t = 0 ; t < transitions.size() ; t++){
-					gridInfo[transitions[t].src].push_back(transitions[t].target);
-				}
-				BlockInfo bi = find_largest_block(gridInfo);
-				labelBasedEncodingInfo[ts][label] = bi;
-				labelsWithoutOnlySelfLoops[ts].push_back(label);
-			}
-
-			for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
-				for(int label = 0 ; label < fts->get_num_labels() ; label++){
-					if(isAlwaysSelfLoop(ts, label)) continue;
-					auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
-					for(Transition t : transitions){
-						if(t.target == states){
-							labelsWithEffectOnValue[ts][states].push_back(label);
-							break;
-						}
-					}
-				}
-			}
-
-		}
-	}
 
 	if(basic_per_row || eliminating_rnc_and_pairs){
 		for(int ts = 0 ; ts < fts->get_size() ; ts++){
