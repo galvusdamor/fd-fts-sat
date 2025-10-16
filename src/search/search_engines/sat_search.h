@@ -47,7 +47,6 @@ private:
 	bool length_by_iteration; 
 	int maximum_iteration;
 
-	bool do_R2_encoding;
 	bool no_selfloop_SATvars;
 	bool computing_block;
 
