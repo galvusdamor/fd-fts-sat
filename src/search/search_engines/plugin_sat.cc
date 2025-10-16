@@ -87,6 +87,20 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
         "use optimisation for self loops",
         "false");
 
+		parser.add_option<bool>(
+        "use_empty_rows",
+        "use separate encoding for empty rows",
+        "false");
+
+		parser.add_option<bool>(
+        "use_empty_cols",
+        "use separate encoding for empty cols",
+        "false");
+
+		parser.add_option<bool>(
+        "use_empty_pillars",
+        "use separate encoding for empty pillars",
+        "false");
 
 
     SearchEngine::add_succ_order_options(parser);

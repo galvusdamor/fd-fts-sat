@@ -50,12 +50,12 @@ private:
 
 	encoding_type encoding;
 
-	bool useLabelGroups = false;
-	bool useSelfloopOptimisation = false;
-
-	bool basic_per_row = false;
-	bool eliminating_rnc_and_pairs = false;
-
+	bool useLabelGroups;
+	bool useSelfloopOptimisation;
+	bool useEmptyRows;
+	bool useEmptyCols;
+	bool useEmptyPillars;
+	
 	bool forceAtLeastOneAction;
 	
 	std::shared_ptr<task_representation::FTSTask> fts;
