@@ -32,35 +32,18 @@ SATSearch::SATSearch(const Options &opts): SearchEngine(opts),
 	length_by_iteration(opts.get<bool>("length_by_iteration")),
 	maximum_iteration(opts.get<int>("maximum_iteration")),
 	encoding(encoding_type(opts.get_enum("encoding"))),
+	useLabelGroups(opts.get<bool>("use_label_group")),
+	useSelfloopOptimisation(opts.get<bool>("use_self_loop_optimisation")),
 	fts(g_main_task) {
 
 	kissat_quietMode = opts.get<bool>("solver_quiet");
 
 	switch (opts.get<int>("encoding")){
 
-		case 0:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; break;
-		case 1:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; break;
-		case 2:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; useLabelGroups = true; break;
-
-		case 3:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; break;
-		case 4:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; break;
-		case 5:  eliminating_rnc_and_pairs = true; useSelfloopOptimisation = true; break;
-
-		case 6:  eliminating_rnc_and_pairs = true; useLabelGroups = true; break;
-
+		case 0:  eliminating_rnc_and_pairs = true; break;
 		case 7:  eliminating_rnc_and_pairs = true; break;
 
-
-		case 8:  basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; break;
-		case 9:  basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; break;
-		case 10: basic_per_row = true; useSelfloopOptimisation = true; useLabelGroups = true; break;
-
-		case 11: basic_per_row = true; useSelfloopOptimisation = true; break;
-		case 12: basic_per_row = true; useSelfloopOptimisation = true; break;
-		case 13: basic_per_row = true; useSelfloopOptimisation = true; break;
-
-		case 14: basic_per_row = true; useLabelGroups = true; break;
-
+		case 8:  basic_per_row = true; break;
 		case 15: basic_per_row = true; break;
 	}
 

@@ -77,6 +77,17 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
 		                       base_encoding_doc);
 
 
+		parser.add_option<bool>(
+        "use_label_group",
+        "use label group optimisation",
+        "false");
+
+		parser.add_option<bool>(
+        "use_self_loop_optimisation",
+        "use optimisation for self loops",
+        "false");
+
+
 
     SearchEngine::add_succ_order_options(parser);
     SearchEngine::add_options_to_parser(parser);
