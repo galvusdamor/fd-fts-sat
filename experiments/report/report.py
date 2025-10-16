@@ -24,10 +24,24 @@ def change_domain(run):
 exp.add_report(AbsoluteReport(attributes=[
     "coverage",
     "cost",
-    "planner_time", 'sat_variables', 'sat_clauses'
+    "planner_time",
+    #'sat_variables', 'sat_clauses'
     #"unsolvable_wo_mystery"
-], filter= [change_domain,ignore_unexplained_errors], #,filter_algorithm=['lmcut','lmcut-bisim-dfp50k-bissh-gen']),
-                              ), name="report", outfile="report.html")
+], filter= [change_domain,ignore_unexplained_errors], filter_algorithm=['ff-trans','el_rnc_slfloopt_labgr_chain-shr', 'MpC-E-seq'],
+                              ), name="report", outfile="report-coverage-against-FF.html")
+
+
+exp.add_report(AbsoluteReport(attributes=[
+    "coverage",
+    "cost",
+    "planner_time",
+    'time_steps_with_label',
+    #'sat_variables', 'sat_clauses'
+    #"unsolvable_wo_mystery"
+], filter= [change_domain,ignore_unexplained_errors], filter_algorithm=['el_rnc_slfloopt_labgr_seq-shr','el_rnc_slfloopt_labgr_chain-shr'],
+                              ), name="report2", outfile="report-2.html")
+
+
 
 
 exp.add_report(TotalCoverageTable(), name="cov_table", outfile="cov_table.txt")
@@ -35,24 +49,6 @@ exp.add_report(TotalCoverageTable(), name="cov_table", outfile="cov_table.txt")
 
 algo_to_latex = {
     'blind': r'\configblind',
-    'blind-bisim-atomic-nosh-gen': r'\configbisim',
-    'blind-sim-atomic-nosh-gen': r'\configsim',
-    'blind-noopsim-atomic-nosh-gen': r'\confignoopsim',
-    'blind-ldsimalt-atomic-nosh-gen': r'\configldsim',
-    'blind-qual-10-atomic-nosh-gen': r'\configqual10',
-    'blind-qpos-10-atomic-nosh-gen': r'\configqpos10',
-    'blind-qtrade-10-atomic-nosh-gen': r'\configqtrade10',
-    'blind-qrel-10-atomic-nosh-gen': r'\configqrel10',
-    'blind-qrel-10-atomic-nosh-gensucc': r'\configqrel10as',
-    'blind-bisim-dfp50k-nosh-gen': r'\configbisim',
-    'blind-sim-dfp50k-nosh-gen': r'\configsim',
-    'blind-noopsim-dfp50k-nosh-gen': r'\confignoopsim',
-    'blind-ldsimalt-dfp50k-nosh-gen': r'\configldsim',
-    'blind-qual-10-dfp50k-nosh-gen': r'\configqual10',
-    'blind-qpos-10-dfp50k-nosh-gen': r'\configqpos10',
-    'blind-qtrade-10-dfp50k-nosh-gen': r'\configqtrade10',
-    'blind-qrel-10-dfp50k-nosh-gen': r'\configqrel10',
-    'blind-qrel-10-dfp50k-nosh-gensucc': r'\configqrel10as'
 }
 
 
@@ -75,8 +71,16 @@ def scatter_alg(name, alg1, alg2, atr, domain_category):
 
 
 scatter_plots = [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category")
-                 for atr in ['total_time', 'sat_clauses', 'sat_variables']
-                 for (config1,config2) in [('seq','row_seq-shr')]]
+                 for atr in ['planner_time', 'sat_clauses', 'sat_variables', 'time_steps_with_label', 'cost', 'plan_length']
+                 for (config1,config2) in [('el_rnc_slfloopt_labgr_seq-shr','el_rnc_slfloopt_labgr_chain-shr')]]
+
+scatter_plots += [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category")
+                 for atr in ['planner_time', 'sat_variables', 'time_steps_with_label']
+                 for (config1,config2) in [('MpC-E-seq', 'el_rnc_slfloopt_labgr_chain-shr'), ('MpC-no-parallel-seq', 'el_rnc_slfloopt_labgr_chain-shr')]]
+
+scatter_plots += [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category")
+                 for atr in ['planner_time']
+                 for (config1,config2) in [('ff-trans','el_rnc_slfloopt_labgr_chain-shr')]]
 
 add_nice_scatter_plot_step(exp, scatter_plots)
 

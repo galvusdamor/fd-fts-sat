@@ -44,7 +44,12 @@ def ignore_unexplained_errors2(run):
             print(run['unexplained_errors'])
     return run
 
+def rename_time_steps(run):
+    if "steps" in run and not "time_steps_with_label" in run:
+        run['time_steps_with_label'] = run['steps']
+        
+    return run
 for directory in [d for d in Path(DATA_DIR).iterdir() if d.is_dir() and d != TARGET_DIR]:
-        exp.add_fetcher(str(directory), merge=True, filter=[ignore_unexplained_errors2, joint_domains, invert_min_negative_dominance, unsolvable_wo_mystery])
+        exp.add_fetcher(str(directory), merge=True, filter=[ignore_unexplained_errors2, joint_domains, invert_min_negative_dominance, unsolvable_wo_mystery,rename_time_steps])
 
 exp.run_steps()
