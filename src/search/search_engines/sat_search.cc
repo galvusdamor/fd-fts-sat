@@ -287,21 +287,6 @@ vector<int> SATSearch::generateLabelVars(__attribute__((unused)) void* solver, s
 		DEBUG(capsule.registerVariable(labelVar,"Label:"+to_string(label)));
 		//cout << labelVar << endl;
 	}
-	if(encoding == SEQUENTIAL){
-		atMostOne(solver, capsule, labelVars);
-	}else if(encoding == SELF_LOOP_PARALLEL){
-		for(int ts = 0 ; ts < fts->get_size() ; ts++){
-			vector<int> non_parallelisable_labels;
-			for(int label = 0 ; label < fts->get_num_labels() ; label++){
-				if(!isAlwaysSelfLoop(ts, label)){
-					non_parallelisable_labels.push_back(labelVars[label]);
-				}
-			}
-			atMostOne(solver, capsule, non_parallelisable_labels);
-		}
-	}
-	if (forceAtLeastOneAction)
-		atLeastOne(solver, capsule, labelVars);
 	return labelVars;
 }
 
@@ -403,19 +388,6 @@ map<int, map<int, vector<int>>> SATSearch::getApplicableLabels(){
 			}
 		}
 	}
-	/* cout << endl;
-	for (auto const& x : applicableLabels){
-		cout << "TS : " << x.first << endl;
-		for (auto const& y : x.second){
-			cout << "\tState : " << y.first << endl;
-			cout << "\t\tLabels :";
-			for(size_t a = 0 ; a < y.second.size() ; a++){
-					cout << " " << y.second[a];
-			}
-			cout << endl;
-		}
-	} */
-
 	return applicableLabels;
 }
 
@@ -433,23 +405,6 @@ map<int, map<int, map<int, vector<int>>>> SATSearch::getSuccessorStates(map<int,
 			}
 		}
 	}
-
-	/* cout << endl;
-	for (auto const& x : successorStates){
-		cout << "TS : " << x.first << endl;
-		for (auto const& y : x.second){
-			cout << "\tState : " << y.first << endl;
-			for (auto const& z : y.second){
-				cout << "\t\tApplicable Label :" << z.first << endl;
-				cout << "\t\t\tSuccessor States :";
-				for(size_t s = 0 ; s < z.second.size() ; s++){
-					cout << " " << z.second[s];
-				}
-				cout << endl;
-			}
-		}
-	} */
-
 	return successorStates;
 }
 
@@ -484,11 +439,203 @@ struct solver_timer {
 
 
 
+void SATSearch::encode_sequential(void* solver, sat_capsule & capsule, vector<int> & labelVars){
+	atMostOne(solver, capsule, labelVars);
+}
+
+void SATSearch::encode_self_loop_parallel(void* solver, sat_capsule & capsule, vector<int> & labelVars){
+	for(int ts = 0 ; ts < fts->get_size() ; ts++){
+ 		vector<int> non_parallelisable_labels;
+ 		for(int label = 0 ; label < fts->get_num_labels() ; label++){
+ 			if(!isAlwaysSelfLoop(ts, label)){
+ 				non_parallelisable_labels.push_back(labelVars[label]);
+ 			}
+ 		}
+ 		atMostOne(solver, capsule, non_parallelisable_labels);
+ 	}
+}
+
+void SATSearch::encode_chains_parallel(void* solver, sat_capsule & capsule, vector<int> & labelVars, vector<vector<int>> & nextStateVars){
+	map<int, map<int, vector<int>>> topHelperVars;
+	map<int, map<int, vector<int>>> bottomHelperVars;
+	topHelperVars = generateHelperVars(capsule/* , int timestep */);
+	bottomHelperVars = generateHelperVars(capsule/* , int timestep */);
+
+	for(int ts = 0 ; ts < fts->get_size() ; ts++){
+		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
+			for(size_t l = 0 ; l < labelsWithEffectOnValue[ts][states].size() ; l++){
+				if(l < labelsWithEffectOnValue[ts][states].size()-1){
+					andImplies(solver, labelVars[labelsWithEffectOnValue[ts][states][l]], nextStateVars[ts][states], topHelperVars[ts][states][l]);
+					if(!hasSelfLoopOnValue(ts, states, labelsWithEffectOnValue[ts][states][l+1])){
+						implies(solver, topHelperVars[ts][states][l], -labelVars[labelsWithEffectOnValue[ts][states][l+1]]);
+					}
+					if(!hasSelfLoopOnValue(ts, states, labelsWithEffectOnValue[ts][states][l])){
+						implies(solver, bottomHelperVars[ts][states][l], -labelVars[labelsWithEffectOnValue[ts][states][l]]);
+					}
+				}
+				if(l > 0){
+					andImplies(solver, labelVars[labelsWithEffectOnValue[ts][states][l]], nextStateVars[ts][states], bottomHelperVars[ts][states][l-1]);
+				}
+				if(l > 0 && l < labelsWithEffectOnValue[ts][states].size()-1){
+					implies(solver, topHelperVars[ts][states][l-1], topHelperVars[ts][states][l]);
+					implies(solver, bottomHelperVars[ts][states][l], bottomHelperVars[ts][states][l-1]);
+				}
+			}
+		}
+	}
+}
+
+void SATSearch::encode_transition(void* solver, sat_capsule & capsule, vector<vector<int>> & previousStateVars, vector<int> & labelVars, map<int, vector<int>> & labelGroupVars, vector<vector<int>> & nextStateVars){
+	for(int ts = 0 ; ts < fts->get_size() ; ts++){
+		vector<int> labelGroupsWithActualTransitions;
+		for(size_t lg = 0 ; lg < labelGroups[ts].size() ; lg++){
+			int label = labelGroups[ts][lg][0];
+
+			if(!useLabelGroups){
+				if(useSelfloopOptimisation){
+					if(isIrrelevantLabel(ts, label)) continue;
+					if(isAlwaysSelfLoop(ts, label)){
+						auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
+						vector<int> preconditions;
+						vector<int> effects;
+						for(Transition t : transitions){
+							preconditions.push_back(previousStateVars[ts][t.src]);
+							effects.push_back(nextStateVars[ts][t.target]);
+						}
+						for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
+							impliesOr(solver, labelVars[labelGroups[ts][lg][l]], preconditions);
+							impliesOr(solver, labelVars[labelGroups[ts][lg][l]], effects);
+						}
+						continue;
+					}
+				}
+				if(useSelfloopOptimisation){
+					for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
+						labelGroupsWithActualTransitions.push_back(labelVars[labelGroups[ts][lg][l]]);//These are labels and not labelgroups
+					}
+				}
+
+				for(int neg_prec : empty_rows[ts][lg]){
+					for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
+						impliesNot(solver, labelVars[labelGroups[ts][lg][l]], previousStateVars[ts][neg_prec]);
+					}
+				}
+				for(int neg_eff : empty_cols[ts][lg]){
+					for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
+						impliesNot(solver, labelVars[labelGroups[ts][lg][l]], nextStateVars[ts][neg_eff]);
+					}
+				}
+				for(int src = 0 ; src < fts->get_ts(ts).get_size() ; src++){
+					if(empty_rows[ts][lg].find(src) != empty_rows[ts][lg].end()) continue;
+					for(int t : empty_projected_cells_per_row[ts][src]){
+						implies(solver, previousStateVars[ts][src], -nextStateVars[ts][t]);
+					}
+					if(ones_per_row[ts][lg][src].size() == 1){
+						int t = *ones_per_row[ts][lg][src].begin();
+						for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
+							andImplies(solver, labelVars[labelGroups[ts][lg][l]], previousStateVars[ts][src], nextStateVars[ts][t]);
+						}
+						continue;
+					}
+					for(int target = 0 ; target < fts->get_ts(ts).get_size() ; target++){
+						if(empty_cols[ts][lg].find(target) != empty_cols[ts][lg].end()) continue;
+						if(useEmptyCols && labelProjection[ts][src][target] == 0) continue;
+						if(ones_per_row[ts][lg][src].find(target) == ones_per_row[ts][lg][src].end()){
+							for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
+								andImplies(solver, labelVars[labelGroups[ts][lg][l]], previousStateVars[ts][src], -nextStateVars[ts][target]);
+							}
+						}
+					}
+				}
+
+			}else{
+				if(useSelfloopOptimisation){
+					if(isIrrelevantLabel(ts, label)) continue;
+					if(isAlwaysSelfLoop(ts, label)){
+						auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
+						vector<int> preconditions;
+						vector<int> effects;
+						for(Transition t : transitions){
+							preconditions.push_back(previousStateVars[ts][t.src]);
+							effects.push_back(nextStateVars[ts][t.target]);
+						}
+						if(labelGroupVars[ts][lg] == -1){
+							impliesOr(solver, labelVars[labelGroups[ts][lg][0]], preconditions);
+							impliesOr(solver, labelVars[labelGroups[ts][lg][0]], effects);
+						}else{
+							impliesOr(solver, labelGroupVars[ts][lg], preconditions);
+							impliesOr(solver, labelGroupVars[ts][lg], effects);
+						}
+						continue;
+					}
+				}
+				if(useSelfloopOptimisation){
+					if(labelGroupVars[ts][lg] == -1){
+						labelGroupsWithActualTransitions.push_back(labelVars[labelGroups[ts][lg][0]]);
+					}else{
+						labelGroupsWithActualTransitions.push_back(labelGroupVars[ts][lg]);
+					}
+				}
+
+				for(int neg_prec : empty_rows[ts][lg]){
+					if(labelGroupVars[ts][lg] == -1){
+						impliesNot(solver, labelVars[labelGroups[ts][lg][0]], previousStateVars[ts][neg_prec]);
+					}else{
+						impliesNot(solver, labelGroupVars[ts][lg], previousStateVars[ts][neg_prec]);
+					}
+				}
+				for(int neg_eff : empty_cols[ts][lg]){
+					if(labelGroupVars[ts][lg] == -1){
+						impliesNot(solver, labelVars[labelGroups[ts][lg][0]], nextStateVars[ts][neg_eff]);
+					}else{
+						impliesNot(solver, labelGroupVars[ts][lg], nextStateVars[ts][neg_eff]);
+					}
+				}
+				for(int src = 0 ; src < fts->get_ts(ts).get_size() ; src++){
+					if(empty_rows[ts][lg].find(src) != empty_rows[ts][lg].end()) continue;
+					for(int t : empty_projected_cells_per_row[ts][src]){
+						implies(solver, previousStateVars[ts][src], -nextStateVars[ts][t]);
+					}
+					if(ones_per_row[ts][lg][src].size() == 1){
+						int t = *ones_per_row[ts][lg][src].begin();
+						if(labelGroupVars[ts][lg] == -1){
+							andImplies(solver, labelVars[labelGroups[ts][lg][0]], previousStateVars[ts][src], nextStateVars[ts][t]);
+							continue;
+						}
+						andImplies(solver, labelGroupVars[ts][lg], previousStateVars[ts][src], nextStateVars[ts][t]);
+						continue;
+					}
+					for(int target = 0 ; target < fts->get_ts(ts).get_size() ; target++){
+						if(empty_cols[ts][lg].find(target) != empty_cols[ts][lg].end()) continue;
+						if(useEmptyRows && labelProjection[ts][src][target] == 0) continue;
+						if(ones_per_row[ts][lg][src].find(target) == ones_per_row[ts][lg][src].end()){
+							if(labelGroupVars[ts][lg] == -1){
+								andImplies(solver, labelVars[labelGroups[ts][lg][0]], previousStateVars[ts][src], -nextStateVars[ts][target]);
+							}else{
+								andImplies(solver, labelGroupVars[ts][lg], previousStateVars[ts][src], -nextStateVars[ts][target]);
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if(useSelfloopOptimisation){
+			int selfLoopAuxVar = capsule.new_variable();
+			DEBUG(capsule.registerVariable(selfLoopAuxVar,"selfLoopAuxVar"));
+			impliesOr(solver, -selfLoopAuxVar, labelGroupsWithActualTransitions);
+			for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
+				andImplies(solver, selfLoopAuxVar, previousStateVars[ts][states], nextStateVars[ts][states]);
+				andImplies(solver, -selfLoopAuxVar, previousStateVars[ts][states], -nextStateVars[ts][states]);
+			}
+		}
+	}
+}
+
 SearchStatus SATSearch::step() {
     utils::Timer step_timer;
 	auto t_start = std::chrono::system_clock::now();
 	cout << "HI doing step! SAT: " << ipasir_signature() << endl; // << " starting at " << t_start << endl;
-	//bool parallelism = false;
 	vector<vector<vector<int>>> allTimesStateVars;
 	vector<vector<int>> allTimesLabelVars;
 	vector<map<int, map<int, vector<pair<Transition, int>>>>> allTimesTransitionVars;
@@ -508,7 +655,7 @@ SearchStatus SATSearch::step() {
 
 	map<int, map<int, vector<pair<Transition, int>>>> transitionVars;
 	vector<int> labelVars;
-	map<int, vector<int>> labelGroupVars;
+	
 	vector<vector<int>> nextStateVars;
 	map<int, map<int, vector<int>>> auxVars;
 	
@@ -516,189 +663,25 @@ SearchStatus SATSearch::step() {
 	for(int timestep = 1 ; timestep <= currentLength ; timestep++){
 		labelVars = generateLabelVars(solver, capsule/* , int timestep */);
 		allTimesLabelVars.push_back(labelVars);
+		map<int, vector<int>> labelGroupVars;
 		if(useLabelGroups){
 			labelGroupVars = generateLabelGroupVars(solver, capsule, labelVars/* , int timestep */);
 		}
 		nextStateVars = generateStateVars(solver, capsule/* , timestep */);
 		allTimesStateVars.push_back(nextStateVars);
 
-		map<int, map<int, vector<int>>> topHelperVars;
-		map<int, map<int, vector<int>>> bottomHelperVars;
-		if(encoding == CHAINS_PARALLEL){
-			topHelperVars = generateHelperVars(capsule/* , int timestep */);
-			bottomHelperVars = generateHelperVars(capsule/* , int timestep */);
-		}
+		encode_transition(solver,capsule,previousStateVars,labelVars,labelGroupVars,nextStateVars);
+	
+		if (forceAtLeastOneAction)
+			atLeastOne(solver, capsule, labelVars);
+		// encode the restrictions on which actions are allowed in parallel as per the encoding
+		if(encoding == SEQUENTIAL)
+			encode_sequential(solver,capsule,labelVars);
+		else if(encoding == SELF_LOOP_PARALLEL)
+			encode_self_loop_parallel(solver,capsule,labelVars);
+		else if(encoding == CHAINS_PARALLEL)
+			encode_chains_parallel(solver, capsule, labelVars, nextStateVars);
 
-		for(int ts = 0 ; ts < fts->get_size() ; ts++){
-			
-			vector<int> labelGroupsWithActualTransitions;
-			for(size_t lg = 0 ; lg < labelGroups[ts].size() ; lg++){
-				int label = labelGroups[ts][lg][0];
-
-				if(!useLabelGroups){
-					if(useSelfloopOptimisation){
-						if(isIrrelevantLabel(ts, label)) continue;
-						if(isAlwaysSelfLoop(ts, label)){
-							auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
-							vector<int> preconditions;
-							vector<int> effects;
-							for(Transition t : transitions){
-								preconditions.push_back(previousStateVars[ts][t.src]);
-								effects.push_back(nextStateVars[ts][t.target]);
-							}
-							for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
-								impliesOr(solver, labelVars[labelGroups[ts][lg][l]], preconditions);
-								impliesOr(solver, labelVars[labelGroups[ts][lg][l]], effects);
-							}
-							continue;
-						}
-					}
-					if(useSelfloopOptimisation){
-						for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
-							labelGroupsWithActualTransitions.push_back(labelVars[labelGroups[ts][lg][l]]);//These are labels and not labelgroups
-						}
-					}
-
-					for(int neg_prec : empty_rows[ts][lg]){
-						for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
-							impliesNot(solver, labelVars[labelGroups[ts][lg][l]], previousStateVars[ts][neg_prec]);
-						}
-					}
-					for(int neg_eff : empty_cols[ts][lg]){
-						for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
-							impliesNot(solver, labelVars[labelGroups[ts][lg][l]], nextStateVars[ts][neg_eff]);
-						}
-					}
-					for(int src = 0 ; src < fts->get_ts(ts).get_size() ; src++){
-						if(empty_rows[ts][lg].find(src) != empty_rows[ts][lg].end()) continue;
-						for(int t : empty_projected_cells_per_row[ts][src]){
-							implies(solver, previousStateVars[ts][src], -nextStateVars[ts][t]);
-						}
-						if(ones_per_row[ts][lg][src].size() == 1){
-							int t = *ones_per_row[ts][lg][src].begin();
-							for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
-								andImplies(solver, labelVars[labelGroups[ts][lg][l]], previousStateVars[ts][src], nextStateVars[ts][t]);
-							}
-							continue;
-						}
-						for(int target = 0 ; target < fts->get_ts(ts).get_size() ; target++){
-							if(empty_cols[ts][lg].find(target) != empty_cols[ts][lg].end()) continue;
-							if(useEmptyCols && labelProjection[ts][src][target] == 0) continue;
-							if(ones_per_row[ts][lg][src].find(target) == ones_per_row[ts][lg][src].end()){
-								for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
-									andImplies(solver, labelVars[labelGroups[ts][lg][l]], previousStateVars[ts][src], -nextStateVars[ts][target]);
-								}
-							}
-						}
-					}
-
-				}else{
-					if(useSelfloopOptimisation){
-						if(isIrrelevantLabel(ts, label)) continue;
-						if(isAlwaysSelfLoop(ts, label)){
-							auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
-							vector<int> preconditions;
-							vector<int> effects;
-							for(Transition t : transitions){
-								preconditions.push_back(previousStateVars[ts][t.src]);
-								effects.push_back(nextStateVars[ts][t.target]);
-							}
-							if(labelGroupVars[ts][lg] == -1){
-								impliesOr(solver, labelVars[labelGroups[ts][lg][0]], preconditions);
-								impliesOr(solver, labelVars[labelGroups[ts][lg][0]], effects);
-							}else{
-								impliesOr(solver, labelGroupVars[ts][lg], preconditions);
-								impliesOr(solver, labelGroupVars[ts][lg], effects);
-							}
-							continue;
-						}
-					}
-					if(useSelfloopOptimisation){
-						if(labelGroupVars[ts][lg] == -1){
-							labelGroupsWithActualTransitions.push_back(labelVars[labelGroups[ts][lg][0]]);
-						}else{
-							labelGroupsWithActualTransitions.push_back(labelGroupVars[ts][lg]);
-						}
-					}
-
-					for(int neg_prec : empty_rows[ts][lg]){
-						if(labelGroupVars[ts][lg] == -1){
-							impliesNot(solver, labelVars[labelGroups[ts][lg][0]], previousStateVars[ts][neg_prec]);
-						}else{
-							impliesNot(solver, labelGroupVars[ts][lg], previousStateVars[ts][neg_prec]);
-						}
-					}
-					for(int neg_eff : empty_cols[ts][lg]){
-						if(labelGroupVars[ts][lg] == -1){
-							impliesNot(solver, labelVars[labelGroups[ts][lg][0]], nextStateVars[ts][neg_eff]);
-						}else{
-							impliesNot(solver, labelGroupVars[ts][lg], nextStateVars[ts][neg_eff]);
-						}
-					}
-					for(int src = 0 ; src < fts->get_ts(ts).get_size() ; src++){
-						if(empty_rows[ts][lg].find(src) != empty_rows[ts][lg].end()) continue;
-						for(int t : empty_projected_cells_per_row[ts][src]){
-							implies(solver, previousStateVars[ts][src], -nextStateVars[ts][t]);
-						}
-						if(ones_per_row[ts][lg][src].size() == 1){
-							int t = *ones_per_row[ts][lg][src].begin();
-							if(labelGroupVars[ts][lg] == -1){
-								andImplies(solver, labelVars[labelGroups[ts][lg][0]], previousStateVars[ts][src], nextStateVars[ts][t]);
-								continue;
-							}
-							andImplies(solver, labelGroupVars[ts][lg], previousStateVars[ts][src], nextStateVars[ts][t]);
-							continue;
-						}
-						for(int target = 0 ; target < fts->get_ts(ts).get_size() ; target++){
-							if(empty_cols[ts][lg].find(target) != empty_cols[ts][lg].end()) continue;
-							if(useEmptyRows && labelProjection[ts][src][target] == 0) continue;
-							if(ones_per_row[ts][lg][src].find(target) == ones_per_row[ts][lg][src].end()){
-								if(labelGroupVars[ts][lg] == -1){
-									andImplies(solver, labelVars[labelGroups[ts][lg][0]], previousStateVars[ts][src], -nextStateVars[ts][target]);
-								}else{
-									andImplies(solver, labelGroupVars[ts][lg], previousStateVars[ts][src], -nextStateVars[ts][target]);
-								}
-							}
-						}
-					}
-				}
-			}
-
-			if(useSelfloopOptimisation){
-				int selfLoopAuxVar = capsule.new_variable();
-				DEBUG(capsule.registerVariable(selfLoopAuxVar,"selfLoopAuxVar"));
-				impliesOr(solver, -selfLoopAuxVar, labelGroupsWithActualTransitions);
-				for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
-					andImplies(solver, selfLoopAuxVar, previousStateVars[ts][states], nextStateVars[ts][states]);
-					andImplies(solver, -selfLoopAuxVar, previousStateVars[ts][states], -nextStateVars[ts][states]);
-				}
-			}
-
-			if(encoding == CHAINS_PARALLEL){
-				
-				for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
-					for(size_t l = 0 ; l < labelsWithEffectOnValue[ts][states].size() ; l++){
-						if(l < labelsWithEffectOnValue[ts][states].size()-1){
-							andImplies(solver, labelVars[labelsWithEffectOnValue[ts][states][l]], nextStateVars[ts][states], topHelperVars[ts][states][l]);
-							if(!hasSelfLoopOnValue(ts, states, labelsWithEffectOnValue[ts][states][l+1])){
-								implies(solver, topHelperVars[ts][states][l], -labelVars[labelsWithEffectOnValue[ts][states][l+1]]);
-							}
-							if(!hasSelfLoopOnValue(ts, states, labelsWithEffectOnValue[ts][states][l])){
-								implies(solver, bottomHelperVars[ts][states][l], -labelVars[labelsWithEffectOnValue[ts][states][l]]);
-							}
-						}
-						if(l > 0){
-							andImplies(solver, labelVars[labelsWithEffectOnValue[ts][states][l]], nextStateVars[ts][states], bottomHelperVars[ts][states][l-1]);
-						}
-						if(l > 0 && l < labelsWithEffectOnValue[ts][states].size()-1){
-							implies(solver, topHelperVars[ts][states][l-1], topHelperVars[ts][states][l]);
-							implies(solver, bottomHelperVars[ts][states][l], bottomHelperVars[ts][states][l-1]);
-						}
-					}
-				}
-			}
-		}
-		
 		swap(previousStateVars, nextStateVars);
 
 		cout << "Constructed time " << timestep << " of " << currentLength << ". Now " << get_number_of_clauses() << " clauses and " << capsule.number_of_variables << " variables." << endl;
@@ -723,8 +706,6 @@ SearchStatus SATSearch::step() {
 		}
 		atLeastOne(solver, capsule, goalStateVars);
 
-		//cout << endl << endl << "Factor " << ts << endl;
-		//fts->get_ts(ts).dump_dot_graph();
 	}
 
 	//DEBUG(capsule.printVariables());
@@ -751,14 +732,6 @@ SearchStatus SATSearch::step() {
 	cout << "SAT solver state: " << solverState << endl;
 
 	if (solverState == 10){
-		/* cout << allTimesStateVars[1][1][0] << endl;
-		cout << allTimesStateVars[1][1][1] << endl;
-		cout << allTimesLabelVars[1][7] << endl;
-		cout << allTimesTransitionVars[1][1][7][1].second << endl;
-		cout << ipasir_val(solver, allTimesStateVars[1][1][0]) << endl;
-		cout << ipasir_val(solver, allTimesStateVars[1][1][1]) << endl;
-		cout << ipasir_val(solver, allTimesLabelVars[1][7]) << endl;
-		cout << ipasir_val(solver, allTimesTransitionVars[1][1][7][1].second) << endl; */
 
 		checkSolution(allTimesStateVars, allTimesLabelVars, allTimesTransitionVars, currentLength, solver);
 
@@ -821,7 +794,6 @@ SearchStatus SATSearch::step() {
 			stateReconstructor.clear();
 			notRepeated.clear();
 
-			//cout << statesPerTimestep << endl;
 			
 			if (selectedLabels.size()){
 				set<int> labelSet(selectedLabels.begin(), selectedLabels.end());
@@ -837,12 +809,6 @@ SearchStatus SATSearch::step() {
 		}
 
 		vector<int> GS = statesPerTimestep.back();
-		//for(auto x : statesPerTimestep){
-		//	cout << x.size() << ":";
-		//	for (size_t f = 0; f < x.size() ; f++)
-		//		cout << " " << f << "=" << x[f];
-		//	cout << endl;
-		//}
 		PlanState goalState = PlanState(std::move(GS));
 		vector<PlanState> states;
 		for(size_t s = 0 ; s < statesPerTimestep.size() ; s++){

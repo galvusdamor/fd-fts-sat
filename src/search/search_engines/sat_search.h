@@ -91,6 +91,13 @@ protected:
     virtual std::map<int, std::map<int, std::vector<int>>> getApplicableLabels();
     virtual std::map<int, std::map<int, std::map<int, std::vector<int>>>> getSuccessorStates(std::map<int, std::map<int, std::vector<int>>> applicableLabels);
 
+
+	void encode_sequential(void* solver, sat_capsule & capsule, std::vector<int> & labelVars);
+	void encode_self_loop_parallel(void* solver, sat_capsule & capsule, std::vector<int> & labelVars);
+	void encode_chains_parallel(void* solver, sat_capsule & capsule, std::vector<int> & labelVars, std::vector<std::vector<int>> & nextStateVars);
+	void encode_transition(void* solver, sat_capsule & capsule, std::vector<std::vector<int>> & previousStateVars, std::vector<int> & labelVars, std::map<int, std::vector<int>> &labelGroupVars, std::vector<std::vector<int>> & nextStateVars);
+
+
 public:
     explicit SATSearch(const Options &opts);
     virtual ~SATSearch() = default;
