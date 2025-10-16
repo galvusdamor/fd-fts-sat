@@ -79,8 +79,6 @@ protected:
 	bool hasMixedTransitions(int ts, int label);
 	int findPreviousValidAuxVar(std::vector<int> &auxVars, int label);
 	bool hasSelfLoopOnValue(int ts, int value, int label);
-	virtual void checkSolution(std::vector<std::vector<std::vector<int>>> &allTimesStateVars, std::vector<std::vector<int>> &allTimesLabelVars, 
-		std::vector<std::map<int, std::map<int, std::vector<std::pair<task_representation::Transition, int>>>>> &allTimesTransitionVars, int length, void* solver);
     virtual SearchStatus step() override;
     virtual std::vector<std::vector<int>> generateStateVars(void* solver, sat_capsule & capsule/* , int timestep */);
     virtual std::map<int, std::map<int, std::vector<std::pair<task_representation::Transition, int>>>> generateTransitionVars(void* solver, sat_capsule &capsule);

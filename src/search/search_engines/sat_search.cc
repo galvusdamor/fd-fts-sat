@@ -114,57 +114,6 @@ bool SATSearch::hasSelfLoopOnValue(int ts, int value, int label){
 	return false;
 }
 
-
-void SATSearch::checkSolution(vector<vector<vector<int>>> &allTimesStateVars, vector<vector<int>> &allTimesLabelVars, vector<map<int, map<int, vector<pair<Transition, int>>>>> &allTimesTransitionVars, 
-					int length, void* solver){
-	vector<int> previousState;
-	vector<int> nextState;
-	for(vector<int> vars : allTimesStateVars[0]){
-		for(size_t val = 0 ; val < vars.size() ; val++){
-			if(ipasir_val(solver, vars[val]) > 0){
-				previousState.push_back(val);//Initial State
-				break;
-			}
-		}
-	}
-	for(int l = 1 ; l <= length ; l++){
-		for(int label = 0 ; label < fts->get_num_labels() ; label++){
-			if(ipasir_val(solver, allTimesLabelVars[l-1][label]) <= 0)continue;
-			for(int ts = 0 ; ts < fts->get_size() ; ts++){
-				bool selfLoopCanBeUsed = false;
-				bool selectedTransitionVar = false;
-				for(pair<Transition, int> t : allTimesTransitionVars[l-1][ts][label]){
-					if(t.second != -1 && ipasir_val(solver, t.second) > 0 && t.first.src == previousState[ts]){
-						nextState.push_back(t.first.target);
-						selectedTransitionVar = true;
-						break;
-					}else if(t.second == -1 && t.first.src == previousState[ts]){
-						selfLoopCanBeUsed = true;
-					}else if(t.second != -1 && ipasir_val(solver, t.second) > 0 && t.first.src != previousState[ts]){
-						cout << "WEEWOO WEEWOO WEEWOO WEEWOO" << endl;
-						cout << "SAT solver tried to apply a transition (" << t.first.src << "," << t.first.target << ") in TS " << ts << " with label " << label << ", but the previous state was " << previousState[ts] << endl;
-						return;
-						//exit(0);
-					}
-				}
-				if(!selectedTransitionVar && (selfLoopCanBeUsed || isIrrelevantLabel(ts, label))){
-					nextState.push_back(previousState[ts]);
-				}else if(!selfLoopCanBeUsed && !selectedTransitionVar){
-					cout << "WEEWOO WEEWOO WEEWOO WEEWOO" << endl;
-					cout << "SAT solver tried to apply a selfloop transition in TS " << ts << " with label " << label << ", but the previous state was " << previousState[ts] << endl;
-					return;
-					//exit(0);
-				}
-			}
-			assert(previousState.size() == nextState.size());
-			swap(previousState, nextState);
-			nextState.clear();
-		}
-	}
-	cout << "SOLUTION SEEMS TO BE VALID!!! YIIPEEEEEE!!!!" << endl;
-}
-
-
 void SATSearch::initialize() {
 	utils::Timer sat_init_timer;
 	cout << "Initialising" << endl;
@@ -638,7 +587,6 @@ SearchStatus SATSearch::step() {
 	cout << "HI doing step! SAT: " << ipasir_signature() << endl; // << " starting at " << t_start << endl;
 	vector<vector<vector<int>>> allTimesStateVars;
 	vector<vector<int>> allTimesLabelVars;
-	vector<map<int, map<int, vector<pair<Transition, int>>>>> allTimesTransitionVars;
 	sat_capsule capsule;
 	reset_number_of_clauses();
 	void* solver = ipasir_init();
@@ -732,9 +680,6 @@ SearchStatus SATSearch::step() {
 	cout << "SAT solver state: " << solverState << endl;
 
 	if (solverState == 10){
-
-		checkSolution(allTimesStateVars, allTimesLabelVars, allTimesTransitionVars, currentLength, solver);
-
 		// run plan extraction
 		// likely check_goal_and_set_plan with four arguments
 		vector<vector<int>> statesPerTimestep;
