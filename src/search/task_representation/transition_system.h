@@ -288,6 +288,12 @@ public:
     bool remove_transitions_from_goal();
 
     void remove_transitions_for_labels(std::unordered_map<int, std::set<Transition>>& label_to_transitions);
+
+	bool isAlwaysSelfLoop(int label) const;
+
+	bool isIrrelevantLabel(int label) const;
+	
+	bool hasSelfLoopOnValue(int state, int label) const;
 };
 }
 

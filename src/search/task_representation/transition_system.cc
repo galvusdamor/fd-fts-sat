@@ -807,4 +807,33 @@ const std::vector<Transition> &TransitionSystem::get_transitions_with_label(int 
         return label_equivalence_relation->get_group_id(label_id);
     }
 
+	bool TransitionSystem::isAlwaysSelfLoop(int label) const{
+		auto & transitions = get_transitions_with_label(label);
+		for(size_t t = 0 ; t < transitions.size() ; t++){
+			if(transitions[t].src != transitions[t].target){
+				return false;
+			}
+		}
+		return true;
+	}
+
+	bool TransitionSystem::isIrrelevantLabel(int label) const{
+		auto & transitions = get_transitions_with_label(label);
+		if((int)transitions.size() != get_size()) return false;
+		for(size_t t = 0 ; t < transitions.size() ; t++){
+			if(transitions[t].src != transitions[t].target){
+				return false;
+			}
+		}
+		return true;
+	}
+
+	bool TransitionSystem::hasSelfLoopOnValue(int state, int label) const {
+		auto & transitions = get_transitions_with_label(label);
+		for(Transition t : transitions){
+			if(t.src == state && t.target == state) return true;
+		}
+		return false;
+	}
+
 }
