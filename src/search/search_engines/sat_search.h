@@ -31,6 +31,7 @@ class SATSearch : public SearchEngine {
 	const bool useEmptyPillars;
 	const bool no_selfloop_SATvars = false;//TODO: What is this???? Is this an option??
 	const encoding_type encoding;
+	bool continueAfterFirstPlan;
 	const std::shared_ptr<LengthStrategy> length_strategy;
 
 	std::shared_ptr<task_representation::FTSTask> fts;

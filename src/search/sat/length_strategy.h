@@ -30,6 +30,7 @@ namespace sat_search {
         }
     };
 
+	// TODO maybe add starting value and step size here? Could be helpful for tests
     class LengthStrategyOneByOne : public LengthStrategy {
     public:
         int get_first_length() const override {
@@ -41,7 +42,7 @@ namespace sat_search {
         }
 
         bool forceAtLeastOneAction() const override {
-            return true; //TODO: SHould this be an option?
+            return true; //TODO: Should this be an option?
         }
     };
 

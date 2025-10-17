@@ -33,6 +33,7 @@ SATSearch::SATSearch(const options::Options &opts): SearchEngine(opts),
 	useEmptyCols(opts.get<bool>("use_empty_cols")),
 	useEmptyPillars(opts.get<bool>("use_empty_pillars")),
 	encoding(encoding_type(opts.get_enum("encoding"))),
+	continueAfterFirstPlan(opts.get<bool>("continue_after_first_plan")),
 	length_strategy(opts.get<shared_ptr<LengthStrategy>>("length_strategy")),
 	fts(g_main_task),
 	stepNumber(0), currentLength (length_strategy->get_first_length()) {
@@ -67,17 +68,15 @@ bool SATSearch::containsSelfLoops(int ts, int label){
 }
 
 bool SATSearch::hasMixedTransitions(int ts, int label){
-	bool selfloop = false;
-	bool normalTransition = false;
 	auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
 	for(size_t t = 0 ; t < transitions.size() ; t++){
 		if(transitions[t].src == transitions[t].target){
-			return selfloop = true; //TODO: Assignment in return ????
+			return true;
 		}else if(transitions[t].src != transitions[t].target){
-			return normalTransition = true; //TODO: Assignment in return ????
+			return true;
 		}
 	}
-	return (selfloop && normalTransition);
+	return false;
 }
 
 bool SATSearch::isAlwaysSelfLoop(int ts, int label){
@@ -750,9 +749,8 @@ SearchStatus SATSearch::step() {
 				<< " labels " << labels.size() << " timesteps with label " << timesteps_with_labels.size()
 				<< " compression " << double(labels.size()) / timesteps_with_labels.size()
 				<< endl;
-		//TODO: Why did we have this if???: if (maximum_iteration == -1){
+		if (!continueAfterFirstPlan)
 			return SOLVED;
-		//}
 	} else {
 		cout << "STEP " << stepNumber << " length " << currentLength
 				<< " UNSAT time " << step_timer
