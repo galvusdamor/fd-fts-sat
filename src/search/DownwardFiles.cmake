@@ -555,8 +555,10 @@ fast_downward_plugin(
     NAME SAT_SEARCH
         HELP "SAT search"
     SOURCES
-        search_engines/sat_search
+		search_engines/sat_search
         sat/sat_encoder
+        sat/sat_encoding
+        sat/label_based_encoding
         #sat/bdd_encoding
 		sat/length_strategy
 		task_utils/label_order_finder

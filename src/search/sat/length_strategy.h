@@ -11,9 +11,6 @@ namespace sat_search {
     public:
         virtual int get_first_length() const = 0;
         virtual std::optional<int> get_next_length(int step_number, int previous_length) const = 0;
-        virtual bool forceAtLeastOneAction() const {
-            return false;
-        }
     };
 
     class LengthStrategyConstant : public LengthStrategy {
@@ -39,10 +36,6 @@ namespace sat_search {
 
         std::optional<int> get_next_length(int , int previous_length) const override {
             return previous_length + 1;
-        }
-
-        bool forceAtLeastOneAction() const override {
-            return true; //TODO: Should this be an option?
         }
     };
 
