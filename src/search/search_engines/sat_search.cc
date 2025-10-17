@@ -89,6 +89,7 @@ SearchStatus SATSearch::step() {
 	sat_capsule capsule(solver);
 	reset_number_of_clauses();
 
+	// create encoding object
 	SATEncoding * thisEncoding = encoding_factory->createEncodingInstance(capsule);
 
 	std::vector<std::pair<int,int>> time_step_order; // for plan extraction
@@ -126,25 +127,25 @@ SearchStatus SATSearch::step() {
 
 	if (solverState == 10){
 		// run plan extraction
-		auto [goalState, states, labels] = thisEncoding->extractSolution(time_step_order);
+		auto [goalState, states, labels, timesteps_with_labels] = thisEncoding->extractSolution(time_step_order);
 		// set the plan and run FTS extraction		
 		check_goal_and_set_plan(goalState, states, std::move(labels), fts);
 
 		ipasir_release(solver);
 		
-		//cout << "STEP " << stepNumber << " length " << currentLength
-		//		<< " SAT time " << step_timer
-		//		<< " clauses " << get_number_of_clauses() << " vars " << capsule.number_of_variables
-		//		<< " labels " << labels.size() << " timesteps with label " << timesteps_with_labels.size()
-		//		<< " compression " << double(labels.size()) / timesteps_with_labels.size()
-		//		<< endl;
+		cout << "STEP " << stepNumber << " length " << currentLength
+				<< " SAT time " << step_timer
+				<< " clauses " << get_number_of_clauses() << " vars " << capsule.number_of_variables
+				<< " labels " << labels.size() << " timesteps with label " << timesteps_with_labels.size()
+				<< " compression " << double(labels.size()) / timesteps_with_labels.size()
+				<< endl;
 		if (!continueAfterFirstPlan)
 			return SOLVED;
 	} else {
-		//cout << "STEP " << stepNumber << " length " << currentLength
-		//		<< " UNSAT time " << step_timer
-		//		<< " clauses " << get_number_of_clauses() << " vars " << capsule.number_of_variables
-		//		<< endl;
+		cout << "STEP " << stepNumber << " length " << currentLength
+				<< " UNSAT time " << step_timer
+				<< " clauses " << get_number_of_clauses() << " vars " << capsule.number_of_variables
+				<< endl;
 		ipasir_release(solver);
 	}
 
