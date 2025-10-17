@@ -27,6 +27,7 @@ std::string pad_path(std::vector<int> & path, int chars = PATHPAD);
 struct sat_capsule{
 	void* solver;
 	int number_of_variables;
+	int number_of_clauses;
 	int new_variable();
 
 #ifndef NDEBUG
@@ -36,34 +37,34 @@ struct sat_capsule{
 #endif
 
 	sat_capsule(void* _solver);
+
+	void reset_number_of_clauses();
+	int get_number_of_clauses();
+	
+	void assertYes(int i);
+	void assertNot(int i);
+	
+	void implies(int i, int j);
+	void impliesAnd(int i, int j, int k);
+	void impliesAnd(int i, std::vector<int> j);
+	void impliesNot(int i, int j);
+	void impliesOr(int i, std::vector<int> & j);
+	void andImpliesOr(int i, int j, std::vector<int> & k);
+	void andImpliesOr(std::vector<int> & i, std::vector<int> & j);
+	void impliesPosAndNegImpliesOr(int i, int j, std::vector<int> & k);
+	void impliesAllNot(int i, std::vector<int> & j);
+	void notImpliesAllNot(int i, std::vector<int> & j);
+	void andImplies(int i, int j, int k);
+	void andImplies(std::set<int> i, int j);
+	void andImplies(std::vector<int> i, int j);
+	void atMostOneBinomial(const std::vector<int> & is);
+	void atMostOne(const std::vector<int> & is);
+	void atLeastOne(const std::vector<int> & is);
+	void atMostK(int K, std::vector<int> & is);
+	void notAll(std::set<int> & i);
+	void notAll(std::vector<int> & i);
+	void allNotImpliesNot(std::vector<int> & i, int j);
 };
-
-void reset_number_of_clauses();
-int get_number_of_clauses();
-
-void assertYes(void* solver, int i);
-void assertNot(void* solver, int i);
-
-void implies(void* solver, int i, int j);
-void impliesAnd(void* solver, int i, int j, int k);
-void impliesAnd(void* solver, int i, std::vector<int> j);
-void impliesNot(void* solver, int i, int j);
-void impliesOr(void* solver, int i, std::vector<int> & j);
-void andImpliesOr(void* solver, int i, int j, std::vector<int> & k);
-void andImpliesOr(void* solver, std::vector<int> & i, std::vector<int> & j);
-void impliesPosAndNegImpliesOr(void* solver, int i, int j, std::vector<int> & k);
-void impliesAllNot(void* solver, int i, std::vector<int> & j);
-void notImpliesAllNot(void* solver, int i, std::vector<int> & j);
-void andImplies(void* solver, int i, int j, int k);
-void andImplies(void* solver, std::set<int> i, int j);
-void andImplies(void* solver, std::vector<int> i, int j);
-void atMostOne(void* solver, sat_capsule & capsule, const std::vector<int> & is);
-void atLeastOne(void* solver, sat_capsule & capsule, const std::vector<int> & is);
-void atLeastOne(void* solver, std::vector<int> & is);
-void atMostK(void* solver, sat_capsule & capsule, int K, std::vector<int> & is);
-void notAll(void* solver, std::set<int> & i);
-void notAll(void* solver, std::vector<int> & i);
-void allNotImpliesNot(void* solver, std::vector<int> & i, int j);
 
 
 #endif
