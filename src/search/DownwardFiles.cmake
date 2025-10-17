@@ -557,10 +557,9 @@ fast_downward_plugin(
     SOURCES
         search_engines/sat_search
         sat/sat_encoder
-        sat/bdd_encoding
+        #sat/bdd_encoding
 		sat/length_strategy
 		task_utils/label_order_finder
-		#search_engines/sat_encoder
     DEPENDENCY_ONLY
 )
 
