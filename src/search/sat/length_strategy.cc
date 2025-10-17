@@ -43,20 +43,20 @@ namespace sat_search {
 
     static options::PluginShared<LengthStrategy> _plugin("one_by_one", _parse_one_by_one);
 
+	// This is Rintanen's "Algorithm C"
     static shared_ptr<LengthStrategy> _parse_by_iteration(options::OptionParser &parser) {
         parser.add_option<int>(
             "start_length",
-            "Start value for C.",
+            "Start value for plan length. Further lengths will be start_length * (multiplier)^iteration.",
             "5");
-
         parser.add_option<int>(
-            "maximum_iteration",
-            "Limit on the number of iterations",
-            "5");
+	        "maximum_iteration",
+    	    "Number of iterations to be performed. If set to -1, there is no limit. ",
+       		"-1");
 
         parser.add_option<double>(
             "multiplier",
-            "Multiplier for C.",
+            "Multiplier for iteration.",
             "1.41");
 
         options::Options opts = parser.parse();
@@ -71,7 +71,7 @@ namespace sat_search {
     static shared_ptr<LengthStrategy> _parse_constant(options::OptionParser &parser) {
         parser.add_option<int>(
             "plan_length",
-            "value for C.");
+            "the plan length to try");
 
         options::Options opts = parser.parse();
         if (parser.dry_run())

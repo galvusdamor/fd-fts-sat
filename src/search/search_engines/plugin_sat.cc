@@ -10,30 +10,10 @@ namespace plugin_sat {
 static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
     parser.document_synopsis("SAT Search", "");
 
-            parser.add_option<int>(
-        "plan_length",
-        "run the search for a single plan length only. -1 if length should not be fixed.",
-        "-1");
-            parser.add_option<int>(
-        "length_iteration",
-        "run the search for a single plan length only. -1 if length should not be fixed. Plan length to use is calculated as 5 * sqrt(2)^length_iteration ",
-        "-1");
-            parser.add_option<int>(
-        "start_length",
-        "only if length_iteration != -1. Start value for C.",
-        "5");
-            parser.add_option<double>(
-        "multiplier",
-        "only if length_iteration != -1. Multiplier for C.",
-        "1.41");
             parser.add_option<bool>(
-        "length_by_iteration",
-        "use the iteration formula of Rinanten's slgorithm C to determine plan lengths.",
+        "continue_after_first_plan",
+        "Normally the planner stops once the first plan is found. If set to true, continue search even if a plan as been found.",
         "false");
-            parser.add_option<int>(
-        "maximum_iteration",
-        "if length by iteration, continue iteration also if plan has been found up to and including this iteration. If -1 stop at first plan found",
-        "-1");
 
             parser.add_option<int>(
         "start_length",
