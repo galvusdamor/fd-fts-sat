@@ -27,7 +27,7 @@ public:
 	virtual void encode(int fromTime, int toTime) = 0;
 	virtual void encodeInit(int fromTime) = 0;
 	virtual void encodeGoal(int toTime) = 0;
-	virtual std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> extractSolution(std::vector<std::pair<int,int>> time_step_order) = 0;
+	virtual std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> extractSolution(int initTime, std::vector<std::pair<int,int>> time_step_order) = 0;
 };
 
 // abstract interface for initialisation of SAT encoding

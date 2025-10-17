@@ -90,7 +90,7 @@ public:
 	virtual void encode(int fromTime, int toTime);
 	virtual void encodeInit(int fromTime);
 	virtual void encodeGoal(int toTime);
-	std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> extractSolution(std::vector<std::pair<int,int>> time_step_order);
+	std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> extractSolution(int initTime, std::vector<std::pair<int,int>> time_step_order);
 };
 
 

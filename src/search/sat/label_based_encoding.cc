@@ -29,6 +29,10 @@ LabelBasedEncodingFactory::LabelBasedEncodingFactory(const options::Options &opt
 	useEmptyPillars(opts.get<bool>("use_empty_pillars")),
 	encoding(encoding_type(opts.get_enum("encoding")))
 	 {
+	if (encoding != SEQUENTIAL && useSelfloopOptimisation == false){
+		cerr << "Parallel label-based encodings may only be used together with the self-loop optimisation" << endl;
+		assert(false);
+	}
 }
 
 
@@ -549,13 +553,13 @@ void LabelBasedEncoding::encode(int fromTime, int toTime){
 
 
 // run plan extraction
-std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> LabelBasedEncoding::extractSolution(std::vector<std::pair<int,int>> time_step_order){
+std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> LabelBasedEncoding::extractSolution(int initTime, std::vector<std::pair<int,int>> time_step_order){
 	vector<vector<int>> statesPerTimestep;
 	// extract the initial state
 	vector<int> stateReconstructor;
-	for(size_t ts = 0 ; ts < allTimesStateVars[0].size() ; ts++){
-		for(size_t state = 0 ; state < allTimesStateVars[0][ts].size() ; state++){
-			if(ipasir_val(sat.solver, allTimesStateVars[0][ts][state]) > 0){
+	for(size_t ts = 0 ; ts < allTimesStateVars[initTime].size() ; ts++){
+		for(size_t state = 0 ; state < allTimesStateVars[initTime][ts].size() ; state++){
+			if(ipasir_val(sat.solver, allTimesStateVars[initTime][ts][state]) > 0){
 				stateReconstructor.push_back(state);
 				break;
 			}

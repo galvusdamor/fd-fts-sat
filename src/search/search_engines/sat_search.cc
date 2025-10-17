@@ -126,7 +126,7 @@ SearchStatus SATSearch::step() {
 
 	if (solverState == 10){
 		// run plan extraction
-		auto [goalState, states, labels, timesteps_with_labels] = thisEncoding->extractSolution(time_step_order);
+		auto [goalState, states, labels, timesteps_with_labels] = thisEncoding->extractSolution(1,time_step_order);
 		// set the plan and run FTS extraction		
 		check_goal_and_set_plan(goalState, states, std::move(labels), fts);
 
