@@ -25,8 +25,8 @@ std::string pad_path(std::vector<int> & path, int chars = PATHPAD);
 
 
 struct sat_capsule{
+	void* solver;
 	int number_of_variables;
-
 	int new_variable();
 
 #ifndef NDEBUG
@@ -35,7 +35,7 @@ struct sat_capsule{
 	void printVariables();
 #endif
 
-	sat_capsule();
+	sat_capsule(void* _solver);
 };
 
 void reset_number_of_clauses();
@@ -57,8 +57,8 @@ void notImpliesAllNot(void* solver, int i, std::vector<int> & j);
 void andImplies(void* solver, int i, int j, int k);
 void andImplies(void* solver, std::set<int> i, int j);
 void andImplies(void* solver, std::vector<int> i, int j);
-void atMostOne(void* solver, sat_capsule & capsule, std::vector<int> & is);
-void atLeastOne(void* solver, sat_capsule & capsule, std::vector<int> & is);
+void atMostOne(void* solver, sat_capsule & capsule, const std::vector<int> & is);
+void atLeastOne(void* solver, sat_capsule & capsule, const std::vector<int> & is);
 void atLeastOne(void* solver, std::vector<int> & is);
 void atMostK(void* solver, sat_capsule & capsule, int K, std::vector<int> & is);
 void notAll(void* solver, std::set<int> & i);

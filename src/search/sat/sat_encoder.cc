@@ -37,10 +37,11 @@ std::string pad_path(std::vector<int> & path, int chars){
 	return pad_string(path_string(path),chars);
 }
 
-
-sat_capsule::sat_capsule(){
-	number_of_variables = 0;
+sat_capsule::sat_capsule(void* _solver) :
+	solver(_solver),
+	number_of_variables(0){
 }
+
 
 int sat_capsule::new_variable(){
 	return ++number_of_variables;
@@ -238,7 +239,7 @@ void allNotImpliesNot(void* solver, std::vector<int> & i, int j){
 	
 }
 
-void atMostOneBinomial(void* solver, __attribute__((unused)) sat_capsule & capsule, std::vector<int> & is){
+void atMostOneBinomial(void* solver, __attribute__((unused)) sat_capsule & capsule, const std::vector<int> & is){
 	for (size_t i = 0; i < is.size(); i++){
 		int ii = is[i];
 		for (size_t j = i+1; j < is.size(); j++){
@@ -250,7 +251,7 @@ void atMostOneBinomial(void* solver, __attribute__((unused)) sat_capsule & capsu
 
 
 
-void atMostOne(void* solver, sat_capsule & capsule, std::vector<int> & is){
+void atMostOne(void* solver, sat_capsule & capsule, const std::vector<int> & is){
 	if (is.size() <= 1) return; // nothing to do
 
 	if (is.size() < 256){
@@ -274,7 +275,7 @@ void atMostOne(void* solver, sat_capsule & capsule, std::vector<int> & is){
 
 
 	for (size_t i = 0; i < is.size(); i++){
-		int & var = is[i];
+		const int & var = is[i];
 
 		for (int b = 0; b < bits; b++){
 			ipasir_add(solver,-var);
@@ -331,15 +332,15 @@ void atMostK(void* solver, sat_capsule & capsule, int K, std::vector<int> & is){
 	ipasir_add(solver,0);
 }
 
-void atLeastOne(void* solver, __attribute__((unused)) sat_capsule & capsule, std::vector<int> & is){
-	for (int & i : is)
+void atLeastOne(void* solver, __attribute__((unused)) sat_capsule & capsule, const std::vector<int> & is){
+	for (const int & i : is)
 		ipasir_add(solver, i);
 	ipasir_add(solver,0);
 	number_of_clauses++;
 }
 
-void atLeastOne(void* solver, std::vector<int> & is){
-	for (int & i : is)
+void atLeastOne(void* solver, const std::vector<int> & is){
+	for (const int & i : is)
 		ipasir_add(solver, i);
 	ipasir_add(solver,0);
 	number_of_clauses++;
