@@ -4,11 +4,11 @@
 #include "sat_encoder.h"
 #include "../task_representation/fts_task.h"
 #include "../task_representation/transition_system.h"
+#include "../option_parser.h"
 
 
 // needed for access to g_main_task
-// TODO Is there another way to access it?
-#include "../search_engine.h"
+#include "../globals.h"
 
 
 namespace sat_search {
