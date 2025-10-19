@@ -1,8 +1,6 @@
 #ifndef SAT_SAT_ENCODING
 #define SAT_SAT_ENCODING
 
-#include "../option_parser.h"
-#include "../plugin.h"
 #include "sat_encoder.h"
 #include "../task_representation/fts_task.h"
 #include "../task_representation/transition_system.h"
@@ -22,8 +20,9 @@ protected:
 	std::shared_ptr<task_representation::FTSTask> fts;
 	const bool & forceAtLeastOneAction;
 public:
-	SATEncoding(sat_capsule & capsule, std::shared_ptr<task_representation::FTSTask> _fts, const bool & _forceAtLeastOneAction) :
+	SATEncoding(sat_capsule & capsule, const std::shared_ptr<task_representation::FTSTask> &_fts, const bool & _forceAtLeastOneAction) :
 		sat(capsule), fts(_fts), forceAtLeastOneAction(_forceAtLeastOneAction) {};
+	virtual ~SATEncoding() = default;
 	virtual void encode(int fromTime, int toTime) = 0;
 	virtual void encodeInit(int fromTime) = 0;
 	virtual void encodeGoal(int toTime) = 0;
@@ -37,7 +36,8 @@ protected:
 	const bool forceAtLeastOneAction;
 public:
 	SATEncodingFactory(bool _forceAtLeastOneAction) : fts(g_main_task), forceAtLeastOneAction(_forceAtLeastOneAction) {};
-	virtual SATEncoding* createEncodingInstance(sat_capsule & capsule) = 0;
+	virtual ~SATEncodingFactory() = default;
+	virtual std::unique_ptr<SATEncoding> createEncodingInstance(sat_capsule & capsule) = 0;
 	virtual void initialize() = 0;
 };
 

@@ -9,6 +9,7 @@ namespace options {
 namespace sat_search {
     class LengthStrategy {
     public:
+        virtual ~LengthStrategy() = default;
         virtual int get_first_length() const = 0;
         virtual std::optional<int> get_next_length(int step_number, int previous_length) const = 0;
     };
@@ -17,6 +18,7 @@ namespace sat_search {
         const int plan_length;
     public:
         explicit LengthStrategyConstant(const options::Options & opts);
+        virtual ~LengthStrategyConstant() override = default;
 
         int get_first_length() const override {
             return plan_length;
@@ -30,6 +32,7 @@ namespace sat_search {
 	// TODO maybe add starting value and step size here? Could be helpful for tests
     class LengthStrategyOneByOne : public LengthStrategy {
     public:
+        ~LengthStrategyOneByOne() override = default;
         int get_first_length() const override {
             return 1;
         }
@@ -45,7 +48,7 @@ namespace sat_search {
         const int maximum_iteration;
     public:
         LengthStrategyByIteration (const options::Options & opts);
-
+        ~LengthStrategyByIteration() override = default;
         int get_first_length() const override {
             return start_length;
         }

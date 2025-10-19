@@ -4,7 +4,6 @@
 #include "sat_encoder.h"
 #include "sat_encoding.h"
 #include "../task_representation/transition_system.h"
-#include "../task_representation/label_equivalence_relation.h"
 
 
 namespace plugins {
@@ -21,19 +20,17 @@ enum encoding_type {
 	CHAINS_PARALLEL
 };
 
-
-
-
 class LabelBasedEncoding : public SATEncoding {
-	const bool & useLabelGroups;
-	const bool & useSelfloopOptimisation;
-	const bool & useEmptyRows;
-	const bool & useEmptyCols;
-	const bool & useEmptyPillars;
+	bool useLabelGroups;
+	bool useSelfloopOptimisation;
+	bool useEmptyRows;
+	bool useEmptyCols;
+	bool useEmptyPillars;
 	const encoding_type & encoding;
 
 	std::shared_ptr<task_representation::FTSTask> fts;
-	
+
+	//TODO: Storing a const reference is problematic because it is not guaranteed that the caller does not delete the original object
 	const std::vector<std::vector<std::vector<int>>> & labelGroups;
 	const std::vector<std::vector<std::vector<int>>> &labelProjection;
 	const std::vector<std::vector<std::set<int>>> &empty_rows, &empty_cols;
@@ -42,20 +39,16 @@ class LabelBasedEncoding : public SATEncoding {
 	const std::vector<std::vector<std::vector<int>>> &empty_projected_cells_per_row;
 	const std::vector<std::vector<std::vector<std::set<int>>>> &ones_per_row;
 
-
-
 protected:
 	//// persistent data structures
 	std::map<int,std::vector<std::vector<int>>> allTimesStateVars;
 	std::map<int,std::vector<int>> allTimesLabelVars;
 
-
 	//// functions generating data structures
-    std::vector<std::vector<int>> generateStateVars();
-    std::vector<int> generateLabelVars();
-	std::vector<std::vector<int>> generateLabelGroupVars(const std::vector<int> &labelVars);
-	std::map<int, std::map<int, std::vector<int>>> generateHelperVars();
-
+    std::vector<std::vector<int>> generateStateVars() const;
+    std::vector<int> generateLabelVars() const;
+	std::vector<std::vector<int>> generateLabelGroupVars(const std::vector<int> &labelVars) const;
+	std::map<int, std::map<int, std::vector<int>>> generateHelperVars() const;
 
 	/// encoding functions for parallelism
 	void encode_sequential(const std::vector<int> & labelVars);
@@ -69,13 +62,13 @@ protected:
 public:
     explicit LabelBasedEncoding(
 		sat_capsule & capsule,
-		std::shared_ptr<task_representation::FTSTask> _fts,
-		const bool & _useLabelGroups,
-		const bool & _useSelfloopOptimisation,
-		const bool & _useEmptyRows,
-		const bool & _useEmptyCols,
-		const bool & _useEmptyPillars,
-		const bool & _forceAtLeastOneAction,
+		const std::shared_ptr<task_representation::FTSTask> & _fts,
+		bool _useLabelGroups,
+		bool _useSelfloopOptimisation,
+		bool _useEmptyRows,
+		bool _useEmptyCols,
+		bool _useEmptyPillars,
+		bool _forceAtLeastOneAction,
 		const encoding_type & _encoding,
 		const std::vector<std::vector<std::vector<int>>> &_labelGroups,
 		const std::vector<std::vector<std::vector<int>>> &_labelProjection,
@@ -85,12 +78,12 @@ public:
 		const std::vector<std::vector<std::vector<int>>> &_empty_projected_cells_per_row,
 		const std::vector<std::vector<std::vector<std::set<int>>>> &_ones_per_row
 			);
-    virtual ~LabelBasedEncoding() = default;
+	~LabelBasedEncoding() override = default;
 
-	virtual void encode(int fromTime, int toTime);
-	virtual void encodeInit(int fromTime);
-	virtual void encodeGoal(int toTime);
-	std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> extractSolution(int initTime, std::vector<std::pair<int,int>> time_step_order);
+	void encode(int fromTime, int toTime) override;
+	void encodeInit(int fromTime) override;
+	void encodeGoal(int toTime) override;
+	std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> extractSolution(int initTime, std::vector<std::pair<int,int>> time_step_order) override;
 };
 
 
@@ -104,7 +97,6 @@ class LabelBasedEncodingFactory : public SATEncodingFactory {
 	
 	// precomputed data structures that are the same for all encoding instances
 	std::vector<std::vector<std::vector<int>>> labelGroups;
-	
 	std::vector<std::vector<std::vector<int>>> labelProjection;
 	std::vector<std::vector<std::set<int>>> empty_rows, empty_cols;
 	std::vector<std::vector<std::vector<int>>> labelsWithEffectOnValue;
@@ -112,11 +104,12 @@ class LabelBasedEncodingFactory : public SATEncodingFactory {
 	std::vector<std::vector<std::vector<std::set<int>>>> ones_per_row;
     
 
-public:	
-	virtual void initialize() override;
-	virtual LabelBasedEncoding* createEncodingInstance(sat_capsule & capsule) override;
-    explicit LabelBasedEncodingFactory(const options::Options &opts);
-    virtual ~LabelBasedEncodingFactory() = default;
+public:
+	explicit LabelBasedEncodingFactory(const options::Options &opts);
+
+	void initialize() override;
+	std::unique_ptr<SATEncoding> createEncodingInstance(sat_capsule & capsule) override;
+    ~LabelBasedEncodingFactory() override = default;
 };
 
 

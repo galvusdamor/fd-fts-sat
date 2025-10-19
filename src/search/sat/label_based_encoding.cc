@@ -12,7 +12,9 @@
 #include "sat_encoder.h"
 #include "../task_utils/label_order_finder.h"
 
+#include "../options/option_parser.h"
 #include "../options/options.h"
+#include "../options/plugin.h"
 
 
 using namespace std;
@@ -98,13 +100,13 @@ static options::PluginShared<SATEncodingFactory> _plugin_label_based_sat_factory
 
 LabelBasedEncoding::LabelBasedEncoding(
 	sat_capsule & capsule,
-	std::shared_ptr<task_representation::FTSTask> _fts,
-	const bool & _useLabelGroups,
-	const bool & _useSelfloopOptimisation,
-	const bool & _useEmptyRows,
-	const bool & _useEmptyCols,
-	const bool & _useEmptyPillars,
-	const bool & _forceAtLeastOneAction,
+	const std::shared_ptr<FTSTask> & _fts,
+	bool _useLabelGroups,
+	bool _useSelfloopOptimisation,
+	bool _useEmptyRows,
+	bool _useEmptyCols,
+	bool _useEmptyPillars,
+	bool _forceAtLeastOneAction,
 	const encoding_type & _encoding,
 	const std::vector<std::vector<std::vector<int>>> &_labelGroups,
 	const std::vector<std::vector<std::vector<int>>> &_labelProjection,
@@ -217,8 +219,8 @@ void LabelBasedEncodingFactory::initialize() {
 
 
 
-LabelBasedEncoding* LabelBasedEncodingFactory::createEncodingInstance(sat_capsule & capsule){
-	return new LabelBasedEncoding(capsule,fts,useLabelGroups,useSelfloopOptimisation,
+unique_ptr<SATEncoding> LabelBasedEncodingFactory::createEncodingInstance(sat_capsule & capsule){
+	return make_unique<LabelBasedEncoding>(capsule,fts,useLabelGroups,useSelfloopOptimisation,
 			useEmptyRows,useEmptyCols,useEmptyPillars,forceAtLeastOneAction,encoding,
 			labelGroups,labelProjection,empty_rows,empty_cols,
 			labelsWithEffectOnValue, empty_projected_cells_per_row,
@@ -228,7 +230,7 @@ LabelBasedEncoding* LabelBasedEncodingFactory::createEncodingInstance(sat_capsul
 
 
 
-vector<vector<int>> LabelBasedEncoding::generateStateVars(/* , int timestep */){
+vector<vector<int>> LabelBasedEncoding::generateStateVars(/* , int timestep */) const {
 	vector<vector<int>> stateVars(fts->get_size());
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
@@ -242,7 +244,7 @@ vector<vector<int>> LabelBasedEncoding::generateStateVars(/* , int timestep */){
 	return stateVars;
 }
 
-vector<int> LabelBasedEncoding::generateLabelVars(/* , int timestep */){
+vector<int> LabelBasedEncoding::generateLabelVars(/* , int timestep */) const {
 	vector<int> labelVars(fts->get_num_labels());
 	for(int label = 0 ; label < fts->get_num_labels() ; label++){
 		int labelVar = sat.new_variable();
@@ -253,7 +255,7 @@ vector<int> LabelBasedEncoding::generateLabelVars(/* , int timestep */){
 	return labelVars;
 }
 
-vector<vector<int>> LabelBasedEncoding::generateLabelGroupVars(const vector<int> &labelVars/* , int timestep */){
+vector<vector<int>> LabelBasedEncoding::generateLabelGroupVars(const vector<int> &labelVars/* , int timestep */) const{
 	vector<vector<int>> labelGroupVars(fts->get_size());
 	for(int ts = 0 ; ts < fts->get_size(); ts++){
 		for(size_t lg = 0 ; lg < labelGroups[ts].size() ; lg++){
@@ -275,7 +277,7 @@ vector<vector<int>> LabelBasedEncoding::generateLabelGroupVars(const vector<int>
 	return labelGroupVars;
 }
 
-map<int, map<int, vector<int>>> LabelBasedEncoding::generateHelperVars(/* , int timestep */){
+map<int, map<int, vector<int>>> LabelBasedEncoding::generateHelperVars(/* , int timestep */) const{
 	map<int, map<int, vector<int>>> helperVars;
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
@@ -308,10 +310,8 @@ void LabelBasedEncoding::encode_self_loop_parallel(const vector<int> & labelVars
 }
 
 void LabelBasedEncoding::encode_chains_parallel(const vector<int> & labelVars, const vector<vector<int>> & nextStateVars){
-	map<int, map<int, vector<int>>> topHelperVars;
-	map<int, map<int, vector<int>>> bottomHelperVars;
-	topHelperVars = generateHelperVars();
-	bottomHelperVars = generateHelperVars();
+	map<int, map<int, vector<int>>> topHelperVars = generateHelperVars();
+	map<int, map<int, vector<int>>> bottomHelperVars = generateHelperVars();
 
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		const TransitionSystem & tss = fts->get_ts(ts);
@@ -380,7 +380,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					}
 				}
 				for(int src = 0 ; src < fts->get_ts(ts).get_size() ; src++){
-					if(empty_rows[ts][lg].find(src) != empty_rows[ts][lg].end()) continue;
+					if(empty_rows[ts][lg].contains(src)) continue;
 					for(int t : empty_projected_cells_per_row[ts][src]){
 						sat.implies(previousStateVars[ts][src], -nextStateVars[ts][t]);
 					}
@@ -392,9 +392,9 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						continue;
 					}
 					for(int target = 0 ; target < fts->get_ts(ts).get_size() ; target++){
-						if(empty_cols[ts][lg].find(target) != empty_cols[ts][lg].end()) continue;
+						if(empty_cols[ts][lg].contains(target)) continue;
 						if(useEmptyCols && labelProjection[ts][src][target] == 0) continue;
-						if(ones_per_row[ts][lg][src].find(target) == ones_per_row[ts][lg][src].end()){
+						if(!ones_per_row[ts][lg][src].contains(target)){
 							for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
 								sat.andImplies(labelVars[labelGroups[ts][lg][l]], previousStateVars[ts][src], -nextStateVars[ts][target]);
 							}
@@ -445,7 +445,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					}
 				}
 				for(int src = 0 ; src < fts->get_ts(ts).get_size() ; src++){
-					if(empty_rows[ts][lg].find(src) != empty_rows[ts][lg].end()) continue;
+					if(empty_rows[ts][lg].contains(src)) continue;
 					for(int t : empty_projected_cells_per_row[ts][src]){
 						sat.implies(previousStateVars[ts][src], -nextStateVars[ts][t]);
 					}
@@ -459,9 +459,9 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						continue;
 					}
 					for(int target = 0 ; target < fts->get_ts(ts).get_size() ; target++){
-						if(empty_cols[ts][lg].find(target) != empty_cols[ts][lg].end()) continue;
+						if(empty_cols[ts][lg].contains(target)) continue;
 						if(useEmptyRows && labelProjection[ts][src][target] == 0) continue;
-						if(ones_per_row[ts][lg][src].find(target) == ones_per_row[ts][lg][src].end()){
+						if(!ones_per_row[ts][lg][src].contains(target)){
 							if(labelGroupVars[ts][lg] == -1){
 								sat.andImplies(labelVars[labelGroups[ts][lg][0]], previousStateVars[ts][src], -nextStateVars[ts][target]);
 							}else{
@@ -505,7 +505,7 @@ void LabelBasedEncoding::encodeGoal(int toTime){
 
 
 void LabelBasedEncoding::encode(int fromTime, int toTime){
-    utils::Timer step_timer;
+    utils::Timer step_timer; //TODO: This  timer is not used for anything
 	//auto t_start = std::chrono::system_clock::now();
 
 	/// Step 1: generate variables (some might already exist)
@@ -522,7 +522,7 @@ void LabelBasedEncoding::encode(int fromTime, int toTime){
 		nextStateVarFind->second;
 
 	// generate label vars (must be generated before)
-	assert(allTimesLabelVars.count(fromTime) == 0);
+	assert(!allTimesLabelVars.contains(fromTime));
 	const vector<int> & labelVars = generateLabelVars();
 	allTimesLabelVars[fromTime] = labelVars;
 

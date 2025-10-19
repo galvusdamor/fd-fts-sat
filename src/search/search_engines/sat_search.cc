@@ -1,6 +1,5 @@
 #include <chrono>
 #include <thread>
-#include <ctime>
 #include <atomic>
 
 #include "sat_search.h"
@@ -89,7 +88,7 @@ SearchStatus SATSearch::step() {
 	sat_capsule capsule(solver);
 
 	// create encoding object
-	SATEncoding * thisEncoding = encoding_factory->createEncodingInstance(capsule);
+	auto thisEncoding = encoding_factory->createEncodingInstance(capsule);
 
 	std::vector<std::pair<int,int>> time_step_order; // for plan extraction
 	// encode all state transitions
