@@ -505,7 +505,7 @@ void LabelBasedEncoding::encodeGoal(int toTime){
 
 
 void LabelBasedEncoding::encode(int fromTime, int toTime){
-    utils::Timer step_timer; //TODO: This  timer is not used for anything
+    //utils::Timer step_timer;  // needed later to stop the encoding if we want to schedule a different instance
 	//auto t_start = std::chrono::system_clock::now();
 
 	/// Step 1: generate variables (some might already exist)
