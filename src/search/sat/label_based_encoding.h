@@ -47,7 +47,7 @@ protected:
 	//// functions generating data structures
     std::vector<std::vector<int>> generateStateVars() const;
     std::vector<int> generateLabelVars() const;
-	std::vector<std::vector<int>> generateLabelGroupVars(const std::vector<int> &labelVars) const;
+	std::vector<std::vector<std::vector<int>>> generateLabelGroupVars(const std::vector<int> &labelVars) const;
 	std::map<int, std::map<int, std::vector<int>>> generateHelperVars() const;
 
 	/// encoding functions for parallelism
@@ -56,7 +56,7 @@ protected:
 	void encode_chains_parallel(const std::vector<int> & labelVars, const std::vector<std::vector<int>> & nextStateVars);
 
 	/// encoding function for the main transition relation
-	void encode_transition(const std::vector<std::vector<int>> & previousStateVars, const std::vector<int> & labelVars, const std::vector<std::vector<int>> &labelGroupVars, const std::vector<std::vector<int>> & nextStateVars);
+	void encode_transition(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<std::vector<int>>> &labelGroupVars, const std::vector<std::vector<int>> & nextStateVars);
 
 
 public:

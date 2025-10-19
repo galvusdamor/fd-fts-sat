@@ -255,23 +255,31 @@ vector<int> LabelBasedEncoding::generateLabelVars(/* , int timestep */) const {
 	return labelVars;
 }
 
-vector<vector<int>> LabelBasedEncoding::generateLabelGroupVars(const vector<int> &labelVars/* , int timestep */) const{
-	vector<vector<int>> labelGroupVars(fts->get_size());
+vector<vector<vector<int>>> LabelBasedEncoding::generateLabelGroupVars(const vector<int> &labelVars/* , int timestep */) const{
+	vector<vector<vector<int>>> labelGroupVars(fts->get_size());
 	for(int ts = 0 ; ts < fts->get_size(); ts++){
+		labelGroupVars[ts].resize(labelGroups[ts].size());
 		for(size_t lg = 0 ; lg < labelGroups[ts].size() ; lg++){
-			if(labelGroups[ts][lg].size() == 1){
-				labelGroupVars[ts].push_back(-1);
-				continue;
+			if (useLabelGroups) {
+				// if the label group has only one member then always use the variable of that label itself.
+				if(labelGroups[ts][lg].size() == 1){
+					labelGroupVars[ts][lg].push_back(labelVars[labelGroups[ts][lg][0]]);
+					continue;
+				}
+				int lab_group = sat.new_variable();
+				DEBUG(sat.registerVariable(lab_group,"LabelGroup:"+to_string(lg)));
+				labelGroupVars[ts][lg].push_back(lab_group);
+				vector<int> labels;
+				for(int label : labelGroups[ts][lg]){
+					sat.implies(labelVars[label], lab_group);
+					labels.push_back(labelVars[label]);
+				}
+				sat.impliesOr(lab_group, labels);
+			} else {
+				for(int label : labelGroups[ts][lg]){
+					labelGroupVars[ts][lg].push_back(labelVars[label]);
+				}
 			}
-			int lab_group = sat.new_variable();
-			DEBUG(sat.registerVariable(lab_group,"LabelGroup:"+to_string(lg)));
-			labelGroupVars[ts].push_back(lab_group);
-			vector<int> labels;
-			for(int label : labelGroups[ts][lg]){
-				sat.implies(labelVars[label], lab_group);
-				labels.push_back(labelVars[label]);
-			}
-			sat.impliesOr(lab_group, labels);
 		}
 	}
 	return labelGroupVars;
@@ -338,135 +346,66 @@ void LabelBasedEncoding::encode_chains_parallel(const vector<int> & labelVars, c
 	}
 }
 
-void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousStateVars, const vector<int> & labelVars, const vector<vector<int>> & labelGroupVars, const vector<vector<int>> & nextStateVars){
+void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousStateVars, const vector<vector<vector<int>>> & labelGroupVars, const vector<vector<int>> & nextStateVars){
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		const TransitionSystem & tss = fts->get_ts(ts);
 		vector<int> labelGroupsWithActualTransitions;
 		for(size_t lg = 0 ; lg < labelGroups[ts].size() ; lg++){
+			// representative label of this group
 			int label = labelGroups[ts][lg][0];
 
-			if(!useLabelGroups){
-				if(useSelfloopOptimisation){
-					if(tss.isIrrelevantLabel(label)) continue;
-					if(tss.isAlwaysSelfLoop(label)){
-						auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
-						vector<int> preconditions;
-						vector<int> effects;
-						for(Transition t : transitions){
-							preconditions.push_back(previousStateVars[ts][t.src]);
-							effects.push_back(nextStateVars[ts][t.target]);
-						}
-						for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
-							sat.impliesOr(labelVars[labelGroups[ts][lg][l]], preconditions);
-							sat.impliesOr(labelVars[labelGroups[ts][lg][l]], effects);
-						}
-						continue;
+			if(useSelfloopOptimisation){
+				if(tss.isIrrelevantLabel(label)) continue;
+				if(tss.isAlwaysSelfLoop(label)){
+					auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
+					vector<int> preconditions;
+					vector<int> effects;
+					for(Transition t : transitions){
+						preconditions.push_back(previousStateVars[ts][t.src]);
+						effects.push_back(nextStateVars[ts][t.target]);
 					}
-				}
-				if(useSelfloopOptimisation){
-					for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
-						labelGroupsWithActualTransitions.push_back(labelVars[labelGroups[ts][lg][l]]);//These are labels and not labelgroups
-					}
-				}
 
-				for(int neg_prec : empty_rows[ts][lg]){
-					for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
-						sat.impliesNot(labelVars[labelGroups[ts][lg][l]], previousStateVars[ts][neg_prec]);
+					for(const int var : labelGroupVars[ts][lg]){
+						sat.impliesOr(var, preconditions);
+						sat.impliesOr(var, effects);
 					}
+					continue;
 				}
-				for(int neg_eff : empty_cols[ts][lg]){
-					for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
-						sat.impliesNot(labelVars[labelGroups[ts][lg][l]], nextStateVars[ts][neg_eff]);
-					}
+				// if we reach this point, the label group has actual transitions
+				for(const int var : labelGroupVars[ts][lg]){
+					labelGroupsWithActualTransitions.push_back(var);
 				}
-				for(int src = 0 ; src < fts->get_ts(ts).get_size() ; src++){
-					if(empty_rows[ts][lg].contains(src)) continue;
-					for(int t : empty_projected_cells_per_row[ts][src]){
-						sat.implies(previousStateVars[ts][src], -nextStateVars[ts][t]);
-					}
-					if(ones_per_row[ts][lg][src].size() == 1){
-						int t = *ones_per_row[ts][lg][src].begin();
-						for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
-							sat.andImplies(labelVars[labelGroups[ts][lg][l]], previousStateVars[ts][src], nextStateVars[ts][t]);
-						}
-						continue;
-					}
-					for(int target = 0 ; target < fts->get_ts(ts).get_size() ; target++){
-						if(empty_cols[ts][lg].contains(target)) continue;
-						if(useEmptyCols && labelProjection[ts][src][target] == 0) continue;
-						if(!ones_per_row[ts][lg][src].contains(target)){
-							for(size_t l = 0 ; l < labelGroups[ts][lg].size() ; l++){
-								sat.andImplies(labelVars[labelGroups[ts][lg][l]], previousStateVars[ts][src], -nextStateVars[ts][target]);
-							}
-						}
-					}
-				}
-			}else{
-				if(useSelfloopOptimisation){
-					if(tss.isIrrelevantLabel(label)) continue;
-					if(tss.isAlwaysSelfLoop(label)){
-						auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
-						vector<int> preconditions;
-						vector<int> effects;
-						for(Transition t : transitions){
-							preconditions.push_back(previousStateVars[ts][t.src]);
-							effects.push_back(nextStateVars[ts][t.target]);
-						}
-						if(labelGroupVars[ts][lg] == -1){
-							sat.impliesOr(labelVars[labelGroups[ts][lg][0]], preconditions);
-							sat.impliesOr(labelVars[labelGroups[ts][lg][0]], effects);
-						}else{
-							sat.impliesOr(labelGroupVars[ts][lg], preconditions);
-							sat.impliesOr(labelGroupVars[ts][lg], effects);
-						}
-						continue;
-					}
-				}
-				if(useSelfloopOptimisation){
-					if(labelGroupVars[ts][lg] == -1){
-						labelGroupsWithActualTransitions.push_back(labelVars[labelGroups[ts][lg][0]]);
-					}else{
-						labelGroupsWithActualTransitions.push_back(labelGroupVars[ts][lg]);
-					}
-				}
+			}
 
-				for(int neg_prec : empty_rows[ts][lg]){
-					if(labelGroupVars[ts][lg] == -1){
-						sat.impliesNot(labelVars[labelGroups[ts][lg][0]], previousStateVars[ts][neg_prec]);
-					}else{
-						sat.impliesNot(labelGroupVars[ts][lg], previousStateVars[ts][neg_prec]);
-					}
+			for(int neg_prec : empty_rows[ts][lg]){
+				for(const int var : labelGroupVars[ts][lg]){
+					sat.impliesNot(var, previousStateVars[ts][neg_prec]);
 				}
-				for(int neg_eff : empty_cols[ts][lg]){
-					if(labelGroupVars[ts][lg] == -1){
-						sat.impliesNot(labelVars[labelGroups[ts][lg][0]], nextStateVars[ts][neg_eff]);
-					}else{
-						sat.impliesNot(labelGroupVars[ts][lg], nextStateVars[ts][neg_eff]);
-					}
+			}
+			for(int neg_eff : empty_cols[ts][lg]){
+				for(const int var : labelGroupVars[ts][lg]){
+					sat.impliesNot(var, nextStateVars[ts][neg_eff]);
 				}
-				for(int src = 0 ; src < fts->get_ts(ts).get_size() ; src++){
-					if(empty_rows[ts][lg].contains(src)) continue;
-					for(int t : empty_projected_cells_per_row[ts][src]){
-						sat.implies(previousStateVars[ts][src], -nextStateVars[ts][t]);
+			}
+			for(int src = 0 ; src < fts->get_ts(ts).get_size() ; src++){
+				if(empty_rows[ts][lg].contains(src)) continue;
+				for(int t : empty_projected_cells_per_row[ts][src]){
+					sat.implies(previousStateVars[ts][src], -nextStateVars[ts][t]);
+				}
+				if(ones_per_row[ts][lg][src].size() == 1){
+					int t = *ones_per_row[ts][lg][src].begin();
+					for(const int var : labelGroupVars[ts][lg]){
+						sat.andImplies(var, previousStateVars[ts][src], nextStateVars[ts][t]);
 					}
-					if(ones_per_row[ts][lg][src].size() == 1){
-						int t = *ones_per_row[ts][lg][src].begin();
-						if(labelGroupVars[ts][lg] == -1){
-							sat.andImplies(labelVars[labelGroups[ts][lg][0]], previousStateVars[ts][src], nextStateVars[ts][t]);
-							continue;
-						}
-						sat.andImplies(labelGroupVars[ts][lg], previousStateVars[ts][src], nextStateVars[ts][t]);
-						continue;
-					}
-					for(int target = 0 ; target < fts->get_ts(ts).get_size() ; target++){
-						if(empty_cols[ts][lg].contains(target)) continue;
-						if(useEmptyRows && labelProjection[ts][src][target] == 0) continue;
-						if(!ones_per_row[ts][lg][src].contains(target)){
-							if(labelGroupVars[ts][lg] == -1){
-								sat.andImplies(labelVars[labelGroups[ts][lg][0]], previousStateVars[ts][src], -nextStateVars[ts][target]);
-							}else{
-								sat.andImplies(labelGroupVars[ts][lg], previousStateVars[ts][src], -nextStateVars[ts][target]);
-							}
+					continue;
+				}
+				for(int target = 0 ; target < fts->get_ts(ts).get_size() ; target++){
+					if(empty_cols[ts][lg].contains(target)) continue;
+					// TODO @Joao: is this "useEmptyCols" check here correct?
+					if(useEmptyCols && labelProjection[ts][src][target] == 0) continue;
+					if(!ones_per_row[ts][lg][src].contains(target)){
+						for(const int var : labelGroupVars[ts][lg]){
+							sat.andImplies(var, previousStateVars[ts][src], -nextStateVars[ts][target]);
 						}
 					}
 				}
@@ -526,15 +465,11 @@ void LabelBasedEncoding::encode(int fromTime, int toTime){
 	const vector<int> & labelVars = generateLabelVars();
 	allTimesLabelVars[fromTime] = labelVars;
 
-	// label group vars are only needed if we use label vars for encoding
-	const vector<vector<int>> __emptyVec;
-	const vector<vector<int>> & labelGroupVars = (useLabelGroups)?
-		generateLabelGroupVars(labelVars/* , int timestep */):
-		__emptyVec;
-	
+	// label group vars: one variable if we useSelfloopOptimisation, otherwise all variables for all labels of each group
+	const vector<vector<vector<int>>> & labelGroupVars = generateLabelGroupVars(labelVars);
 
 	/// 2. Step encode the state transition.
-	encode_transition(previousStateVars,labelVars,labelGroupVars,nextStateVars);
+	encode_transition(previousStateVars,labelGroupVars,nextStateVars);
 
 	// 3. Step encode at least one action constraint if necessary	
 	if (forceAtLeastOneAction) {
