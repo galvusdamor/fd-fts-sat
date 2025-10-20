@@ -18,10 +18,10 @@ class SATEncoding {
 protected:
 	sat_capsule & sat;
 	std::shared_ptr<task_representation::FTSTask> fts;
-	const bool & forceAtLeastOneAction;
+	bool forceAtLeastOneAction;
 public:
-	SATEncoding(sat_capsule & capsule, const std::shared_ptr<task_representation::FTSTask> &_fts, const bool & _forceAtLeastOneAction) :
-		sat(capsule), fts(_fts), forceAtLeastOneAction(_forceAtLeastOneAction) {};
+	SATEncoding(sat_capsule & capsule, const std::shared_ptr<task_representation::FTSTask> &_fts, bool forceAtLeastOneAction) :
+		sat(capsule), fts(_fts), forceAtLeastOneAction(forceAtLeastOneAction) {};
 	virtual ~SATEncoding() = default;
 	virtual void encode(int fromTime, int toTime) = 0;
 	virtual void encodeInit(int fromTime) = 0;

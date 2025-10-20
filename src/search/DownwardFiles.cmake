@@ -561,6 +561,7 @@ fast_downward_plugin(
         sat/label_based_encoding
         #sat/bdd_encoding
 		sat/length_strategy
+		sat/fts_matrix
 		task_utils/label_order_finder
     DEPENDENCY_ONLY
 )

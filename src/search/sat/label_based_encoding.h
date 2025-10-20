@@ -12,7 +12,7 @@ class Feature;
 
 
 namespace sat_search{
-
+class FTSMatrix;
 class LengthStrategy;
 enum encoding_type {
 	SEQUENTIAL,
@@ -29,15 +29,7 @@ class LabelBasedEncoding : public SATEncoding {
 	encoding_type encoding;
 
 	std::shared_ptr<task_representation::FTSTask> fts;
-
-	//TODO: Storing a const reference is problematic because it is not guaranteed that the caller does not delete the original object
-	const std::vector<std::vector<std::vector<int>>> & labelGroups;
-	const std::vector<std::vector<std::vector<int>>> &labelProjection;
-	const std::vector<std::vector<std::set<int>>> &empty_rows, &empty_cols;
-	const std::vector<std::vector<std::vector<int>>> &labelsWithEffectOnValue;
-	//ts->row->cols
-	const std::vector<std::vector<std::vector<int>>> &empty_projected_cells_per_row;
-	const std::vector<std::vector<std::vector<std::set<int>>>> &ones_per_row;
+	std::shared_ptr<FTSMatrix> fts_matrix;
 
 protected:
 	//// persistent data structures
@@ -70,13 +62,7 @@ public:
 		bool _useEmptyPillars,
 		bool _forceAtLeastOneAction,
 		const encoding_type & _encoding,
-		const std::vector<std::vector<std::vector<int>>> &_labelGroups,
-		const std::vector<std::vector<std::vector<int>>> &_labelProjection,
-		const std::vector<std::vector<std::set<int>>> &_empty_rows,
-		const std::vector<std::vector<std::set<int>>> &_empty_cols,
-		const std::vector<std::vector<std::vector<int>>> &_labelsWithEffectOnValue,
-		const std::vector<std::vector<std::vector<int>>> &_empty_projected_cells_per_row,
-		const std::vector<std::vector<std::vector<std::set<int>>>> &_ones_per_row
+		const std::shared_ptr<FTSMatrix> & fts_matrix
 			);
 	~LabelBasedEncoding() override = default;
 
@@ -95,14 +81,7 @@ class LabelBasedEncodingFactory : public SATEncodingFactory {
 	const bool useEmptyPillars;
 	const encoding_type encoding;
 	
-	// precomputed data structures that are the same for all encoding instances
-	std::vector<std::vector<std::vector<int>>> labelGroups;
-	std::vector<std::vector<std::vector<int>>> labelProjection;
-	std::vector<std::vector<std::set<int>>> empty_rows, empty_cols;
-	std::vector<std::vector<std::vector<int>>> labelsWithEffectOnValue;
-	std::vector<std::vector<std::vector<int>>> empty_projected_cells_per_row;//ts->row->cols
-	std::vector<std::vector<std::vector<std::set<int>>>> ones_per_row;
-    
+	std::shared_ptr<FTSMatrix> fts_matrix;
 
 public:
 	explicit LabelBasedEncodingFactory(const options::Options &opts);
