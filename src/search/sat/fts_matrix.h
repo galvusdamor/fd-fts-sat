@@ -16,7 +16,7 @@ namespace sat_search {
     class FTSMatrix {
         // precomputed data structures that are the same for all encoding instances
         std::vector<std::vector<std::vector<int>>> labelGroups;
-        std::vector<std::vector<std::vector<int>>> labelProjection;
+        std::vector<std::vector<std::vector<bool>>> hasAnyTransition;
         std::vector<std::vector<std::set<int>>> empty_rows, empty_cols;
         std::vector<std::vector<std::vector<int>>> labelsWithEffectOnValue;
         std::vector<std::vector<std::vector<int>>> empty_projected_cells_per_row;//ts->row->cols
@@ -52,9 +52,9 @@ namespace sat_search {
             return labelGroups[ts][lg];
         }
 
-        //TODO: What does this mean? Is this int a number of transitions?
-        int get_label_projection(int ts, int src, int target) const {
-            return labelProjection[ts][src][target];
+        // returns whether there is any transition from src to target (or whether src==target).
+        bool has_any_transition(int ts, int src, int target) const {
+            return hasAnyTransition[ts][src][target];
         }
 
         const std::vector<int> & get_labels_with_effect_on_value(int ts, int states) const {

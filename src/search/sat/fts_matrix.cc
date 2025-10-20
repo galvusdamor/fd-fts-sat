@@ -35,7 +35,7 @@ namespace sat_search {
 		}
 
 
-		labelProjection.resize(fts->get_size());
+		hasAnyTransition.resize(fts->get_size());
 		empty_rows.resize(fts->get_size());
 		empty_cols.resize(fts->get_size());
 		labelsWithEffectOnValue.resize(fts->get_size());
@@ -44,11 +44,11 @@ namespace sat_search {
 		for(int ts = 0 ; ts < fts->get_size() ; ts++){
 			const TransitionSystem & tss = fts->get_ts(ts);
 			set<int> values;
-			labelProjection[ts] = vector<vector<int>> (fts->get_ts(ts).get_size(), vector<int>(fts->get_ts(ts).get_size(), 0));
+			hasAnyTransition[ts] = vector<vector<bool>> (fts->get_ts(ts).get_size(), vector<bool>(fts->get_ts(ts).get_size(), 0));
 			labelsWithEffectOnValue[ts].resize(fts->get_ts(ts).get_size());
 			for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
 				values.insert(states);
-				labelProjection[ts][states][states] = 1;
+				hasAnyTransition[ts][states][states] = true;
 				for(int label = 0 ; label < fts->get_num_labels() ; label++){
 					if(tss.isAlwaysSelfLoop(label)) continue;
 					auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
@@ -75,7 +75,7 @@ namespace sat_search {
 					if (useEmptyCols) empty_cols[ts][lg].erase(t.target);
 					ones_per_row[ts][lg][t.src].insert(t.target);
 					//ones_per_column[ts][lg][t.target].insert(t.src);
-					labelProjection[ts][t.src][t.target] = 1;
+					hasAnyTransition[ts][t.src][t.target] = true;
 				}
 			}
 
@@ -83,7 +83,7 @@ namespace sat_search {
 				empty_projected_cells_per_row[ts].resize(fts->get_ts(ts).get_size());
 				for(int src = 0 ; src < fts->get_ts(ts).get_size() ; src++){
 					for(int target = 0 ; target < fts->get_ts(ts).get_size() ; target++){
-						if(labelProjection[ts][src][target] == 0)
+						if(hasAnyTransition[ts][src][target] == false)
 							empty_projected_cells_per_row[ts][src].push_back(target);
 					}
 				}

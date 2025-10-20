@@ -318,7 +318,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 				for(int target = 0 ; target < fts->get_ts(ts).get_size() ; target++){
 					if(fts_matrix->get_empty_cols(ts, lg).contains(target)) continue;
 					// TODO @Joao: is this "useEmptyCols" check here correct?
-					if(useEmptyCols && fts_matrix->get_label_projection(ts, src, target) == 0) continue;
+					if(useEmptyCols && fts_matrix->has_any_transition(ts, src, target) == false) continue;
 					if(!fts_matrix->get_ones_per_row(ts,lg,src).contains(target)){
 						for(const int var : labelGroupVars[ts][lg]){
 							sat.andImplies(var, previousStateVars[ts][src], -nextStateVars[ts][target]);
