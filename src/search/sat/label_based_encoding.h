@@ -26,7 +26,7 @@ class LabelBasedEncoding : public SATEncoding {
 	bool useEmptyRows;
 	bool useEmptyCols;
 	bool useEmptyPillars;
-	const encoding_type & encoding;
+	encoding_type encoding;
 
 	std::shared_ptr<task_representation::FTSTask> fts;
 
