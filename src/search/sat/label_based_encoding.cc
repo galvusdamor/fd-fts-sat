@@ -346,22 +346,27 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 
 			for(int src = 0 ; src < fts->get_ts(ts).get_size() ; src++){
 				if(fts_matrix->get_impossible_sources_for_label(lg).contains(src)) continue;
-				if(fts_matrix->get_ones_per_row(lg,src).size() == 1) {
-					int t = *fts_matrix->get_ones_per_row(lg,src).begin();
+
+				// decision: if label+source can yield only one state encode positively
+				// TODO: maybe also do this if there is more than one possible target, but few compared to the non-possible targets
+				if(fts_matrix->get_targets_for_source_and_label(lg,src).size() == 1) {
+					int t = *fts_matrix->get_targets_for_source_and_label(lg,src).begin();
 					for(const int var : labelGroupVars[ts][lg]){
 						sat.andImplies(var, previousStateVars[ts][src], nextStateVars[ts][t]);
 					}
-					continue;
-				}
-				for(int target = 0 ; target < fts->get_ts(ts).get_size() ; target++) {
-					// check if this constraint was already encoded in a different way
-					if(fts_matrix->get_impossible_targets_for_label(lg).contains(target)) continue;
-					if(fts_matrix->get_impossible_targets_for_source(src).contains(target)) continue;
-				
-					// if the transition src+lg->target is impossible, then we need to encode that the transition is forbidden	
-					if(!fts_matrix->get_ones_per_row(lg,src).contains(target)){
-						for(const int var_label : labelGroupVars[ts][lg]){
-							sat.andImplies(var_label, previousStateVars[ts][src], -nextStateVars[ts][target]);
+				} else {
+					// if there are multiple ones, we encode negatively instead
+					// -- i.e. we forbid a transition to non-possible targets
+					for(int target = 0 ; target < fts->get_ts(ts).get_size() ; target++) {
+						// check if impossibility to transition to target has been encoded otherwise before
+						if(fts_matrix->get_impossible_targets_for_label(lg).contains(target)) continue;
+						if(fts_matrix->get_impossible_targets_for_source(src).contains(target)) continue;
+					
+						// if the transition src+lg->target is impossible, then we need to encode that the transition is forbidden	
+						if(!fts_matrix->get_targets_for_source_and_label(lg,src).contains(target)){
+							for(const int var_label : labelGroupVars[ts][lg]){
+								sat.andImplies(var_label, previousStateVars[ts][src], -nextStateVars[ts][target]);
+							}
 						}
 					}
 				}
