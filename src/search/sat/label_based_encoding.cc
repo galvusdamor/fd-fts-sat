@@ -201,7 +201,7 @@ map<int, map<int, vector<int>>> LabelBasedEncoding::generateHelperVars(/* , int 
 	map<int, map<int, vector<int>>> helperVars;
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
-			int num_helper_vars = fts_matrices[ts]->get_labels_with_effect_on_value(states).size() - 1;
+			int num_helper_vars = fts_matrices[ts]->get_not_always_selfloop_labels_reaching_target(states).size() - 1;
 			for(int h = 0 ; h < num_helper_vars ; h++){
 				int helperVar = sat.new_variable();
 				DEBUG(sat.registerVariable(helperVar, "Helpers"));
@@ -238,7 +238,7 @@ void LabelBasedEncoding::encode_chains_parallel(const vector<int> & labelVars, c
 		const TransitionSystem & tss = fts->get_ts(ts);
 		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
 
-			const auto & labelsWithEffect = fts_matrices[ts]->get_labels_with_effect_on_value(states);
+			const auto & labelsWithEffect = fts_matrices[ts]->get_not_always_selfloop_labels_reaching_target(states);
 			for(size_t l = 0 ; l < labelsWithEffect.size() ; l++){
 				if(l < labelsWithEffect.size()-1){
 					sat.andImplies(labelVars[labelsWithEffect[l]], nextStateVars[ts][states], topHelperVars[ts][states][l]);
@@ -294,19 +294,19 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 				}
 			}
 
-			for(int neg_prec : fts_matrix->get_empty_rows(lg)){
+			for(int neg_prec : fts_matrix->get_impossible_sources_for_label(lg)){
 				for(const int var : labelGroupVars[ts][lg]){
 					sat.impliesNot(var, previousStateVars[ts][neg_prec]);
 				}
 			}
-			for(int neg_eff : fts_matrix->get_empty_cols(lg)){
+			for(int neg_eff : fts_matrix->get_impossible_targets_for_label(lg)){
 				for(const int var : labelGroupVars[ts][lg]){
 					sat.impliesNot(var, nextStateVars[ts][neg_eff]);
 				}
 			}
 			for(int src = 0 ; src < fts->get_ts(ts).get_size() ; src++){
-				if(fts_matrix->get_empty_rows(lg).contains(src)) continue;
-				for(int t : fts_matrix->get_empty_projected_cells_per_row(src)){
+				if(fts_matrix->get_impossible_sources_for_label(lg).contains(src)) continue;
+				for(int t : fts_matrix->get_impossible_targets_for_source(src)){
 					sat.implies(previousStateVars[ts][src], -nextStateVars[ts][t]);
 				}
 				if(fts_matrix->get_ones_per_row(lg,src).size() == 1) {
@@ -318,8 +318,8 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 				}
 				for(int target = 0 ; target < fts->get_ts(ts).get_size() ; target++) {
 					// check if this constraint was already encoded in a different way
-					if(fts_matrix->get_empty_cols(lg).contains(target)) continue;
-					if(fts_matrix->get_empty_projected_cells_per_row(src).contains(target)) continue;
+					if(fts_matrix->get_impossible_targets_for_label(lg).contains(target)) continue;
+					if(fts_matrix->get_impossible_targets_for_source(src).contains(target)) continue;
 				
 					// if the transition src+lg->target is impossible, then we need to encode that the transition is forbidden	
 					if(!fts_matrix->get_ones_per_row(lg,src).contains(target)){

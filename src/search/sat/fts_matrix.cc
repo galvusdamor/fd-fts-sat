@@ -48,7 +48,7 @@ void calculate_empty_dimention(std::vector<std::set<int>> & is_empty,
         bool useEmptyPillars
     ) {
         const int num_states = tss.get_size();
-        labelsWithEffectOnValue.resize(num_states);
+        labelsReachingTarget.resize(num_states);
         for (const auto &gat: tss) {
             vector<int> labels_in_group;
             for (int label: gat.label_group) {
@@ -71,7 +71,7 @@ void calculate_empty_dimention(std::vector<std::set<int>> & is_empty,
                 }
                 for (int target: targets) {
                     for (int label: gat.label_group) {
-                        labelsWithEffectOnValue[target].push_back(label);
+                        labelsReachingTarget[target].push_back(label);
                     }
                 }
             }
@@ -103,15 +103,24 @@ void calculate_empty_dimention(std::vector<std::set<int>> & is_empty,
         }
 
 		/////////////// extract counting information from sparse information
-        empty_cols.resize(labelGroups.size());
-		if (useEmptyCols) calculate_empty_dimention(empty_cols,sparse_label_target_src,1);
+        label_impossible_source.resize(labelGroups.size());
+		if (useEmptyCols) calculate_empty_dimention(label_impossible_source,sparse_label_target_src,1);
 
-        empty_rows.resize(labelGroups.size());
-		if (useEmptyRows) calculate_empty_dimention(empty_rows,sparse_label_src_target,1);
+        label_impossible_target.resize(labelGroups.size());
+		if (useEmptyRows) calculate_empty_dimention(label_impossible_target,sparse_label_src_target,1);
 
-		empty_pillars.resize(num_states);
-		if (useEmptyPillars) calculate_empty_dimention(empty_pillars,sparse_src_target_label,1);
-    }
+		source_impossible_target.resize(num_states);
+		if (useEmptyPillars) calculate_empty_dimention(source_impossible_target,sparse_src_target_label,1);
+
+
+		// TODO: currently unused, have to add command line options
+		source_impossible_label.resize(num_states);
+		calculate_empty_dimention(source_impossible_label,sparse_label_src_target,2);
+		target_impossible_source.resize(num_states);
+		calculate_empty_dimention(target_impossible_source,sparse_src_target_label,2);
+		target_impossible_label.resize(num_states);
+		calculate_empty_dimention(target_impossible_label,sparse_label_target_src,2);
+	}
 }
 
 

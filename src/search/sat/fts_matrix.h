@@ -20,9 +20,10 @@ namespace sat_search {
     class FTSMatrix {
         // precomputed data structures that are the same for all encoding instances
         std::vector<std::vector<int>> labelGroups;
-        std::vector<std::vector<int>> labelsWithEffectOnValue;
-        std::vector<std::set<int>> empty_cols, empty_rows, empty_pillars;
-		// Gregor: previously, we set empty_pillars[x][x] = false always. This seems unnecessary.
+        std::vector<std::vector<int>> labelsReachingTarget;
+        std::vector<std::set<int>> label_impossible_source, label_impossible_target, source_impossible_target;
+		// TODO: (Gregor) new currently unused options; created for symmetry
+        std::vector<std::set<int>> source_impossible_label, target_impossible_source, target_impossible_label;
 
         // Alvaro: I wonder why we do not keep track of the following:
         // For each source -> number of possible targets, number of possible labels
@@ -51,20 +52,8 @@ namespace sat_search {
             bool useEmptyCols,
             bool useEmptyPillars
         );
-
-        const std::set<int> & get_empty_rows(int lg) const {
-            return empty_rows[lg];
-        }
-
-        const std::set<int> & get_empty_cols(int lg) const {
-            return empty_cols[lg];
-        }
-
-        const std::set<int> & get_ones_per_row(int lg, int src) const {
-            return sparse_label_src_target[lg][src];
-        }
-
-        int get_num_label_groups() const {
+		// general information on self-computed label group IDs
+		int get_num_label_groups() const {
             return labelGroups.size();
         }
 
@@ -72,13 +61,30 @@ namespace sat_search {
             return labelGroups[lg];
         }
 
-        const std::vector<int> & get_labels_with_effect_on_value(int states) const {
-            return labelsWithEffectOnValue[states];
+		// information on impossible cases
+        const std::set<int> & get_impossible_sources_for_label(int lg) const {
+            return label_impossible_source[lg];
         }
 
-        const std::set<int> & get_empty_projected_cells_per_row(int row) const {
-            return empty_pillars[row];
+        const std::set<int> & get_impossible_targets_for_label(int lg) const {
+            return label_impossible_target[lg];
         }
+
+		const std::set<int> & get_impossible_targets_for_source(int source) const {
+            return source_impossible_target[source];
+        }
+
+
+		// access to sparse representation
+        const std::set<int> & get_ones_per_row(int lg, int src) const {
+            return sparse_label_src_target[lg][src];
+        }
+
+		// all labels, except labels that are always self-loops, that can reach the state
+        const std::vector<int> & get_not_always_selfloop_labels_reaching_target(int target) const {
+            return labelsReachingTarget[target];
+        }
+
 
     };
 }
