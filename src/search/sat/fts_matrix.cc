@@ -86,7 +86,7 @@ void calculate_empty_dimention(std::vector<std::set<int>> & is_empty,
             sparse_label_target_src[lg].resize(num_states);
 		}
         
-		sparse_src_target_label.resize(labelGroups.size());
+		sparse_src_target_label.resize(num_states);
 		for (int src = 0; src < num_states; src++) {
 			sparse_src_target_label[src].resize(num_states);
 		}
@@ -104,10 +104,10 @@ void calculate_empty_dimention(std::vector<std::set<int>> & is_empty,
 
 		/////////////// extract counting information from sparse information
         label_impossible_source.resize(labelGroups.size());
-		if (useEmptyCols) calculate_empty_dimention(label_impossible_source,sparse_label_target_src,1);
+		if (useEmptyCols) calculate_empty_dimention(label_impossible_source,sparse_label_src_target,1);
 
         label_impossible_target.resize(labelGroups.size());
-		if (useEmptyRows) calculate_empty_dimention(label_impossible_target,sparse_label_src_target,1);
+		if (useEmptyRows) calculate_empty_dimention(label_impossible_target,sparse_label_target_src,1);
 
 		source_impossible_target.resize(num_states);
 		if (useEmptyPillars) calculate_empty_dimention(source_impossible_target,sparse_src_target_label,1);
