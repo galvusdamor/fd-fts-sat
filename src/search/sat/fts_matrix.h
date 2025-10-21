@@ -25,7 +25,23 @@ namespace sat_search {
         std::vector<std::vector<int>> labelsWithEffectOnValue;
         std::vector<std::vector<int>> empty_projected_cells_per_row;//ts->row->cols
 
-        // Full matrix in a sparse representation. Excludes any entry
+        // Alvaro: I wonder why we do not keep track of the following:
+        // For each source -> number of possible targets, number of possible labels
+        // For each label -> number of possible sources, number of possible targets
+        // For each target -> number of possible sources, number of possible labels
+        // For each <source,target> -> number of possible labels
+        // For each <source,label> -> number of possible targets
+        // For each <label,target> -> number of possible sources
+
+        // In all of the cases above, if the number is 0 this corresponds to a constraint forbidding the combination.
+        //                            if the number is 1 (or some k for a low value of k), this corresponds to a clause implying the right hand side.
+        //                            if the number is n - 1 (or minus k for a low value of k), this corresponds to a clause forbidding the missing combinations.
+        // I think that currently, empty_rows, empty_cols, empty_projected_cells_per_row are actually some of these combinations.
+        // My question is which ones are we considering? Can you please identify which of the six cases above are we encoding
+        // when we use empty_rows or empty_cols or empty_pillars? I think this is the last three cases and we only consider the case when the number is 0 or 1, is that correct?
+
+        // Full matrix in a sparse representation.
+        // Alvaro, some entries are excluded here, related to empty rows/cols/pillars. Can we write a comment here related to which ones are excluded?
         std::vector<std::vector<std::set<int>>> ones_per_row;
 
     public:
