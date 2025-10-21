@@ -29,7 +29,7 @@ class LabelBasedEncoding : public SATEncoding {
 	encoding_type encoding;
 
 	std::shared_ptr<task_representation::FTSTask> fts;
-	std::shared_ptr<FTSMatrix> fts_matrix;
+	std::vector<std::shared_ptr<FTSMatrix>> fts_matrices;
 
 protected:
 	//// persistent data structures
@@ -62,7 +62,7 @@ public:
 		bool _useEmptyPillars,
 		bool _forceAtLeastOneAction,
 		const encoding_type & _encoding,
-		const std::shared_ptr<FTSMatrix> & fts_matrix
+		const std::vector<std::shared_ptr<FTSMatrix>> & fts_matrices
 			);
 	~LabelBasedEncoding() override = default;
 
@@ -81,7 +81,7 @@ class LabelBasedEncodingFactory : public SATEncodingFactory {
 	const bool useEmptyPillars;
 	const encoding_type encoding;
 	
-	std::shared_ptr<FTSMatrix> fts_matrix;
+	std::vector<std::shared_ptr<FTSMatrix> > fts_matrices;
 
 public:
 	explicit LabelBasedEncodingFactory(const options::Options &opts);
