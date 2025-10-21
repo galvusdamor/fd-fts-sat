@@ -267,11 +267,13 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 		const auto &fts_matrix = fts_matrices[ts];
 		const TransitionSystem & tss = fts->get_ts(ts);
 		vector<int> labelGroupsWithActualTransitions;
-		for(int lg = 0 ; lg < fts_matrix->get_num_label_groups() ; lg++) {
-			// representative label of this group
-			int label = fts_matrix->get_labels_in_label_group(lg)[0];
 
-			if(useSelfloopOptimisation) {
+		// 1. Step: if desired, handle self-loops separately	
+		if(useSelfloopOptimisation) {
+			for(int lg = 0 ; lg < fts_matrix->get_num_label_groups() ; lg++) {
+				// representative label of this group
+				int label = fts_matrix->get_labels_in_label_group(lg)[0];
+
 				if(tss.isIrrelevantLabel(label)) continue;
 				if(tss.isAlwaysSelfLoop(label)){
 					auto transitions = tss.get_transitions_with_label(label);
@@ -293,6 +295,26 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					labelGroupsWithActualTransitions.push_back(var);
 				}
 			}
+			// frame axioms for self-loops. If no label with an actual transition was executed, enforce frame axiom
+			int selfLoopAuxVar = sat.new_variable();
+			DEBUG(sat.registerVariable(selfLoopAuxVar,"selfLoopAuxVar"));
+			sat.impliesOr(-selfLoopAuxVar, labelGroupsWithActualTransitions);
+			for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
+				sat.andImplies(selfLoopAuxVar, previousStateVars[ts][states], nextStateVars[ts][states]);
+				sat.andImplies(-selfLoopAuxVar, previousStateVars[ts][states], -nextStateVars[ts][states]);
+			}
+		}
+
+		
+		//////////////
+		// 2. Step: encode optimised parts of the encoding
+		//
+		// 2.a: first dimension is label 
+		for(int lg = 0 ; lg < fts_matrix->get_num_label_groups() ; lg++) {
+			// representative label of this group
+			int label = fts_matrix->get_labels_in_label_group(lg)[0];
+			// self-loop: has been encoded before
+			if(useSelfloopOptimisation && tss.isAlwaysSelfLoop(label)) continue;
 
 			for(int neg_prec : fts_matrix->get_impossible_sources_for_label(lg)){
 				for(const int var : labelGroupVars[ts][lg]){
@@ -304,11 +326,26 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					sat.impliesNot(var, nextStateVars[ts][neg_eff]);
 				}
 			}
+		}
+
+		// 2.b: first dimension is source 
+		for(int src = 0 ; src < fts->get_ts(ts).get_size() ; src++){
+			for(int t : fts_matrix->get_impossible_targets_for_source(src)){
+				sat.implies(previousStateVars[ts][src], -nextStateVars[ts][t]);
+			}
+		}
+		
+		
+		//////////////
+		// 3. Step: encode any transition that has not otherwise been covered yet.
+		// As a heuristic, we always do this in the order label -> source -> target
+		for(int lg = 0 ; lg < fts_matrix->get_num_label_groups() ; lg++) {
+			int label = fts_matrix->get_labels_in_label_group(lg)[0];
+			// self-loop: has been encoded before
+			if(useSelfloopOptimisation && tss.isAlwaysSelfLoop(label)) continue;
+
 			for(int src = 0 ; src < fts->get_ts(ts).get_size() ; src++){
 				if(fts_matrix->get_impossible_sources_for_label(lg).contains(src)) continue;
-				for(int t : fts_matrix->get_impossible_targets_for_source(src)){
-					sat.implies(previousStateVars[ts][src], -nextStateVars[ts][t]);
-				}
 				if(fts_matrix->get_ones_per_row(lg,src).size() == 1) {
 					int t = *fts_matrix->get_ones_per_row(lg,src).begin();
 					for(const int var : labelGroupVars[ts][lg]){
@@ -328,16 +365,6 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						}
 					}
 				}
-			}
-		}
-
-		if(useSelfloopOptimisation){
-			int selfLoopAuxVar = sat.new_variable();
-			DEBUG(sat.registerVariable(selfLoopAuxVar,"selfLoopAuxVar"));
-			sat.impliesOr(-selfLoopAuxVar, labelGroupsWithActualTransitions);
-			for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
-				sat.andImplies(selfLoopAuxVar, previousStateVars[ts][states], nextStateVars[ts][states]);
-				sat.andImplies(-selfLoopAuxVar, previousStateVars[ts][states], -nextStateVars[ts][states]);
 			}
 		}
 	}
