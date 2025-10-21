@@ -124,7 +124,7 @@ void LabelBasedEncodingFactory::initialize() {
 	cout << "My FTS task has " << fts->get_size() << " systems and " << fts->get_num_labels() << " labels." << endl;
 
     for (const auto & ts : fts->get_transition_systems()) {
-        fts_matrices.push_back(make_shared<FTSMatrix>(*ts, useEmptyRows, useEmptyCols, useEmptyPillars, useSelfloopOptimisation));
+        fts_matrices.push_back(make_shared<FTSMatrix>(*ts, useEmptyRows, useEmptyCols, useEmptyPillars));
     }
 
     cout << "SAT init time: " << sat_init_timer << endl;

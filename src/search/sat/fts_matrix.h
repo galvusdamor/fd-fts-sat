@@ -39,19 +39,17 @@ namespace sat_search {
         // My question is which ones are we considering? Can you please identify which of the six cases above are we encoding
         // when we use empty_rows or empty_cols or empty_pillars? I think this is the last three cases and we only consider the case when the number is 0 or 1, is that correct?
 
-        // Full matrix in a sparse representation. If useSelfloopOptimisation, then this representation does not contain the encoding of the self-loops. In a SAT encoding, self-loops will be handled separately.
-        // Alvaro, some entries are excluded here, related to empty rows/cols/pillars. Can we write a comment here related to which ones are excluded? Gregor: only self-loops are excluded if optimised. The only other exclusion happened for the has_any_transition. 
+        // Full matrix in a sparse representation.
         std::vector<std::vector<std::set<int>>> sparse_label_src_target; 
         std::vector<std::vector<std::set<int>>> sparse_label_target_src;
         std::vector<std::vector<std::set<int>>> sparse_src_target_label;
-
+        
     public:
         FTSMatrix(
             const task_representation::TransitionSystem & fts,
             bool useEmptyRows,
             bool useEmptyCols,
-            bool useEmptyPillars,
-            bool useSelfloopOptimisation
+            bool useEmptyPillars
         );
 
         const std::set<int> & get_empty_rows(int lg) const {
