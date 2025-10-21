@@ -20,10 +20,9 @@ namespace sat_search {
     class FTSMatrix {
         // precomputed data structures that are the same for all encoding instances
         std::vector<std::vector<int>> labelGroups;
-        std::vector<std::vector<bool>> hasAnyTransition;
-        std::vector<std::set<int>> empty_rows, empty_cols;
         std::vector<std::vector<int>> labelsWithEffectOnValue;
-        std::vector<std::vector<int>> empty_projected_cells_per_row;//ts->row->cols
+        std::vector<std::set<int>> empty_rows, empty_cols;
+        std::vector<std::set<int>> empty_projected_cells_per_row;//row->cols
 
         // Alvaro: I wonder why we do not keep track of the following:
         // For each source -> number of possible targets, number of possible labels
@@ -73,16 +72,11 @@ namespace sat_search {
             return labelGroups[lg];
         }
 
-        // returns whether there is any transition from src to target (or whether src==target).
-        bool has_any_transition(int src, int target) const {
-            return hasAnyTransition[src][target];
-        }
-
         const std::vector<int> & get_labels_with_effect_on_value(int states) const {
             return labelsWithEffectOnValue[states];
         }
 
-        const std::vector<int> & get_empty_projected_cells_per_row(int row) const {
+        const std::set<int> & get_empty_projected_cells_per_row(int row) const {
             return empty_projected_cells_per_row[row];
         }
 

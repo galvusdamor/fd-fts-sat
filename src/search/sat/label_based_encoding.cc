@@ -317,9 +317,11 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					continue;
 				}
 				for(int target = 0 ; target < fts->get_ts(ts).get_size() ; target++) {
+					// check if this constraint was already encoded in a different way
 					if(fts_matrix->get_empty_cols(lg).contains(target)) continue;
-					// TODO @Joao: is this "useEmptyCols" check here correct?
-					if(useEmptyCols && fts_matrix->has_any_transition(src, target) == false) continue;
+					if(fts_matrix->get_empty_projected_cells_per_row(src).contains(target)) continue;
+				
+					// if the transition src+lg->target is impossible, then we need to encode that the transition is forbidden	
 					if(!fts_matrix->get_ones_per_row(lg,src).contains(target)){
 						for(const int var_label : labelGroupVars[ts][lg]){
 							sat.andImplies(var_label, previousStateVars[ts][src], -nextStateVars[ts][target]);

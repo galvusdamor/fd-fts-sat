@@ -47,7 +47,7 @@ namespace sat_search {
         }
 
         set<int> set_of_all_states;
-        hasAnyTransition = vector<vector<bool> >(num_states, vector<bool>(num_states, 0));
+        std::vector<std::vector<bool>> hasAnyTransition = vector<vector<bool> >(num_states, vector<bool>(num_states, 0));
         for (int states = 0; states < num_states; states++) {
             set_of_all_states.insert(states);
             hasAnyTransition[states][states] = true;
@@ -77,7 +77,7 @@ namespace sat_search {
             for (int src = 0; src < num_states; src++) {
                 for (int target = 0; target < num_states; target++) {
                     if (hasAnyTransition[src][target] == false)
-                        empty_projected_cells_per_row[src].push_back(target);
+                        empty_projected_cells_per_row[src].insert(target);
                 }
             }
         }
