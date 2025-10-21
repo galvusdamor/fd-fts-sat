@@ -820,12 +820,7 @@ const std::vector<Transition> &TransitionSystem::get_transitions_with_label(int 
 	bool TransitionSystem::isIrrelevantLabel(int label) const{
 		auto & transitions = get_transitions_with_label(label);
 		if((int)transitions.size() != get_size()) return false;
-		for(size_t t = 0 ; t < transitions.size() ; t++){
-			if(transitions[t].src != transitions[t].target){
-				return false;
-			}
-		}
-		return true;
+		return isAlwaysSelfLoop(label);
 	}
 
 	bool TransitionSystem::hasSelfLoopOnValue(int state, int label) const {

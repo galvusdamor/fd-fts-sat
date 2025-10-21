@@ -291,6 +291,7 @@ public:
 
 	bool isAlwaysSelfLoop(int label) const;
 
+	// is always a self-loop and it is a self-loop for all states.
 	bool isIrrelevantLabel(int label) const;
 	
 	bool hasSelfLoopOnValue(int state, int label) const;
