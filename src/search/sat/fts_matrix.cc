@@ -9,14 +9,19 @@ using namespace std;
 using namespace task_representation;
 
 namespace sat_search {
-    FTSMatrix::FTSMatrix(
+//void calculate_empty_dimention(std::vector<std::set<int>> & is_empty, const std::vector<std::vector<std::set<int>>> & sparse_access){
+//
+//}
+
+
+	FTSMatrix::FTSMatrix(
         const TransitionSystem &tss,
         bool useEmptyRows,
         bool useEmptyCols,
         bool useEmptyPillars,
         bool useSelfloopOptimisation
     ) {
-        int num_states = tss.get_size();
+        const int num_states = tss.get_size();
         labelsWithEffectOnValue.resize(num_states);
         for (const auto &gat: tss) {
             vector<int> labels_in_group;
@@ -46,41 +51,64 @@ namespace sat_search {
             }
         }
 
-        set<int> set_of_all_states;
-        std::vector<std::vector<bool>> hasAnyTransition = vector<vector<bool> >(num_states, vector<bool>(num_states, 0));
-        for (int states = 0; states < num_states; states++) {
-            set_of_all_states.insert(states);
-            hasAnyTransition[states][states] = true;
-        }
-
-        empty_rows.resize(labelGroups.size());
-        empty_cols.resize(labelGroups.size());
-        ones_per_row.resize(labelGroups.size());
+		/////////// compute sparse representation of transition table.
+		// prepare empty data structures
+        sparse_label_src_target.resize(labelGroups.size());
+        sparse_label_target_src.resize(labelGroups.size());
         for (size_t lg = 0; lg < labelGroups.size(); lg++) {
-            ones_per_row[lg].resize(num_states);
-            if (useEmptyRows) empty_rows[lg] = set_of_all_states;
-            if (useEmptyCols) empty_cols[lg] = set_of_all_states;
+            sparse_label_src_target[lg].resize(num_states);
+            sparse_label_target_src[lg].resize(num_states);
+		}
+        
+		sparse_src_target_label.resize(labelGroups.size());
+		for (int src = 0; src < num_states; src++) {
+			sparse_src_target_label[src].resize(num_states);
+		}
+
+		// iterate over all transitions once and insert them into the right data structure
+        for (size_t lg = 0; lg < labelGroups.size(); lg++) {
             int label = labelGroups[lg][0];
             if (useSelfloopOptimisation && (tss.isIrrelevantLabel(label) || tss.isAlwaysSelfLoop(label))) continue;
             auto transitions = tss.get_transitions_with_label(label);
             for (const Transition &t: transitions) {
-                if (useEmptyRows) empty_rows[lg].erase(t.src);
-                if (useEmptyCols) empty_cols[lg].erase(t.target);
-                ones_per_row[lg][t.src].insert(t.target);
-                //ones_per_column[lg][t.target].insert(t.src);
-                hasAnyTransition[t.src][t.target] = true;
+                sparse_label_src_target[lg][t.src].insert(t.target);
+                sparse_label_target_src[lg][t.target].insert(t.src);
+                sparse_src_target_label[t.src][t.target].insert(lg);
             }
         }
 
-        if (useEmptyPillars) {
-            empty_projected_cells_per_row.resize(num_states);
-            for (int src = 0; src < num_states; src++) {
-                for (int target = 0; target < num_states; target++) {
-                    if (hasAnyTransition[src][target] == false)
-                        empty_projected_cells_per_row[src].insert(target);
-                }
-            }
-        }
+		/////////////// extract counting information from sparse information
+        empty_cols.resize(labelGroups.size());
+        if (useEmptyCols){
+			for (size_t lg = 0; lg < labelGroups.size(); lg++) {
+				for (int target = 0; target < num_states; target++) {
+					if (sparse_label_target_src[lg][target].size() == 0)
+						empty_cols[lg].insert(target);
+				}
+			}
+		}
+
+        empty_rows.resize(labelGroups.size());
+		if (useEmptyRows){
+			for (size_t lg = 0; lg < labelGroups.size(); lg++) {
+				for (int src = 0; src < num_states; src++) {
+					if (sparse_label_src_target[lg][src].size() == 0)
+						empty_rows[lg].insert(src);
+				}
+			}
+		}
+
+		empty_pillars.resize(num_states);
+		if (useEmptyPillars){
+			for (int src = 0; src < num_states; src++) {
+        	    for (int target = 0; target < num_states; target++) {
+					if (sparse_src_target_label[src][target].size() == 0)
+						empty_pillars[src].insert(target);
+				}
+			}
+		}
     }
 }
+
+
 

@@ -21,8 +21,8 @@ namespace sat_search {
         // precomputed data structures that are the same for all encoding instances
         std::vector<std::vector<int>> labelGroups;
         std::vector<std::vector<int>> labelsWithEffectOnValue;
-        std::vector<std::set<int>> empty_rows, empty_cols;
-        std::vector<std::set<int>> empty_projected_cells_per_row;//row->cols
+        std::vector<std::set<int>> empty_cols, empty_rows, empty_pillars;
+		// Gregor: previously, we set empty_pillars[x][x] = false always. This seems unnecessary.
 
         // Alvaro: I wonder why we do not keep track of the following:
         // For each source -> number of possible targets, number of possible labels
@@ -39,9 +39,11 @@ namespace sat_search {
         // My question is which ones are we considering? Can you please identify which of the six cases above are we encoding
         // when we use empty_rows or empty_cols or empty_pillars? I think this is the last three cases and we only consider the case when the number is 0 or 1, is that correct?
 
-        // Full matrix in a sparse representation.
-        // Alvaro, some entries are excluded here, related to empty rows/cols/pillars. Can we write a comment here related to which ones are excluded?
-        std::vector<std::vector<std::set<int>>> ones_per_row;
+        // Full matrix in a sparse representation. If useSelfloopOptimisation, then this representation does not contain the encoding of the self-loops. In a SAT encoding, self-loops will be handled separately.
+        // Alvaro, some entries are excluded here, related to empty rows/cols/pillars. Can we write a comment here related to which ones are excluded? Gregor: only self-loops are excluded if optimised. The only other exclusion happened for the has_any_transition. 
+        std::vector<std::vector<std::set<int>>> sparse_label_src_target; 
+        std::vector<std::vector<std::set<int>>> sparse_label_target_src;
+        std::vector<std::vector<std::set<int>>> sparse_src_target_label;
 
     public:
         FTSMatrix(
@@ -61,7 +63,7 @@ namespace sat_search {
         }
 
         const std::set<int> & get_ones_per_row(int lg, int src) const {
-            return ones_per_row[lg][src];
+            return sparse_label_src_target[lg][src];
         }
 
         int get_num_label_groups() const {
@@ -77,7 +79,7 @@ namespace sat_search {
         }
 
         const std::set<int> & get_empty_projected_cells_per_row(int row) const {
-            return empty_projected_cells_per_row[row];
+            return empty_pillars[row];
         }
 
     };
