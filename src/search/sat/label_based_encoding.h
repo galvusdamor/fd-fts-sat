@@ -21,6 +21,7 @@ enum encoding_type {
 };
 
 class LabelBasedEncoding : public SATEncoding {
+	bool statisticsPrinted;
 	bool useLabelGroups;
 	bool useSelfloopOptimisation;
 	bool useEmptyRows;
@@ -56,6 +57,7 @@ public:
     explicit LabelBasedEncoding(
 		sat_capsule & capsule,
 		const std::shared_ptr<task_representation::FTSTask> & _fts,
+		bool _statisticsPrinted,
 		bool _useLabelGroups,
 		bool _useSelfloopOptimisation,
 		bool _useEmptyRows,
@@ -83,6 +85,7 @@ class LabelBasedEncodingFactory : public SATEncodingFactory {
 	const bool useEmptyPillars;
 	const bool usePositiveOneForEmpty;
 	const encoding_type encoding;
+	bool statisticsPrinted;
 	
 	std::vector<std::shared_ptr<FTSMatrix> > fts_matrices;
 

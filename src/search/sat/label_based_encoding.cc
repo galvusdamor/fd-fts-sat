@@ -33,6 +33,7 @@ LabelBasedEncodingFactory::LabelBasedEncodingFactory(const options::Options &opt
 	usePositiveOneForEmpty(opts.get<bool>("use_positive_one")),
 	encoding(encoding_type(opts.get_enum("encoding")))
 	 {
+	statisticsPrinted = false;
 	if (encoding != SEQUENTIAL && useSelfloopOptimisation == false){
 		cerr << "Parallel label-based encodings may only be used together with the self-loop optimisation" << endl;
 		assert(false);
@@ -105,6 +106,7 @@ static options::PluginShared<SATEncodingFactory> _plugin_label_based_sat_factory
 LabelBasedEncoding::LabelBasedEncoding(
 	sat_capsule & capsule,
 	const std::shared_ptr<FTSTask> & _fts,
+	bool _statisticsPrinted,
 	bool _useLabelGroups,
 	bool _useSelfloopOptimisation,
 	bool _useEmptyRows,
@@ -114,6 +116,7 @@ LabelBasedEncoding::LabelBasedEncoding(
 	bool forceAtLeastOneAction,
 	const encoding_type & _encoding,
 	const std::vector<shared_ptr<FTSMatrix>> & fts_matrix): SATEncoding(capsule,_fts, forceAtLeastOneAction),
+	statisticsPrinted(_statisticsPrinted),
 	useLabelGroups(_useLabelGroups),
 	useSelfloopOptimisation(_useSelfloopOptimisation),
 	useEmptyRows(_useEmptyRows),
@@ -141,7 +144,9 @@ void LabelBasedEncodingFactory::initialize() {
 
 
 unique_ptr<SATEncoding> LabelBasedEncodingFactory::createEncodingInstance(sat_capsule & capsule){
-	return make_unique<LabelBasedEncoding>(capsule,fts,useLabelGroups,useSelfloopOptimisation,
+	bool oldStatisticsPrinted = statisticsPrinted;
+	statisticsPrinted = true;
+	return make_unique<LabelBasedEncoding>(capsule,fts,oldStatisticsPrinted,useLabelGroups,useSelfloopOptimisation,
 			useEmptyRows,useEmptyCols,useEmptyPillars,usePositiveOneForEmpty,forceAtLeastOneAction,encoding,
 			fts_matrices);
 }
@@ -271,6 +276,16 @@ void LabelBasedEncoding::encode_chains_parallel(const vector<int> & labelVars, c
 
 void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousStateVars,
 	const vector<vector<vector<int>>> & labelGroupVars, const vector<vector<int>> & nextStateVars){
+	// for statistics
+	int cnt_0_label_target = 0;
+	int cnt_0_label_source = 0;
+	int cnt_0_source_target = 0;
+	int cnt_0_label_source_target = 0;
+	int cnt_1_label_target = 0;
+	int cnt_1_label_source = 0;
+	int cnt_1_source_target = 0;
+	int cnt_1_label_source_target = 0;
+	
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		const auto &fts_matrix = fts_matrices[ts];
 		const TransitionSystem & tss = fts->get_ts(ts);
@@ -343,9 +358,11 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 				if (usePositiveOneForEmpty && fts_matrix->get_possible_sources_for_label(lg).size() == 1){
 					int source = *(fts_matrix->get_possible_sources_for_label(lg).begin());
 					sat.orImplies(labelGroupVars[ts][lg], previousStateVars[ts][source]);
+					cnt_1_label_source++;
 				} else {
 					for(int source : fts_matrix->get_impossible_sources_for_label(lg)){
 						sat.orImpliesNot(labelGroupVars[ts][lg], previousStateVars[ts][source]);
+						cnt_0_label_source++;
 					}
 				}
 			}
@@ -359,9 +376,11 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 				if (usePositiveOneForEmpty && fts_matrix->get_possible_targets_for_label(lg).size() == 1){
 					int target = *(fts_matrix->get_possible_targets_for_label(lg).begin());
 					sat.orImplies(labelGroupVars[ts][lg], nextStateVars[ts][target]);
+					cnt_1_label_target++;
 				} else {
 					for(int target : fts_matrix->get_impossible_targets_for_label(lg)){
 						sat.orImpliesNot(labelGroupVars[ts][lg], nextStateVars[ts][target]);
+						cnt_0_label_target++;
 					}
 				}
 			}
@@ -377,9 +396,11 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 				if (usePositiveOneForEmpty && fts_matrix->get_possible_targets_for_source(src).size() == 1){
 					int target = *(fts_matrix->get_possible_targets_for_source(src).begin());
 					sat.implies(previousStateVars[ts][src], nextStateVars[ts][target]);
+					cnt_1_source_target++;
 				} else {
 					for(int target : fts_matrix->get_impossible_targets_for_source(src)){
 						sat.implies(previousStateVars[ts][src], -nextStateVars[ts][target]);
+						cnt_0_source_target++;
 					}
 				}
 			}
@@ -415,6 +436,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					}
 				
 					sat.orAndImplies(labelGroupVars[ts][lg], previousStateVars[ts][src], nextStateVars[ts][target]);
+					cnt_1_label_source_target++;
 				} else {
 					// if there are multiple ones, we encode negatively instead
 					// -- i.e. we forbid a transition to non-possible targets
@@ -426,11 +448,24 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						// if the transition src+lg->target is impossible, then we need to encode that the transition is forbidden	
 						if(!fts_matrix->get_targets_for_source_and_label(lg,src).contains(target)){
 							sat.orAndImplies(labelGroupVars[ts][lg], previousStateVars[ts][src], -nextStateVars[ts][target]);
+							cnt_0_label_source_target++;
 						}
 					}
 				}
 			}
 		}
+	}
+
+	if (!statisticsPrinted){
+		statisticsPrinted = true;
+		cout << "0_label_target       : " << cnt_0_label_target        << endl;
+		cout << "0_label_source       : " << cnt_0_label_source        << endl;
+		cout << "0_source_target      : " << cnt_0_source_target       << endl;
+		cout << "0_label_source_target: " << cnt_0_label_source_target << endl;
+		cout << "1_label_target       : " << cnt_1_label_target        << endl;
+		cout << "1_label_source       : " << cnt_1_label_source        << endl;
+		cout << "1_source_target      : " << cnt_1_source_target       << endl;
+		cout << "1_label_source_target: " << cnt_1_label_source_target << endl;
 	}
 }
 
