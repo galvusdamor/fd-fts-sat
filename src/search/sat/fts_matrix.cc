@@ -41,12 +41,7 @@ void calculate_empty_dimention(std::vector<std::set<int>> & is_empty,
 }
 
 
-	FTSMatrix::FTSMatrix(
-        const TransitionSystem &tss,
-        bool useEmptyRows,
-        bool useEmptyCols,
-        bool useEmptyPillars
-    ) {
+	FTSMatrix::FTSMatrix(const TransitionSystem &tss) {
         const int num_states = tss.get_size();
         labelsReachingTarget.resize(num_states);
         for (const auto &gat: tss) {
@@ -104,22 +99,22 @@ void calculate_empty_dimention(std::vector<std::set<int>> & is_empty,
 
 		/////////////// extract counting information from sparse information
         label_impossible_source.resize(labelGroups.size());
-		if (useEmptyCols) calculate_empty_dimention(label_impossible_source,sparse_label_src_target,1);
+		calculate_empty_dimention(label_impossible_source,sparse_label_src_target,1);
 
         label_impossible_target.resize(labelGroups.size());
-		if (useEmptyRows) calculate_empty_dimention(label_impossible_target,sparse_label_target_src,1);
+		calculate_empty_dimention(label_impossible_target,sparse_label_target_src,1);
 
 		source_impossible_target.resize(num_states);
-		if (useEmptyPillars) calculate_empty_dimention(source_impossible_target,sparse_src_target_label,1);
+		calculate_empty_dimention(source_impossible_target,sparse_src_target_label,1);
 
 
-		// TODO: currently unused, have to add command line options
-		source_impossible_label.resize(num_states);
-		calculate_empty_dimention(source_impossible_label,sparse_label_src_target,2);
-		target_impossible_source.resize(num_states);
-		calculate_empty_dimention(target_impossible_source,sparse_src_target_label,2);
-		target_impossible_label.resize(num_states);
-		calculate_empty_dimention(target_impossible_label,sparse_label_target_src,2);
+		// redundant information from the other three *_impossible_*
+		//source_impossible_label.resize(num_states);
+		//calculate_empty_dimention(source_impossible_label,sparse_label_src_target,2);
+		//target_impossible_source.resize(num_states);
+		//calculate_empty_dimention(target_impossible_source,sparse_src_target_label,2);
+		//target_impossible_label.resize(num_states);
+		//calculate_empty_dimention(target_impossible_label,sparse_label_target_src,2);
 	}
 }
 

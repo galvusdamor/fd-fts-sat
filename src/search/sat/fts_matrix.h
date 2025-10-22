@@ -39,7 +39,7 @@ namespace sat_search {
 		// only the first three are currently used in encoding
 		std::vector<std::set<int>> label_impossible_source, label_impossible_target, source_impossible_target;
 		// TODO: (Gregor) new currently unused options; created for symmetry
-        std::vector<std::set<int>> source_impossible_label, target_impossible_source, target_impossible_label;
+        //std::vector<std::set<int>> source_impossible_label, target_impossible_source, target_impossible_label;
 
         // Alvaro: I wonder why we do not keep track of the following:
         // For each source -> number of possible targets, number of possible labels
@@ -64,12 +64,7 @@ namespace sat_search {
 
        
     public:
-        FTSMatrix(
-            const task_representation::TransitionSystem & fts,
-            bool useEmptyRows,
-            bool useEmptyCols,
-            bool useEmptyPillars
-        );
+        FTSMatrix(const task_representation::TransitionSystem & fts);
 		// general information on self-computed label group IDs
 		int get_num_label_groups() const {
             return labelGroups.size();

@@ -124,7 +124,7 @@ void LabelBasedEncodingFactory::initialize() {
 	cout << "My FTS task has " << fts->get_size() << " systems and " << fts->get_num_labels() << " labels." << endl;
 
     for (const auto & ts : fts->get_transition_systems()) {
-        fts_matrices.push_back(make_shared<FTSMatrix>(*ts, useEmptyRows, useEmptyCols, useEmptyPillars));
+        fts_matrices.push_back(make_shared<FTSMatrix>(*ts));
     }
 
     cout << "SAT init time: " << sat_init_timer << endl;
@@ -266,11 +266,13 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		const auto &fts_matrix = fts_matrices[ts];
 		const TransitionSystem & tss = fts->get_ts(ts);
+		const int numLabelGroups = fts_matrix->get_num_label_groups();
+		const int numStates = fts->get_ts(ts).get_size();
 		vector<int> labelGroupsWithActualTransitions;
 
 		// 1. Step: if desired, handle self-loops separately	
 		if(useSelfloopOptimisation) {
-			for(int lg = 0 ; lg < fts_matrix->get_num_label_groups() ; lg++) {
+			for(int lg = 0 ; lg < numLabelGroups ; lg++) {
 				// representative label of this group
 				int label = fts_matrix->get_labels_in_label_group(lg)[0];
 
@@ -299,39 +301,60 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 			int selfLoopAuxVar = sat.new_variable();
 			DEBUG(sat.registerVariable(selfLoopAuxVar,"selfLoopAuxVar"));
 			sat.impliesOr(-selfLoopAuxVar, labelGroupsWithActualTransitions);
-			for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
+			for(int states = 0 ; states < numStates ; states++){
 				sat.andImplies(selfLoopAuxVar, previousStateVars[ts][states], nextStateVars[ts][states]);
 				sat.andImplies(-selfLoopAuxVar, previousStateVars[ts][states], -nextStateVars[ts][states]);
 			}
 		}
+
+
+		// data structures to memorise which zero's were already covered.
+		// X_covered_Y[x] means: given a fixed x, list all y's for which all zero's in the remaining dimension z have already been forbidden by the encoding.
+		vector<set<int>> label_covered_targets(numLabelGroups);
+		vector<set<int>> label_covered_sources(numLabelGroups);
+		vector<set<int>> source_covered_targets(numStates);
+		vector<set<int>> source_covered_labels(numStates);
+		vector<set<int>> target_covered_labels(numStates);
+		vector<set<int>> target_covered_sources(numStates);
 
 		
 		//////////////
 		// 2. Step: encode optimised parts of the encoding
 		//
 		// 2.a: first dimension is label 
-		for(int lg = 0 ; lg < fts_matrix->get_num_label_groups() ; lg++) {
+		for(int lg = 0 ; lg < numLabelGroups ; lg++) {
 			// representative label of this group
 			int label = fts_matrix->get_labels_in_label_group(lg)[0];
 			// self-loop: has been encoded before
 			if(useSelfloopOptimisation && tss.isAlwaysSelfLoop(label)) continue;
 
-			for(int neg_prec : fts_matrix->get_impossible_sources_for_label(lg)){
-				for(const int var : labelGroupVars[ts][lg]){
-					sat.impliesNot(var, previousStateVars[ts][neg_prec]);
+			if (useEmptyRows){
+				for(int source : fts_matrix->get_impossible_sources_for_label(lg)){
+					label_covered_sources[lg].insert(source);
+					source_covered_labels[source].insert(lg);
+					for(const int var : labelGroupVars[ts][lg]){
+						sat.impliesNot(var, previousStateVars[ts][source]);
+					}
 				}
 			}
-			for(int neg_eff : fts_matrix->get_impossible_targets_for_label(lg)){
-				for(const int var : labelGroupVars[ts][lg]){
-					sat.impliesNot(var, nextStateVars[ts][neg_eff]);
+
+			if (useEmptyCols){
+				for(int target : fts_matrix->get_impossible_targets_for_label(lg)){
+					label_covered_targets[lg].insert(target);
+					target_covered_labels[target].insert(lg);
+					for(const int var : labelGroupVars[ts][lg]){
+						sat.impliesNot(var, nextStateVars[ts][target]);
+					}
 				}
 			}
 		}
 
 		// 2.b: first dimension is source 
-		for(int src = 0 ; src < fts->get_ts(ts).get_size() ; src++){
-			for(int t : fts_matrix->get_impossible_targets_for_source(src)){
-				sat.implies(previousStateVars[ts][src], -nextStateVars[ts][t]);
+		for(int src = 0 ; src < numStates ; src++){
+			for(int target : fts_matrix->get_impossible_targets_for_source(src)){
+				source_covered_targets[src].insert(target);
+				target_covered_sources[target].insert(src);
+				sat.implies(previousStateVars[ts][src], -nextStateVars[ts][target]);
 			}
 		}
 		
@@ -339,28 +362,35 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 		//////////////
 		// 3. Step: encode any transition that has not otherwise been covered yet.
 		// As a heuristic, we always do this in the order label -> source -> target
-		for(int lg = 0 ; lg < fts_matrix->get_num_label_groups() ; lg++) {
+		for(int lg = 0 ; lg < numLabelGroups ; lg++) {
 			int label = fts_matrix->get_labels_in_label_group(lg)[0];
 			// self-loop: has been encoded before
 			if(useSelfloopOptimisation && tss.isAlwaysSelfLoop(label)) continue;
 
-			for(int src = 0 ; src < fts->get_ts(ts).get_size() ; src++){
-				if(fts_matrix->get_impossible_sources_for_label(lg).contains(src)) continue;
+			for(int src = 0 ; src < numStates ; src++){
+				// Given label lg, if we have encoded all zeros for the source src (i.e. forbidden all possible targets) and there actually is no target,
+				// then we have nothing to encode
+				if (label_covered_sources[lg].contains(src) && fts_matrix->get_impossible_sources_for_label(lg).contains(src)) continue;
 
 				// decision: if label+source can yield only one state encode positively
 				// TODO: maybe also do this if there is more than one possible target, but few compared to the non-possible targets
 				if(fts_matrix->get_targets_for_source_and_label(lg,src).size() == 1) {
-					int t = *fts_matrix->get_targets_for_source_and_label(lg,src).begin();
+					int target = *fts_matrix->get_targets_for_source_and_label(lg,src).begin();
+				
+				
+					if (label_covered_targets[lg].contains(target) && fts_matrix->get_impossible_targets_for_label(lg).contains(target)) continue;
+					if (source_covered_targets[src].contains(target) && fts_matrix->get_impossible_targets_for_source(src).contains(target)) continue;
+				
 					for(const int var : labelGroupVars[ts][lg]){
-						sat.andImplies(var, previousStateVars[ts][src], nextStateVars[ts][t]);
+						sat.andImplies(var, previousStateVars[ts][src], nextStateVars[ts][target]);
 					}
 				} else {
 					// if there are multiple ones, we encode negatively instead
 					// -- i.e. we forbid a transition to non-possible targets
-					for(int target = 0 ; target < fts->get_ts(ts).get_size() ; target++) {
+					for(int target = 0 ; target < numStates ; target++) {
 						// check if impossibility to transition to target has been encoded otherwise before
-						if(fts_matrix->get_impossible_targets_for_label(lg).contains(target)) continue;
-						if(fts_matrix->get_impossible_targets_for_source(src).contains(target)) continue;
+						if (label_covered_targets[lg].contains(target) && fts_matrix->get_impossible_targets_for_label(lg).contains(target)) continue;
+						if (source_covered_targets[src].contains(target) && fts_matrix->get_impossible_targets_for_source(src).contains(target)) continue;
 					
 						// if the transition src+lg->target is impossible, then we need to encode that the transition is forbidden	
 						if(!fts_matrix->get_targets_for_source_and_label(lg,src).contains(target)){
