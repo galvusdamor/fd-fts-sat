@@ -374,7 +374,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					int self_loop_deduction = 0;
 					if (useSelfloopOptimisation) self_loop_deduction = fts_matrix->get_always_self_loop_labels_for_state(src).size();
 					if (size_t(fts_matrix->get_possible_labels_for_source(src).size() - self_loop_deduction) <= oneEncodingThreshold){	
-						
+					
 						// which labels can be executed in this source?
 						vector<int> allOnes;
 						for (int lg : fts_matrix->get_possible_labels_for_source(src)){
@@ -389,10 +389,14 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						if (useSelfloopOptimisation && fts_matrix->get_always_self_loop_labels_for_state(src).size() >= 1)
 							allOnes.push_back(selfLoopAuxVar);
 
-						sat.impliesOr(previousStateVars[ts][src], allOnes);
+						sat.andImpliesOr(-selfLoopAuxVar, previousStateVars[ts][src], allOnes);
 						cnt_1_source_label++;
+						
 						// we have now encode all 0's from this source label to all impossible labels
-						for (int lg : fts_matrix->get_impossible_labels_for_source(src)) label_covered_sources[lg].insert(src);
+						// but only, if we know that forcing one of the labels actually makes executing any other labels impossible
+						if (encoding == SEQUENTIAL)
+							for (int lg : fts_matrix->get_impossible_labels_for_source(src)) label_covered_sources[lg].insert(src);
+						// TODO: can be slightly stronger: if all of the labels in allOnes have *no* self loops, then we actually forbid other non-self-loops (as two non-self-loop transitions are impossible. But this might be a product of encoding their pre/effs)
 					}
 				}
 			}
@@ -400,6 +404,9 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 
 			// check whether there are any 0's between label and source we have not covered yet.
 			for(int lg = 0 ; lg < numLabelGroups ; lg++) {
+				int label = fts_matrix->get_labels_in_label_group(lg)[0];
+				// self-loop: has been encoded before
+				if (useSelfloopOptimisation && tss.isAlwaysSelfLoop(label)) continue;
 				for(int source : fts_matrix->get_impossible_sources_for_label(lg)){
 					// check if impossible source is already covered
 					if (label_covered_sources[lg].contains(source)) continue; 
@@ -457,7 +464,9 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						sat.impliesOr(nextStateVars[ts][target], allOnes);
 						cnt_1_target_label++;
 						// we have now encode all 0's from this source label to all impossible labels
-						for (int lg : fts_matrix->get_impossible_labels_for_target(target)) label_covered_targets[lg].insert(target);
+						// but only, if we know that forcing one of the labels actually makes executing any other labels impossible
+						if (encoding == SEQUENTIAL)
+							for (int lg : fts_matrix->get_impossible_labels_for_target(target)) label_covered_targets[lg].insert(target);
 					}
 				}
 			}
@@ -465,6 +474,9 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 
 			// check whether there are any 0's between label and target we have not covered yet.
 			for(int lg = 0 ; lg < numLabelGroups ; lg++) {
+				int label = fts_matrix->get_labels_in_label_group(lg)[0];
+				// self-loop: has been encoded before
+				if (useSelfloopOptimisation && tss.isAlwaysSelfLoop(label)) continue;
 				for(int target : fts_matrix->get_impossible_targets_for_label(lg)){
 					// check if impossible target is already covered
 					if (label_covered_targets[lg].contains(target)) continue; 
@@ -537,7 +549,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 
 				// decision: if label+source can yield only one state encode positively
 				// TODO: maybe also do this if there is more than one possible target, but few compared to the non-possible targets
-				if(fts_matrix->get_targets_for_source_and_label(lg,src).size() == 1) {
+				if(false && fts_matrix->get_targets_for_source_and_label(lg,src).size() == 1) {
 					int target = *fts_matrix->get_targets_for_source_and_label(lg,src).begin();
 
 					// for this label group, all other targets are impossible	
@@ -737,6 +749,36 @@ std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> Labe
 	cout << "Total states: " << states.size() << endl;
 	cout << "Total labels: " << labels.size() << endl;
 	cout << "Total timesteps with label: " << timesteps_with_labels.size() << endl;
+
+
+	// manual checking of FTS plan
+	for (size_t i = 0; i < labels.size(); i++){
+		for(int ts = 0 ; ts < fts->get_size() ; ts++){
+			int from = states[i][ts];
+			int to = states[i+1][ts];
+		
+			const TransitionSystem & tss = fts->get_ts(ts);
+			auto transitions = tss.get_transitions_with_label(labels[i]);
+			bool good = false;
+            for (const Transition &t: transitions) {
+				if (t.src == from && t.target == to) good = true; 
+			}
+
+			if (!good){
+				cout << "Execution of FTS plan failed at label nr. " << i << " being " << labels[i] << endl;
+				cout << "Formula wanted to transition in ts " << ts << " from " << from << " to " << to << " but this is impossible" << endl;
+				cout << "Possible transitions are: " << endl;
+            	for (const Transition &t: transitions)
+					cout << "\t" << t.src << " -> " << t.target << endl;
+				assert(false);
+			} else {
+				//cout << "Execution of FTS label nr. " << i << " being " << labels[i] << endl;
+				//cout << "Transition in ts " << ts << " from " << from << " to " << to << endl;
+			}
+		}
+	}
+
+
 
 	return make_tuple(goalState,states,labels,timesteps_with_labels);	
 }
