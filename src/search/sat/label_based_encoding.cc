@@ -367,18 +367,20 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 			}
 		}
 
-		// 2.b: first dimension is source 
-		for(int src = 0 ; src < numStates ; src++){
-			for(int target : fts_matrix->get_impossible_targets_for_source(src)){
-				source_covered_targets[src].insert(target);
-			}
-
-			if (usePositiveOneForEmpty && fts_matrix->get_possible_targets_for_source(src).size() == 1){
-				int target = *(fts_matrix->get_possible_targets_for_source(src).begin());
-				sat.implies(previousStateVars[ts][src], nextStateVars[ts][target]);
-			} else {
+		// 2.b: first dimension is source
+		if (useEmptyPillars){ 
+			for(int src = 0 ; src < numStates ; src++){
 				for(int target : fts_matrix->get_impossible_targets_for_source(src)){
-					sat.implies(previousStateVars[ts][src], -nextStateVars[ts][target]);
+					source_covered_targets[src].insert(target);
+				}
+
+				if (usePositiveOneForEmpty && fts_matrix->get_possible_targets_for_source(src).size() == 1){
+					int target = *(fts_matrix->get_possible_targets_for_source(src).begin());
+					sat.implies(previousStateVars[ts][src], nextStateVars[ts][target]);
+				} else {
+					for(int target : fts_matrix->get_impossible_targets_for_source(src)){
+						sat.implies(previousStateVars[ts][src], -nextStateVars[ts][target]);
+					}
 				}
 			}
 		}
