@@ -30,6 +30,7 @@ LabelBasedEncodingFactory::LabelBasedEncodingFactory(const options::Options &opt
 	useEmptyRows(opts.get<bool>("use_empty_rows")),
 	useEmptyCols(opts.get<bool>("use_empty_cols")),
 	useEmptyPillars(opts.get<bool>("use_empty_pillars")),
+	usePositiveOneForEmpty(opts.get<bool>("use_positive_one")),
 	encoding(encoding_type(opts.get_enum("encoding")))
 	 {
 	if (encoding != SEQUENTIAL && useSelfloopOptimisation == false){
@@ -81,6 +82,11 @@ static shared_ptr<SATEncodingFactory> _parse_label_based_sat_factory(options::Op
     	"false");
 
 	parser.add_option<bool>(
+    	"use_positive_one",
+    	"when encoding empty row/col/pillars, use special encoding if there is only one 1 (then positive encoding instead of negative)",
+    	"false");
+
+	parser.add_option<bool>(
     	"force_at_least_one_action",
     	"force that every time step contains at least one action",
     	"false");
@@ -104,6 +110,7 @@ LabelBasedEncoding::LabelBasedEncoding(
 	bool _useEmptyRows,
 	bool _useEmptyCols,
 	bool _useEmptyPillars,
+	bool _usePositiveOneForEmpty,
 	bool forceAtLeastOneAction,
 	const encoding_type & _encoding,
 	const std::vector<shared_ptr<FTSMatrix>> & fts_matrix): SATEncoding(capsule,_fts, forceAtLeastOneAction),
@@ -112,6 +119,7 @@ LabelBasedEncoding::LabelBasedEncoding(
 	useEmptyRows(_useEmptyRows),
 	useEmptyCols(_useEmptyCols),
 	useEmptyPillars(_useEmptyPillars),
+	usePositiveOneForEmpty(_usePositiveOneForEmpty),
 	encoding(_encoding),
 	fts(_fts),
 	fts_matrices(fts_matrix)
@@ -134,7 +142,7 @@ void LabelBasedEncodingFactory::initialize() {
 
 unique_ptr<SATEncoding> LabelBasedEncodingFactory::createEncodingInstance(sat_capsule & capsule){
 	return make_unique<LabelBasedEncoding>(capsule,fts,useLabelGroups,useSelfloopOptimisation,
-			useEmptyRows,useEmptyCols,useEmptyPillars,forceAtLeastOneAction,encoding,
+			useEmptyRows,useEmptyCols,useEmptyPillars,usePositiveOneForEmpty,forceAtLeastOneAction,encoding,
 			fts_matrices);
 }
 
@@ -310,14 +318,12 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 
 		// data structures to memorise which zero's were already covered.
 		// X_covered_Y[x] means: given a fixed x, list all y's for which all zero's in the remaining dimension z have already been forbidden by the encoding.
+		// That is, we have encoded that x -> -y
 		vector<set<int>> label_covered_targets(numLabelGroups);
 		vector<set<int>> label_covered_sources(numLabelGroups);
 		vector<set<int>> source_covered_targets(numStates);
-		vector<set<int>> source_covered_labels(numStates);
-		vector<set<int>> target_covered_labels(numStates);
-		vector<set<int>> target_covered_sources(numStates);
 
-		
+
 		//////////////
 		// 2. Step: encode optimised parts of the encoding
 		//
@@ -329,21 +335,33 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 			if(useSelfloopOptimisation && tss.isAlwaysSelfLoop(label)) continue;
 
 			if (useEmptyRows){
+				// we cover all 0's
 				for(int source : fts_matrix->get_impossible_sources_for_label(lg)){
 					label_covered_sources[lg].insert(source);
-					source_covered_labels[source].insert(lg);
-					for(const int var : labelGroupVars[ts][lg]){
-						sat.impliesNot(var, previousStateVars[ts][source]);
+				}
+
+				if (usePositiveOneForEmpty && fts_matrix->get_possible_sources_for_label(lg).size() == 1){
+					int source = *(fts_matrix->get_possible_sources_for_label(lg).begin());
+					sat.orImplies(labelGroupVars[ts][lg], previousStateVars[ts][source]);
+				} else {
+					for(int source : fts_matrix->get_impossible_sources_for_label(lg)){
+						sat.orImpliesNot(labelGroupVars[ts][lg], previousStateVars[ts][source]);
 					}
 				}
 			}
 
 			if (useEmptyCols){
+				// we cover all 0's
 				for(int target : fts_matrix->get_impossible_targets_for_label(lg)){
 					label_covered_targets[lg].insert(target);
-					target_covered_labels[target].insert(lg);
-					for(const int var : labelGroupVars[ts][lg]){
-						sat.impliesNot(var, nextStateVars[ts][target]);
+				}
+
+				if (usePositiveOneForEmpty && fts_matrix->get_possible_targets_for_label(lg).size() == 1){
+					int target = *(fts_matrix->get_possible_targets_for_label(lg).begin());
+					sat.orImplies(labelGroupVars[ts][lg], nextStateVars[ts][target]);
+				} else {
+					for(int target : fts_matrix->get_impossible_targets_for_label(lg)){
+						sat.orImpliesNot(labelGroupVars[ts][lg], nextStateVars[ts][target]);
 					}
 				}
 			}
@@ -353,8 +371,15 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 		for(int src = 0 ; src < numStates ; src++){
 			for(int target : fts_matrix->get_impossible_targets_for_source(src)){
 				source_covered_targets[src].insert(target);
-				target_covered_sources[target].insert(src);
-				sat.implies(previousStateVars[ts][src], -nextStateVars[ts][target]);
+			}
+
+			if (usePositiveOneForEmpty && fts_matrix->get_possible_targets_for_source(src).size() == 1){
+				int target = *(fts_matrix->get_possible_targets_for_source(src).begin());
+				sat.implies(previousStateVars[ts][src], nextStateVars[ts][target]);
+			} else {
+				for(int target : fts_matrix->get_impossible_targets_for_source(src)){
+					sat.implies(previousStateVars[ts][src], -nextStateVars[ts][target]);
+				}
 			}
 		}
 		
@@ -368,35 +393,37 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 			if(useSelfloopOptimisation && tss.isAlwaysSelfLoop(label)) continue;
 
 			for(int src = 0 ; src < numStates ; src++){
-				// Given label lg, if we have encoded all zeros for the source src (i.e. forbidden all possible targets) and there actually is no target,
-				// then we have nothing to encode
-				if (label_covered_sources[lg].contains(src) && fts_matrix->get_impossible_sources_for_label(lg).contains(src)) continue;
+				// Given label lg, if we already asserted the implication lg -> -src, we have nothing to do.
+				if (label_covered_sources[lg].contains(src)) continue;
 
 				// decision: if label+source can yield only one state encode positively
 				// TODO: maybe also do this if there is more than one possible target, but few compared to the non-possible targets
 				if(fts_matrix->get_targets_for_source_and_label(lg,src).size() == 1) {
 					int target = *fts_matrix->get_targets_for_source_and_label(lg,src).begin();
-				
-				
-					if (label_covered_targets[lg].contains(target) && fts_matrix->get_impossible_targets_for_label(lg).contains(target)) continue;
-					if (source_covered_targets[src].contains(target) && fts_matrix->get_impossible_targets_for_source(src).contains(target)) continue;
-				
-					for(const int var : labelGroupVars[ts][lg]){
-						sat.andImplies(var, previousStateVars[ts][src], nextStateVars[ts][target]);
+
+					// for this label group, all other targets are impossible	
+					if (int(label_covered_targets[lg].size()) == numStates - 1) {
+						assert(label_covered_targets[lg].contains(target) == false);
+						continue;
 					}
+
+					if (int(source_covered_targets[src].size()) == numStates - 1){
+						assert(source_covered_targets[src].contains(src) == false);
+						continue;
+					}
+				
+					sat.orAndImplies(labelGroupVars[ts][lg], previousStateVars[ts][src], nextStateVars[ts][target]);
 				} else {
 					// if there are multiple ones, we encode negatively instead
 					// -- i.e. we forbid a transition to non-possible targets
 					for(int target = 0 ; target < numStates ; target++) {
 						// check if impossibility to transition to target has been encoded otherwise before
-						if (label_covered_targets[lg].contains(target) && fts_matrix->get_impossible_targets_for_label(lg).contains(target)) continue;
-						if (source_covered_targets[src].contains(target) && fts_matrix->get_impossible_targets_for_source(src).contains(target)) continue;
+						if (label_covered_targets[lg].contains(target)) continue;
+						if (source_covered_targets[src].contains(target)) continue;
 					
 						// if the transition src+lg->target is impossible, then we need to encode that the transition is forbidden	
 						if(!fts_matrix->get_targets_for_source_and_label(lg,src).contains(target)){
-							for(const int var_label : labelGroupVars[ts][lg]){
-								sat.andImplies(var_label, previousStateVars[ts][src], -nextStateVars[ts][target]);
-							}
+							sat.orAndImplies(labelGroupVars[ts][lg], previousStateVars[ts][src], -nextStateVars[ts][target]);
 						}
 					}
 				}

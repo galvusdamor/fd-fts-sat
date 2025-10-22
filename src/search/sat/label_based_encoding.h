@@ -26,6 +26,7 @@ class LabelBasedEncoding : public SATEncoding {
 	bool useEmptyRows;
 	bool useEmptyCols;
 	bool useEmptyPillars;
+	bool usePositiveOneForEmpty;
 	encoding_type encoding;
 
 	std::shared_ptr<task_representation::FTSTask> fts;
@@ -60,6 +61,7 @@ public:
 		bool _useEmptyRows,
 		bool _useEmptyCols,
 		bool _useEmptyPillars,
+		bool _usePositiveOneForEmpty,
 		bool _forceAtLeastOneAction,
 		const encoding_type & _encoding,
 		const std::vector<std::shared_ptr<FTSMatrix>> & fts_matrices
@@ -79,6 +81,7 @@ class LabelBasedEncodingFactory : public SATEncodingFactory {
 	const bool useEmptyRows;
 	const bool useEmptyCols;
 	const bool useEmptyPillars;
+	const bool usePositiveOneForEmpty;
 	const encoding_type encoding;
 	
 	std::vector<std::shared_ptr<FTSMatrix> > fts_matrices;

@@ -47,6 +47,8 @@ struct sat_capsule{
 	void impliesAnd(int i, int j, int k);
 	void impliesAnd(int i, const std::vector<int> & j);
 	void impliesNot(int i, int j);
+	void orImplies(const std::vector<int> & i, int j); // any of the i's implies j
+	void orImpliesNot(const std::vector<int> & i, int j); // any of the i's implies -j
 	void impliesOr(int i, const std::vector<int> & j);
 	void andImpliesOr(int i, int j, const std::vector<int> & k);
 	void andImpliesOr(const std::vector<int> & i, const std::vector<int> & j);
@@ -54,6 +56,7 @@ struct sat_capsule{
 	void impliesAllNot(int i, const std::vector<int> & j);
 	void notImpliesAllNot(int i, const std::vector<int> & j);
 	void andImplies(int i, int j, int k);
+	void orAndImplies(const std::vector<int> & i, int j, int k);
 	void andImplies(const std::set<int> & i, int j);
 	void andImplies(const std::vector<int> & i, int j);
 	void atMostOneBinomial(const std::vector<int> & is);

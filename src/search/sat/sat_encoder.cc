@@ -135,6 +135,28 @@ void sat_capsule::impliesOr(int i, const std::vector<int> & j){
 	number_of_clauses++;
 }
 
+void sat_capsule::orImplies(const std::vector<int> & i, int j){
+	assert(j);
+	for (const int & x : i){
+		assert(x);
+		ipasir_add(solver,-x);
+		ipasir_add(solver,j);
+		ipasir_add(solver,0);
+		number_of_clauses++;
+	}
+}
+
+void sat_capsule::orImpliesNot(const std::vector<int> & i, int j){
+	assert(j);
+	for (const int & x : i){
+		assert(x);
+		ipasir_add(solver,-x);
+		ipasir_add(solver,-j);
+		ipasir_add(solver,0);
+		number_of_clauses++;
+	}
+}
+
 void sat_capsule::andImpliesOr(int i, int j, const std::vector<int> & k){
 	assert(i);
 	ipasir_add(solver,-i);
@@ -194,6 +216,16 @@ void sat_capsule::andImplies(int i, int j, int k){
 	ipasir_add(solver,k);
 	ipasir_add(solver,0);
 	number_of_clauses++;
+}
+
+void sat_capsule::orAndImplies(const std::vector<int> & i, int j, int k){
+	for (const int & x : i){
+		ipasir_add(solver,-x);
+		ipasir_add(solver,-j);
+		ipasir_add(solver,k);
+		ipasir_add(solver,0);
+		number_of_clauses++;
+	}
 }
 
 void sat_capsule::andImplies(const std::set<int> & i, int j){

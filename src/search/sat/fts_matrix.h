@@ -4,6 +4,7 @@
 
 #include <vector>
 #include <set>
+#include <map>
 #include <memory>
 
 namespace task_representation {
@@ -24,9 +25,13 @@ namespace sat_search {
 
 
         // Full matrix in a sparse representation.
-        std::vector<std::vector<std::set<int>>> sparse_label_src_target; 
-        std::vector<std::vector<std::set<int>>> sparse_label_target_src;
-        std::vector<std::vector<std::set<int>>> sparse_src_target_label;
+        std::vector<std::map<int,std::set<int>>> sparse_label_src_target; 
+        std::vector<std::map<int,std::set<int>>> sparse_label_target_src;
+        std::vector<std::map<int,std::set<int>>> sparse_src_target_label;
+        std::vector<std::map<int,std::set<int>>> sparse_src_label_target;
+        std::vector<std::map<int,std::set<int>>> sparse_target_src_label;
+        std::vector<std::map<int,std::set<int>>> sparse_target_label_src;
+		std::set<int> __emptySet;
 		// via calling .size, this includes the following information:
         // For each <label,source> -> number of possible targets
         // For each <label,target> -> number of possible sources
@@ -37,9 +42,12 @@ namespace sat_search {
 		// Each X_impossible_Y maps all X to the Y's for which there is no transition involving both X and Y.
 		// These six structures contain the information for which the three sparse_* data structures have size 0
 		// only the first three are currently used in encoding
-		std::vector<std::set<int>> label_impossible_source, label_impossible_target, source_impossible_target;
-		// TODO: (Gregor) new currently unused options; created for symmetry
-        //std::vector<std::set<int>> source_impossible_label, target_impossible_source, target_impossible_label;
+		std::vector<std::set<int>> label_impossible_source;
+		std::vector<std::set<int>> label_impossible_target;
+		std::vector<std::set<int>> source_impossible_target;
+		std::vector<std::set<int>> label_possible_source;
+		std::vector<std::set<int>> label_possible_target;
+		std::vector<std::set<int>> source_possible_target;
 
         // Alvaro: I wonder why we do not keep track of the following:
         // For each source -> number of possible targets, number of possible labels
@@ -87,11 +95,30 @@ namespace sat_search {
             return source_impossible_target[source];
         }
 
+        const std::set<int> & get_possible_sources_for_label(int lg) const {
+            return label_possible_source[lg];
+        }
+
+        const std::set<int> & get_possible_targets_for_label(int lg) const {
+            return label_possible_target[lg];
+        }
+
+		const std::set<int> & get_possible_targets_for_source(int source) const {
+            return source_possible_target[source];
+        }
 
 		// access to sparse representation
         const std::set<int> & get_targets_for_source_and_label(int lg, int src) const {
-            return sparse_label_src_target[lg][src];
+			const auto & it = sparse_label_src_target[lg].find(src);
+			if (it == sparse_label_src_target[lg].end())
+				return __emptySet;
+			else 
+	            return it->second;
         }
+
+		
+
+
 
 		// all labels, except labels that are always self-loops, that can reach the state
         const std::vector<int> & get_not_always_selfloop_labels_reaching_target(int target) const {

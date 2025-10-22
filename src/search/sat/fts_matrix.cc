@@ -9,33 +9,23 @@ using namespace std;
 using namespace task_representation;
 
 namespace sat_search {
-void calculate_empty_dimention(std::vector<std::set<int>> & is_empty,
-		const std::vector<std::vector<std::set<int>>> & sparse_access,
-		int dimention_to_project_onto){
-	// using 1 and 2 is better to read then numbers
-	assert(dimention_to_project_onto == 1 || dimention_to_project_onto == 2);
-
-	if (dimention_to_project_onto == 1){
-		// if we project onto the first dimension that the result must have the same size
-		assert(sparse_access.size() == is_empty.size());
-		// compute the projection
-		for (size_t i = 0; i < sparse_access.size(); i++) {
-			for (size_t j = 0; j < sparse_access[i].size(); j++) {
-				if (sparse_access[i][j].size() == 0)
-					is_empty[i].insert(j);
-			}
+void calculate_possible_impossible_dimention(
+		std::vector<std::set<int>> & is_impossible,
+		std::vector<std::set<int>> & is_possible,
+		int second_dimension_size,
+		const std::vector<std::map<int,std::set<int>>> & sparse_access){
+	is_impossible.resize(sparse_access.size());
+	is_possible.resize(sparse_access.size());
+	// compute the projection
+	for (size_t i = 0; i < sparse_access.size(); i++) {
+		// if value j is in sparse access, it has to be possible
+		for (const auto & [j,zs] : sparse_access[i]) {
+			is_possible[i].insert(j);
 		}
-	} else if (dimention_to_project_onto == 2){
-		if (sparse_access.size() == 0) return;
-		size_t dim_2_size = sparse_access[0].size();
-		
-		// compute the projection
-		for (size_t j = 0; j < dim_2_size; j++) {
-			for (size_t i = 0; i < sparse_access.size(); i++) {
-				assert(sparse_access[i].size() == dim_2_size); // all second dimensions must have the same size
-				if (sparse_access[i][j].size() == 0)
-					is_empty[j].insert(i);
-			}
+		// inverse of possible is impossible
+		for (int j = 0; j < second_dimension_size; j++) {
+			if (! is_possible[i].contains(j)) 
+				is_impossible[i].insert(j);
 		}
 	}
 }
@@ -76,15 +66,10 @@ void calculate_empty_dimention(std::vector<std::set<int>> & is_empty,
 		// prepare empty data structures
         sparse_label_src_target.resize(labelGroups.size());
         sparse_label_target_src.resize(labelGroups.size());
-        for (size_t lg = 0; lg < labelGroups.size(); lg++) {
-            sparse_label_src_target[lg].resize(num_states);
-            sparse_label_target_src[lg].resize(num_states);
-		}
-        
 		sparse_src_target_label.resize(num_states);
-		for (int src = 0; src < num_states; src++) {
-			sparse_src_target_label[src].resize(num_states);
-		}
+		sparse_src_label_target.resize(num_states);
+		sparse_target_src_label.resize(num_states);
+		sparse_target_label_src.resize(num_states);
 
 		// iterate over all transitions once and insert them into the right data structure
         for (size_t lg = 0; lg < labelGroups.size(); lg++) {
@@ -94,27 +79,24 @@ void calculate_empty_dimention(std::vector<std::set<int>> & is_empty,
                 sparse_label_src_target[lg][t.src].insert(t.target);
                 sparse_label_target_src[lg][t.target].insert(t.src);
                 sparse_src_target_label[t.src][t.target].insert(lg);
+                sparse_src_label_target[t.src][lg].insert(t.target);
+                sparse_target_src_label[t.target][t.src].insert(lg);
+                sparse_target_label_src[t.target][lg].insert(t.src);
             }
         }
 
 		/////////////// extract counting information from sparse information
-        label_impossible_source.resize(labelGroups.size());
-		calculate_empty_dimention(label_impossible_source,sparse_label_src_target,1);
+		calculate_possible_impossible_dimention(label_impossible_source,label_possible_source,
+				num_states,
+				sparse_label_src_target);
 
-        label_impossible_target.resize(labelGroups.size());
-		calculate_empty_dimention(label_impossible_target,sparse_label_target_src,1);
+		calculate_possible_impossible_dimention(label_impossible_target,label_possible_target,
+				num_states,
+				sparse_label_target_src);
 
-		source_impossible_target.resize(num_states);
-		calculate_empty_dimention(source_impossible_target,sparse_src_target_label,1);
-
-
-		// redundant information from the other three *_impossible_*
-		//source_impossible_label.resize(num_states);
-		//calculate_empty_dimention(source_impossible_label,sparse_label_src_target,2);
-		//target_impossible_source.resize(num_states);
-		//calculate_empty_dimention(target_impossible_source,sparse_src_target_label,2);
-		//target_impossible_label.resize(num_states);
-		//calculate_empty_dimention(target_impossible_label,sparse_label_target_src,2);
+		calculate_possible_impossible_dimention(source_impossible_target,source_possible_target,
+				num_states,
+				sparse_src_target_label);
 	}
 }
 
