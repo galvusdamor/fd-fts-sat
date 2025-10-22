@@ -547,9 +547,6 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					}
 
 					if (int(source_covered_targets[src].size()) == numStates - 1){
-						cout << "source " << src << endl; 
-						cout << "target " << target << endl; 
-						cout << "cov: " << source_covered_targets[src] << endl;
 						assert(source_covered_targets[src].contains(target) == false);
 						continue;
 					}
