@@ -146,6 +146,19 @@ void sat_capsule::orImplies(const std::vector<int> & i, int j){
 	}
 }
 
+void sat_capsule::orImpliesOr(const std::vector<int> & i, const std::vector<int> & j){
+	for (const int & x : i){
+		assert(x);
+		ipasir_add(solver,-x);
+		for (const int & y : j){
+			ipasir_add(solver,y);
+			assert(y);
+		}
+		ipasir_add(solver,0);
+		number_of_clauses++;
+	}
+}
+
 void sat_capsule::orImpliesNot(const std::vector<int> & i, int j){
 	assert(j);
 	for (const int & x : i){

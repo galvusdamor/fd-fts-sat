@@ -6,6 +6,7 @@
 #include <set>
 #include <map>
 #include <memory>
+#include <cassert>
 
 namespace task_representation {
     class FTSTask;
@@ -36,6 +37,10 @@ namespace sat_search {
         // For each <label,source> -> number of possible targets
         // For each <label,target> -> number of possible sources
 		// For each <source,target> -> number of possible labels
+		
+		// needed for self-loop optimisation
+		std::vector<std::set<int>> always_self_loops_for_state;
+		std::vector<std::set<int>> self_loops_for_state;
  
 
 		// From these data-structures we can derive the following sub-information
@@ -43,11 +48,22 @@ namespace sat_search {
 		// These six structures contain the information for which the three sparse_* data structures have size 0
 		// only the first three are currently used in encoding
 		std::vector<std::set<int>> label_impossible_source;
-		std::vector<std::set<int>> label_impossible_target;
-		std::vector<std::set<int>> source_impossible_target;
 		std::vector<std::set<int>> label_possible_source;
+		
+		std::vector<std::set<int>> source_impossible_label;
+		std::vector<std::set<int>> source_possible_label;
+		
+		std::vector<std::set<int>> label_impossible_target;
 		std::vector<std::set<int>> label_possible_target;
+		
+		std::vector<std::set<int>> source_impossible_target;
 		std::vector<std::set<int>> source_possible_target;
+
+		std::vector<std::set<int>> target_impossible_source;
+		std::vector<std::set<int>> target_possible_source;
+		
+		std::vector<std::set<int>> target_impossible_label;
+		std::vector<std::set<int>> target_possible_label;
 
         // Alvaro: I wonder why we do not keep track of the following:
         // For each source -> number of possible targets, number of possible labels
@@ -82,9 +98,27 @@ namespace sat_search {
             return labelGroups[lg];
         }
 
+		const std::set<int> & get_always_self_loop_labels_for_state(int state) const {
+			return always_self_loops_for_state[state];
+		}
+
+		const std::set<int> & get_self_loop_labels_for_state(int state) const {
+			return self_loops_for_state[state];
+		}
+
 		// information on impossible cases
         const std::set<int> & get_impossible_sources_for_label(int lg) const {
+			assert(lg >= 0);
+			assert(lg < int(label_impossible_source.size()));
             return label_impossible_source[lg];
+        }
+
+        const std::set<int> & get_impossible_labels_for_source(int source) const {
+            return source_impossible_label[source];
+        }
+
+		const std::set<int> & get_impossible_labels_for_target(int target) const {
+            return target_impossible_label[target];
         }
 
         const std::set<int> & get_impossible_targets_for_label(int lg) const {
@@ -99,12 +133,28 @@ namespace sat_search {
             return label_possible_source[lg];
         }
 
+        const std::set<int> & get_possible_labels_for_source(int source) const {
+            return source_possible_label[source];
+        }
+
+        const std::set<int> & get_possible_labels_for_target(int target) const {
+            return target_possible_label[target];
+        }
+
         const std::set<int> & get_possible_targets_for_label(int lg) const {
             return label_possible_target[lg];
         }
 
 		const std::set<int> & get_possible_targets_for_source(int source) const {
             return source_possible_target[source];
+        }
+		
+		const std::set<int> & get_possible_sources_for_target(int target) const {
+            return target_possible_source[target];
+        }
+
+		const std::set<int> & get_impossible_sources_for_target(int target) const {
+            return target_impossible_source[target];
         }
 
 		// access to sparse representation

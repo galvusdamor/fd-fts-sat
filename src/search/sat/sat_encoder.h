@@ -49,6 +49,7 @@ struct sat_capsule{
 	void impliesNot(int i, int j);
 	void orImplies(const std::vector<int> & i, int j); // any of the i's implies j
 	void orImpliesNot(const std::vector<int> & i, int j); // any of the i's implies -j
+	void orImpliesOr(const std::vector<int> & i, const std::vector<int> & j);
 	void impliesOr(int i, const std::vector<int> & j);
 	void andImpliesOr(int i, int j, const std::vector<int> & k);
 	void andImpliesOr(const std::vector<int> & i, const std::vector<int> & j);

@@ -70,6 +70,9 @@ void calculate_possible_impossible_dimention(
 		sparse_src_label_target.resize(num_states);
 		sparse_target_src_label.resize(num_states);
 		sparse_target_label_src.resize(num_states);
+		
+		always_self_loops_for_state.resize(num_states);
+		self_loops_for_state.resize(num_states);
 
 		// iterate over all transitions once and insert them into the right data structure
         for (size_t lg = 0; lg < labelGroups.size(); lg++) {
@@ -82,6 +85,11 @@ void calculate_possible_impossible_dimention(
                 sparse_src_label_target[t.src][lg].insert(t.target);
                 sparse_target_src_label[t.target][t.src].insert(lg);
                 sparse_target_label_src[t.target][lg].insert(t.src);
+
+				if (tss.isAlwaysSelfLoop(label) && t.src == t.target)
+					always_self_loops_for_state[t.src].insert(lg);
+				if (t.src == t.target)
+					self_loops_for_state[t.src].insert(lg);
             }
         }
 
@@ -93,10 +101,22 @@ void calculate_possible_impossible_dimention(
 		calculate_possible_impossible_dimention(label_impossible_target,label_possible_target,
 				num_states,
 				sparse_label_target_src);
+	
+		calculate_possible_impossible_dimention(source_impossible_label,source_possible_label,
+				labelGroups.size(),
+				sparse_src_label_target);
 
 		calculate_possible_impossible_dimention(source_impossible_target,source_possible_target,
 				num_states,
 				sparse_src_target_label);
+	
+		calculate_possible_impossible_dimention(target_impossible_source,target_possible_source,
+				num_states,
+				sparse_target_src_label);
+
+		calculate_possible_impossible_dimention(target_impossible_label,target_possible_label,
+				labelGroups.size(),
+				sparse_target_label_src);
 	}
 }
 

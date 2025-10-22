@@ -33,6 +33,7 @@ class LabelBasedEncoding : public SATEncoding {
 	std::shared_ptr<task_representation::FTSTask> fts;
 	std::vector<std::shared_ptr<FTSMatrix>> fts_matrices;
 
+	size_t oneEncodingThreshold = 1;
 protected:
 	//// persistent data structures
 	std::map<int,std::vector<std::vector<int>>> allTimesStateVars;
