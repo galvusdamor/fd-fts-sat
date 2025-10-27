@@ -69,6 +69,7 @@ struct SAT_Scheduler{
 	int nextStepNumber;
 	int previousLength;
 	std::binary_semaphore done_mutex;
+	std::binary_semaphore shutdown_handshake;
 	bool plannerTerminated;
 	bool planFound;
 	// time at which the scheduler was last called	
@@ -83,7 +84,7 @@ struct SAT_Scheduler{
 		maximum_number_of_parallel_calls(max_parallel_calls),
 		schedule_interval(scheduler_interval_seconds * 1000),
 		memory_limit_mbs(_memory_limit_mbs),
-		nextStepNumber(0), previousLength(-1), done_mutex(0), plannerTerminated(false), planFound(false) {
+		nextStepNumber(0), previousLength(-1), done_mutex(0), shutdown_handshake(0), plannerTerminated(false), planFound(false) {
 		// done_mutex is is initially locked
 		t_last_schedule = std::chrono::system_clock::now();
 		educated_guess_memory_in_mb = -1; // we don't have one yet.
@@ -92,12 +93,17 @@ struct SAT_Scheduler{
 		//utils::reserve_extra_memory_padding(educated_guess_memory_in_mb);
 	}
 	
-	void terminate_planner(){
+	void terminate_planner(int currentNr){
 		plannerTerminated = true; // planner will terminate		
 		// wake up any running instance, they will terminate immediately
-		for (auto& [_nr, instance]: currentInstances)
+		for (auto& [_nr, instance]: currentInstances){
+			if (_nr == currentNr) continue;
+
 			instance->run_mutex.release();
-		// allow the main algorithm to run
+			// wait until that instance has released us
+			shutdown_handshake.acquire();
+		}
+		// allow the main algorithm to run -- as we now know that all threads (except the one we were in) have shut down.
 		done_mutex.release();
 	}
 
@@ -131,7 +137,7 @@ struct SAT_Scheduler{
 			// reporting already done by thread
 			//cout << current_call->identifier << "found plan" << endl;
 			planFound = foundPlans; // memorise that we found a plan s.t. the search can return the right status code
-			terminate_planner();
+			terminate_planner(current_call_step);
 			return plannerTerminated;
 		}
 		
@@ -143,6 +149,7 @@ struct SAT_Scheduler{
 			assert(!foundPlans);
 			// this run finished and proved UNSAT
 
+
 			// mark all instances less then myself as terminated
 			vector<int> toErase;
 			for (auto& [nr, instance]: currentInstances){
@@ -150,8 +157,17 @@ struct SAT_Scheduler{
 					toErase.push_back(nr);
 					// set this instance to state terminated
 					instance->terminated = true;
-					// wake this instance up. It will terminate immediately.
-					instance->run_mutex.release();
+		
+					// erase this instance from the map
+					sat_solver_to_data.erase(instance->capsule->solver);
+					
+					
+					if (nr < current_call_step) {
+						// wake this instance up. It will terminate immediately.
+						instance->run_mutex.release();
+						// wait for the handshake to shut down
+						shutdown_handshake.acquire();
+					}
 				}
 			}
 			
@@ -172,7 +188,6 @@ struct SAT_Scheduler{
 		// current step was the largest step
 		if (nextStep == currentInstances.end()){
 			// do we need to generate a next step?
-			// TODO: needs to take memory limits into account!
 			if (currentInstances.size() < maximum_number_of_parallel_calls &&
 					current_call->search->create_next_length_run(current_call->scheduler)){
 				// next call was created, so this is our next call
@@ -182,7 +197,7 @@ struct SAT_Scheduler{
 				// next call could not or should not be created -- because there is no next call
 				if (currentInstances.size() == 0){
 					// there are no calls left, so terminate
-					terminate_planner();
+					terminate_planner(current_call_step);
 					return plannerTerminated;
 				} else {
 					next_call = currentInstances.begin()->second;	
@@ -196,8 +211,12 @@ struct SAT_Scheduler{
 		t_last_schedule = std::chrono::system_clock::now();
 		// wake the next call up
 		next_call->run_mutex.release();	
-		// let this call sleep	
-		current_call->run_mutex.acquire();
+
+		if (! finished){
+			// let this call sleep
+			// if it is finished, it will exit immediately.
+			current_call->run_mutex.acquire();
+		}
 
 
 		// if we exceeded our expectation, we need to mark more memory as taken.
@@ -276,7 +295,12 @@ struct length_runner {
 			// if formula generation takes a long time, we check whether we need to call the scheduler here
 			// the first generations need to happen uninterrupted (to measure memory usage)
 			if (call->iterationNr > 0 || call->scheduler->educated_guess_memory_in_mb == -1){
-				if (call->scheduler->runScheduler(call->capsule->solver,false,false)) return;
+				if (call->scheduler->runScheduler(call->capsule->solver,false,false)) {
+					ipasir_release(call->capsule->solver);
+					// I will exit immediately, so allow main thread to run again
+					call->scheduler->shutdown_handshake.release();
+					return;
+				}
 			}
 		}
 		call->encoding->encodeInit(1);
@@ -306,11 +330,20 @@ struct length_runner {
 		}
 
 
-		// start calling the solver	
+		// start calling the solver	 -> Important: this operation might be stopped by the scheduler via termination
 		int solverState = ipasir_solve(call->capsule->solver);
 		//cout << call->identifier << "SAT solver state: " << solverState << endl;
 
 		if (!call->scheduler->plannerTerminated && !call->terminated){
+			if (call->scheduler->educated_guess_memory_in_mb != -1){
+				// release my memory for scheduler
+				int this_needed_memory = call->scheduler->educated_guess_memory_in_mb * call->timesteps;
+
+				call->scheduler->reserved_memory_in_mb -= this_needed_memory;
+				cout << call->identifier << "freeing " << this_needed_memory << " MB. Currently reserved: " << call->scheduler->reserved_memory_in_mb<< endl;
+			}
+
+
 			if (solverState == 10){
 				// run plan extraction
 				auto [goalState, states, labels, timesteps_with_labels] = call->encoding->extractSolution(1,time_step_order);
@@ -323,6 +356,8 @@ struct length_runner {
 						<< " labels " << labels.size() << " timesteps with label " << timesteps_with_labels.size()
 						<< " compression " << double(labels.size()) / timesteps_with_labels.size()
 						<< endl;
+				// release the SAT solver: needs to be done last and outside everything else -- otherwise 
+				ipasir_release(call->capsule->solver);
 				
 				// finished and found a plan; we will terminate anyway now, so ignore the return value
 				call->scheduler->runScheduler(call->capsule->solver,true,true);
@@ -331,25 +366,20 @@ struct length_runner {
 						<< "UNSAT"
 						<< " clauses " << call->capsule->get_number_of_clauses() << " vars " << call->capsule->number_of_variables
 						<< endl;
+				// release the SAT solver: needs to be done last and outside everything else -- otherwise 
+				ipasir_release(call->capsule->solver);
+
 				// finished and did not find a plan; we will terminate anyway now, so ignore the return value
 				call->scheduler->runScheduler(call->capsule->solver,true,false);
 			}
+			// no handshake for shutting down. The current threat is the one that is executed
+		} else {
+			// release the SAT solver: needs to be done last and outside everything else -- otherwise 
+			ipasir_release(call->capsule->solver);
+			// someone asked me to terminate while the SAT solver was running
+			// acknowledge the handshake
+			call->scheduler->shutdown_handshake.release();	
 		}
-
-		if (call->scheduler->educated_guess_memory_in_mb != -1){
-			// release my memory for scheduler
-			int this_needed_memory = call->scheduler->educated_guess_memory_in_mb * call->timesteps;
-
-			call->scheduler->reserved_memory_in_mb -= this_needed_memory;
-			if (!call->scheduler->plannerTerminated && !call->terminated)
-				cout << call->identifier << "freeing " << this_needed_memory << " MB. Currently reserved: " << call->scheduler->reserved_memory_in_mb<< endl;
-		}
-
-
-		// erase myself from the map
-		sat_solver_to_data.erase(call->capsule->solver);
-		// important: we first need to erase and *then* free the pointer. Otherwise the pointer can be used a second time
-		ipasir_release(call->capsule->solver);
 	}
 };
 
