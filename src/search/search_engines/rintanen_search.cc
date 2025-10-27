@@ -1,11 +1,13 @@
 #include <chrono>
 #include <thread>
 #include <atomic>
+#include <semaphore>
 
 #include "rintanen_search.h"
 
 #include "../utils/logging.h"
 #include "../utils/timer.h"
+#include "../utils/markup.h"
 #include "../sat/ipasir.h"
 #include "../sat/length_strategy.h"
 #include "../sat/sat_encoder.h"
@@ -39,13 +41,13 @@ struct SAT_Call_Data{
 	const int iterationNr;
 	const int timesteps;
 	bool terminated; // set to true if *this* call needs to be terminated
-	std::mutex run_mutex;
+	std::binary_semaphore run_mutex;
+	std::string identifier;
 
 	SAT_Call_Data(std::shared_ptr<sat_capsule> _capsule, sat_search::RintanenSATSearch* _search, const std::shared_ptr<SAT_Scheduler> & _scheduler, std::unique_ptr<sat_search::SATEncoding> _encoding,
-			int _iterationNr, int _timesteps) : capsule(_capsule), search(_search), scheduler(_scheduler), encoding(std::move(_encoding)), iterationNr(_iterationNr), timesteps(_timesteps), terminated(false){
-		// mutex gets initialised as a member
-		// mutex starts in locked state
-		run_mutex.lock();
+			int _iterationNr, int _timesteps) : capsule(_capsule), search(_search), scheduler(_scheduler), encoding(std::move(_encoding)), iterationNr(_iterationNr), timesteps(_timesteps), terminated(false), run_mutex(0){
+		// mutex gets initialised as a member, and it is locked (0) initially
+		identifier = "Step " + utils::pad_int(iterationNr,2) + " for " + utils::pad_int(timesteps,4) + " timesteps: ";
 	}
 
 };
@@ -61,15 +63,15 @@ struct SAT_Scheduler{
 	const size_t maximum_number_of_parallel_calls = 5;
 	int nextStepNumber;
 	int previousLength;
-	std::mutex done_mutex;
+	std::binary_semaphore done_mutex;
 	bool plannerTerminated;
 	bool planFound;
 	// time at which the scheduler was last called	
 	std::chrono::system_clock::time_point t_last_schedule;
 	std::chrono::milliseconds schedule_interval{1s};
 
-	SAT_Scheduler() : nextStepNumber(0), previousLength(-1), plannerTerminated(false), planFound(false) {
-		done_mutex.lock();
+	SAT_Scheduler() : nextStepNumber(0), previousLength(-1), done_mutex(0), plannerTerminated(false), planFound(false) {
+		// done_mutex is is initially locked
 		t_last_schedule = std::chrono::system_clock::now();
 	}
 	
@@ -77,9 +79,11 @@ struct SAT_Scheduler{
 		plannerTerminated = true; // planner will terminate		
 		// wake up any running instance, they will terminate immediately
 		for (auto& [_nr, instance]: currentInstances)
-			instance->run_mutex.unlock();
+			instance->run_mutex.release();
 		// allow the main algorithm to run
-		done_mutex.unlock();
+		cout << "A ";
+		done_mutex.release();
+		cout << "done" << endl;
 	}
 
 
@@ -94,10 +98,13 @@ struct SAT_Scheduler{
 			if (elapsed < schedule_interval) return plannerTerminated;
 		}
 
+		// the call that is currently active
+		std::shared_ptr<SAT_Call_Data> current_call = sat_solver_to_data[solver];
+		const int current_call_step = current_call->iterationNr;
 
-		cout << "Hi Scheduler! I " << solver << " am " << (finished?"":"not ") << " finished." <<
-			(finished? (foundPlans?"I found a plan." : "I did not find a plan.") : "") << 
-			endl;
+		//cout << "Hi Scheduler! I " << solver << " am " << (finished?"":"not ") << "finished." <<
+		//	(finished? (foundPlans?" I found a plan." : " I did not find a plan.") : "") << 
+		//	endl;
 		
 		// one of three things can have happened:
 		// 1. The current schedule ran out of time, then schedule the next one
@@ -106,17 +113,18 @@ struct SAT_Scheduler{
 		
 		// case 3: terminate all threads and go
 		if (finished && foundPlans){
+			// reporting already done by thread
+			//cout << current_call->identifier << "found plan" << endl;
 			planFound = foundPlans; // memorise that we found a plan s.t. the search can return the right status code
 			terminate_planner();
 			return plannerTerminated;
 		}
-
-		// the call that is currently active
-		std::shared_ptr<SAT_Call_Data> current_call = sat_solver_to_data[solver];
-		const int current_call_step = current_call->iterationNr;
+		
 
 		// case 2: clean the data structures
 		if (finished){
+			// reporting already done by thread
+			//cout << current_call->identifier << "UNSAT" << endl;
 			assert(!foundPlans);
 			// this run finished and proved UNSAT
 
@@ -128,8 +136,7 @@ struct SAT_Scheduler{
 					// set this instance to state terminated
 					instance->terminated = true;
 					// wake this instance up. It will terminate immediately.
-					instance->run_mutex.unlock();
-					sat_solver_to_data.erase(instance->capsule->solver);
+					instance->run_mutex.release();
 				}
 			}
 			
@@ -151,20 +158,19 @@ struct SAT_Scheduler{
 		if (nextStep == currentInstances.end()){
 			// do we need to generate a next step?
 			// TODO: needs to take memory limits into account!
-			if (currentInstances.size() < maximum_number_of_parallel_calls){
-				if (current_call->search->create_next_length_run(current_call->scheduler)){
-					// next call was created, so this is our next call
-					assert(currentInstances.size() >= 1);
-					next_call = (--currentInstances.end())->second;
+			if (currentInstances.size() < maximum_number_of_parallel_calls &&
+					current_call->search->create_next_length_run(current_call->scheduler)){
+				// next call was created, so this is our next call
+				assert(currentInstances.size() >= 1);
+				next_call = (--currentInstances.end())->second;
+			} else {
+				// next call could not or should not be created -- because there is no next call
+				if (currentInstances.size() == 0){
+					// there are no calls left, so terminate
+					terminate_planner();
+					return plannerTerminated;
 				} else {
-					// next call could not be created -- because there is no next call
-					if (currentInstances.size() == 0){
-						// there are no calls left, so terminate
-						terminate_planner();
-						return plannerTerminated;
-					} else {
-						next_call = currentInstances.begin()->second;	
-					}
+					next_call = currentInstances.begin()->second;	
 				}
 			}
 		} else {
@@ -174,9 +180,11 @@ struct SAT_Scheduler{
 		// set the time the scheduler was invoked last to now
 		t_last_schedule = std::chrono::system_clock::now();
 		// wake the next call up
-		next_call->run_mutex.unlock();	
+		next_call->run_mutex.release();	
 		// let this call sleep	
-		current_call->run_mutex.lock();
+		current_call->run_mutex.acquire();
+
+		cout << current_call->identifier << "run" << endl;
 
 		// HI! We just work up. So we first need to check whether we got terminated!
 		return plannerTerminated || current_call->terminated;
@@ -191,9 +199,6 @@ struct SAT_Scheduler{
 extern "C" {
 // call-back function for the SAT solver. SAT solver provides pointer to itself to identify who it is.
 bool rintanen_scheduler_callback(void * solver){
-	// we have been deleted. Terminate immediately
-	if (sat_solver_to_data.count(solver) == 0) return true; 
-
 	// call the actual scheduler -> since we call from within the SAT solver, we are definitely not finished yet!
 	return sat_solver_to_data[solver]->scheduler->runScheduler(solver, false, false);
 }
@@ -230,9 +235,9 @@ struct length_runner {
 
 
 	void operator() () {
-		cout << "Starting SAT call Nr. " << call->iterationNr << " for " << call->timesteps << " timesteps." << endl;
+		cout << call->identifier << "started" << endl;
 		// try to acquire the mutex. Will cause this thread to wait until it is allowed to run
-		call->run_mutex.lock();
+		call->run_mutex.acquire();
 		
 		// actually create and run the encoding!
 		std::vector<std::pair<int,int>> time_step_order; // for plan extraction
@@ -246,11 +251,11 @@ struct length_runner {
 		call->encoding->encodeInit(1);
 		call->encoding->encodeGoal(call->timesteps + 1);
 
-		cout << "Formula has " << call->capsule->get_number_of_clauses() << " clauses and " << call->capsule->number_of_variables << " variables." << endl;
+		cout << call->identifier << call->capsule->get_number_of_clauses() << " clauses " << call->capsule->number_of_variables << " variables" << endl;
 
 		// start calling the solver	
 		int solverState = ipasir_solve(call->capsule->solver);
-		cout << "SAT solver state: " << solverState << endl;
+		//cout << call->identifier << "SAT solver state: " << solverState << endl;
 
 		if (solverState == 10){
 			// run plan extraction
@@ -258,8 +263,8 @@ struct length_runner {
 			// set the plan and run FTS extraction		
 			call->search->check_goal_and_set_plan(goalState, states, std::move(labels), call->search->fts);
 
-			cout << "STEP " << call->iterationNr << " length " << call->timesteps
-					<< " SAT "
+			cout << call->identifier
+					<< "SAT"
 					<< " clauses " << call->capsule->get_number_of_clauses() << " vars " << call->capsule->number_of_variables
 					<< " labels " << labels.size() << " timesteps with label " << timesteps_with_labels.size()
 					<< " compression " << double(labels.size()) / timesteps_with_labels.size()
@@ -269,8 +274,8 @@ struct length_runner {
 			// finished and found a plan; we will terminate anyway now, so ignore the return value
 			call->scheduler->runScheduler(call->capsule->solver,true,true);
 		} else {
-			cout << "STEP " << call->iterationNr << " length " << call->timesteps
-					<< " UNSAT "
+			cout << call->identifier
+					<< "UNSAT"
 					<< " clauses " << call->capsule->get_number_of_clauses() << " vars " << call->capsule->number_of_variables
 					<< endl;
 			ipasir_release(call->capsule->solver);
@@ -278,6 +283,8 @@ struct length_runner {
 			call->scheduler->runScheduler(call->capsule->solver,true,false);
 		}
 
+		// erase myself from the map
+		sat_solver_to_data.erase(call->capsule->solver);
 	}
 };
 
@@ -301,8 +308,6 @@ bool RintanenSATSearch::create_next_length_run(std::shared_ptr<SAT_Scheduler> gl
 	
 	global_scheduler->nextStepNumber++; // increase the global next step number
 	global_scheduler->previousLength = currentLength;
-
-	cout << "Launching Step " << myStepNumber << " with length " << currentLength << endl;
 
 	// prepare the data structures for this length
 	void* solver = ipasir_init();
@@ -329,7 +334,7 @@ bool RintanenSATSearch::create_next_length_run(std::shared_ptr<SAT_Scheduler> gl
 
 SearchStatus RintanenSATSearch::step() {
     utils::Timer step_timer;
-	cout << "HI doing step! SAT: " << ipasir_signature() << endl; // << " starting at " << t_start << endl;
+	cout << "Starting Rintanen's algorithms C with SAT solver " << ipasir_signature() << endl;
 
 	std::shared_ptr<SAT_Scheduler> global_scheduler = make_shared<SAT_Scheduler>();
 
@@ -339,10 +344,10 @@ SearchStatus RintanenSATSearch::step() {
 
 	// start the first run
 	assert(global_scheduler->currentInstances.size() == 1);
-	global_scheduler->currentInstances.begin()->second->run_mutex.unlock();
+	global_scheduler->currentInstances.begin()->second->run_mutex.release();
 
 	// now wait until the global scheduler has finished its work
-	global_scheduler->done_mutex.lock();
+	global_scheduler->done_mutex.acquire();
 
 	if (global_scheduler->planFound)
 		return SOLVED;
