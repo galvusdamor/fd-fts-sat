@@ -52,6 +52,7 @@ protected:
 
 	/// encoding function for the main transition relation
 	void encode_transition(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<std::vector<int>>> &labelGroupVars, const std::vector<std::vector<int>> & nextStateVars);
+	void encode_frame_axioms(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<std::vector<int>>> &labelGroupVars, const std::vector<std::vector<int>> & nextStateVars);
 
 
 public:

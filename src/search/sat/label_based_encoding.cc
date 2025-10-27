@@ -329,6 +329,10 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 			selfLoopAuxVar = sat.new_variable();
 			DEBUG(sat.registerVariable(selfLoopAuxVar,"selfLoopAuxVar"));
 			sat.impliesOr(-selfLoopAuxVar, labelGroupsWithActualTransitions);
+			// Note: these clauses are equivalent to: 
+			// s + p -> n = -s v -p v n = p & -n -> -s
+			// -s + p -> -n = s v -p v -n = p & n -> s
+			// Since one of the p's is always true, they *force* s to be true of we remain in the same state.
 			for(int states = 0 ; states < numStates ; states++){
 				sat.andImplies(selfLoopAuxVar, previousStateVars[ts][states], nextStateVars[ts][states]);
 				sat.andImplies(-selfLoopAuxVar, previousStateVars[ts][states], -nextStateVars[ts][states]);
@@ -600,6 +604,35 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 	}
 }
 
+
+void LabelBasedEncoding::encode_frame_axioms(const vector<vector<int>> & previousStateVars,
+	const vector<vector<vector<int>>> & labelGroupVars, const vector<vector<int>> & nextStateVars){
+	
+	// ensure that if the state changes *some* action is executed.
+	for(int ts = 0 ; ts < fts->get_size() ; ts++){
+		const auto &fts_matrix = fts_matrices[ts];
+		const int numLabelGroups = fts_matrix->get_num_label_groups();
+		const int numStates = fts->get_ts(ts).get_size();
+
+
+		vector<int> labelGroups;
+		for(int lg = 0 ; lg < numLabelGroups ; lg++) {
+			for(const int var : labelGroupVars[ts][lg]){
+				labelGroups.push_back(var);
+			}
+		}
+		
+		// frame axioms. If label was executed, enforce frame axiom
+		int someLabelExecuted = sat.new_variable();
+		DEBUG(sat.registerVariable(someLabelExecuted,"someLabelExecuted_ts=" + to_string(ts)));
+		sat.impliesOr(someLabelExecuted, labelGroups);
+		for(int states = 0 ; states < numStates ; states++){
+			sat.andImplies(previousStateVars[ts][states], - nextStateVars[ts][states], someLabelExecuted);
+		}
+	}
+}
+
+
 void LabelBasedEncoding::encodeInit(int fromTime){
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		sat.assertYes(allTimesStateVars[fromTime][ts][fts->get_ts(ts).get_init_state()]);
@@ -650,6 +683,9 @@ void LabelBasedEncoding::encode(int fromTime, int toTime){
 	// 3. Step encode at least one action constraint if necessary	
 	if (forceAtLeastOneAction) {
 		sat.atLeastOne(labelVars);
+	} else if (!useSelfloopOptimisation){
+		// if we don't force at least one action and we don't have self-loop optimisation, we need frame axioms
+		encode_frame_axioms(previousStateVars,labelGroupVars,nextStateVars);
 	}
 
 	// 4. Step encode the restrictions on which actions are allowed in parallel as per the encoding
