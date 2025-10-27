@@ -38,4 +38,37 @@ string format_paper_reference(
        << t2t_escape(publisher) << ".\n\n\n";
     return ss.str();
 }
+
+std::string path_string(const std::vector<int> & path){
+	std::string s = "";
+	for (const int & i : path){
+		if (s.size()) s+= ",";
+		s+= std::to_string(i);
+	}
+
+	return s;
+}
+
+std::string path_string_no_sep(const std::vector<int> & path){
+	std::string s = "";
+	for (const int & i : path)
+		s+= std::to_string(i);
+
+	return s;
+}
+
+std::string pad_string(std::string s, int chars){
+	while (s.size() < size_t(chars))
+		s += " ";
+	return s;
+}
+
+std::string pad_int(int i, int chars){
+	return pad_string(std::to_string(i),chars);
+}
+
+std::string pad_path(const std::vector<int> & path, int chars){
+	return pad_string(path_string(path),chars);
+}
+
 }

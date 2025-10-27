@@ -12,18 +12,6 @@
 # define DEBUG(x)
 #endif
 
-
-#define INTPAD 4
-#define PATHPAD 15
-#define STRINGPAD 0
-
-std::string path_string(const std::vector<int> & path);
-std::string path_string_no_sep(const std::vector<int> & path);
-std::string pad_string(std::string s, int chars = STRINGPAD);
-std::string pad_int(int i, int chars = INTPAD);
-std::string pad_path(const std::vector<int> & path, int chars = PATHPAD);
-
-
 struct sat_capsule{
 	void* solver;
 	int number_of_variables;

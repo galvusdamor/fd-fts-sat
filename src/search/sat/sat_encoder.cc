@@ -1,3 +1,4 @@
+#include "../utils/markup.h"
 #include "sat_encoder.h"
 #include "ipasir.h"
 #include <iostream>
@@ -5,37 +6,6 @@
 #include <math.h> 
 
 
-std::string path_string(const std::vector<int> & path){
-	std::string s = "";
-	for (const int & i : path){
-		if (s.size()) s+= ",";
-		s+= std::to_string(i);
-	}
-
-	return s;
-}
-
-std::string path_string_no_sep(const std::vector<int> & path){
-	std::string s = "";
-	for (const int & i : path)
-		s+= std::to_string(i);
-
-	return s;
-}
-
-std::string pad_string(std::string s, int chars){
-	while (s.size() < size_t(chars))
-		s += " ";
-	return s;
-}
-
-std::string pad_int(int i, int chars){
-	return pad_string(std::to_string(i),chars);
-}
-
-std::string pad_path(const std::vector<int> & path, int chars){
-	return pad_string(path_string(path),chars);
-}
 
 sat_capsule::sat_capsule(void* _solver) :
 	solver(_solver),
@@ -301,7 +271,7 @@ void sat_capsule::atMostOne(const std::vector<int> & is){
 	int bits = (int) ceil(log(is.size()) / log(2));
 
 	int baseVar = new_variable();
-	DEBUG(registerVariable(baseVar,"at-most-one " + pad_int(0)));
+	DEBUG(registerVariable(baseVar,"at-most-one " + utils::pad_int(0)));
 
 	for (int b = 1; b < bits; b++){
 #ifndef NDEBUG
@@ -309,7 +279,7 @@ void sat_capsule::atMostOne(const std::vector<int> & is){
 #endif
 			new_variable(); // ignore return, they will be incremental
 		assert(r == baseVar + b);
-		DEBUG(registerVariable(baseVar + b,"at-most-one " + pad_int(b)));
+		DEBUG(registerVariable(baseVar + b,"at-most-one " + utils::pad_int(b)));
 	}
 
 
@@ -334,20 +304,20 @@ void sat_capsule::atMostK(int K, const std::vector<int> & is){
 	for (int x = 0; x < static_cast<int>(is.size()); x++){
 		int base = new_variable();
 		vars.push_back(base);
-		DEBUG(registerVariable(base,"at-most-K " + pad_int(0)+"-"+pad_int(x)));
+		DEBUG(registerVariable(base,"at-most-K " + utils::pad_int(0)+"-"+utils::pad_int(x)));
 		for (int i = 1; i <= K+1; i++){
 			__attribute__((unused)) int v = new_variable();
-			DEBUG(registerVariable(v,"at-most-K " + pad_int(i)+"-"+pad_int(x)));
+			DEBUG(registerVariable(v,"at-most-K " + utils::pad_int(i)+"-"+utils::pad_int(x)));
 			// id will not be needed
 		}
 	}
 
 	int base = new_variable();
 	vars.push_back(base);
-	DEBUG(registerVariable(base,"at-most-K " + pad_int(0)));
+	DEBUG(registerVariable(base,"at-most-K " + utils::pad_int(0)));
 	for (int i = 1; i <= K+1; i++){
 		__attribute__((unused)) int v = new_variable();
-		DEBUG(registerVariable(v,"at-most-K " + pad_int(i)));
+		DEBUG(registerVariable(v,"at-most-K " + utils::pad_int(i)));
 		// id will not be needed
 	}
 
