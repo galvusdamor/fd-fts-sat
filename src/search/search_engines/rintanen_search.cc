@@ -220,8 +220,6 @@ extern "C" {
 // call-back function for the SAT solver. SAT solver provides pointer to itself to identify who it is.
 bool rintanen_scheduler_callback(void * solver){
 	// call the actual scheduler -> since we call from within the SAT solver, we are definitely not finished yet!
-	if (!sat_solver_to_data.contains(solver))
-		cout << "Missing " << solver << endl;
 	assert(sat_solver_to_data.contains(solver));
 	assert(sat_solver_to_data[solver]->scheduler.get() != nullptr);
 	return sat_solver_to_data[solver]->scheduler->runScheduler(solver, false, false);
