@@ -524,6 +524,7 @@ fast_downward_plugin(
 	HELP "SAT based search"
     SOURCES
         search_engines/plugin_sat
+        search_engines/plugin_rintanen
 	DEPENDS SAT_SEARCH SEARCH_COMMON
 )
 
@@ -556,6 +557,7 @@ fast_downward_plugin(
         HELP "SAT search"
     SOURCES
 		search_engines/sat_search
+		search_engines/rintanen_search
         sat/sat_encoder
         sat/sat_encoding
         sat/label_based_encoding
