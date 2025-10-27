@@ -26,8 +26,10 @@ enum encoding_type {
 
 
 class RintanenSATSearch : public SearchEngine, std::enable_shared_from_this<RintanenSATSearch>{
-	const std::shared_ptr<LengthStrategy> length_strategy;
 	const std::shared_ptr<SATEncodingFactory> encoding_factory;
+	const size_t max_parallel_calls;
+	const int scheduler_interval_seconds;
+	const int memory_limit_mbs;
 
 protected:
     virtual void initialize() override;
@@ -40,6 +42,7 @@ public:
     // needs to be public as accessed by thread
 	using SearchEngine::check_goal_and_set_plan;
 	std::shared_ptr<task_representation::FTSTask> fts;
+	const std::shared_ptr<LengthStrategy> length_strategy;
 	
 	// returns true if there is a next run that could be generated
 	bool create_next_length_run(std::shared_ptr<SAT_Scheduler> global_scheduler);

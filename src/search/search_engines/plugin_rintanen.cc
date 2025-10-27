@@ -14,6 +14,13 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
 		"length_strategy","strategy to determine plan lengths", "one_by_one()");
 	parser.add_option<shared_ptr<sat_search::SATEncodingFactory>> (
 		"encoder","type of formula to use for encoding", "label_sat()");
+	
+	parser.add_option<int> (
+		"max_parallel_calls","maximum number of SAT calls run in parallel", "20");
+	parser.add_option<int> (
+		"scheduler_interval","interval for the schedule in seconds", "1");
+	parser.add_option<int> (
+		"memory_limit_mb","memory limit in MBs", "3500");
 
 	parser.add_option<bool>(
 		"solver_quiet",

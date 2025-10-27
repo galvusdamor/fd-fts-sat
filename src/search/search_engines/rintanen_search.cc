@@ -8,6 +8,8 @@
 #include "../utils/logging.h"
 #include "../utils/timer.h"
 #include "../utils/markup.h"
+#include "../utils/system.h"
+#include "../utils/memory.h"
 #include "../sat/ipasir.h"
 #include "../sat/length_strategy.h"
 #include "../sat/sat_encoder.h"
@@ -58,9 +60,12 @@ std::map<void*, std::shared_ptr<SAT_Call_Data>> sat_solver_to_data;
 
 
 struct SAT_Scheduler{
+	const size_t maximum_number_of_parallel_calls;
+	std::chrono::milliseconds schedule_interval;
+	const int memory_limit_mbs;
+
 	// maps step number to the SAT call instance of that step
 	map<int, std::shared_ptr<SAT_Call_Data>> currentInstances;
-	const size_t maximum_number_of_parallel_calls = 5;
 	int nextStepNumber;
 	int previousLength;
 	std::binary_semaphore done_mutex;
@@ -68,11 +73,23 @@ struct SAT_Scheduler{
 	bool planFound;
 	// time at which the scheduler was last called	
 	std::chrono::system_clock::time_point t_last_schedule;
-	std::chrono::milliseconds schedule_interval{1s};
+	
+	// store an educated guess on memory usage
+	int educated_guess_memory_in_mb;
+	int reserved_memory_in_mb;
+	
 
-	SAT_Scheduler() : nextStepNumber(0), previousLength(-1), done_mutex(0), plannerTerminated(false), planFound(false) {
+	SAT_Scheduler(size_t max_parallel_calls, int scheduler_interval_seconds, int _memory_limit_mbs) :
+		maximum_number_of_parallel_calls(max_parallel_calls),
+		schedule_interval(scheduler_interval_seconds * 1000),
+		memory_limit_mbs(_memory_limit_mbs),
+		nextStepNumber(0), previousLength(-1), done_mutex(0), plannerTerminated(false), planFound(false) {
 		// done_mutex is is initially locked
 		t_last_schedule = std::chrono::system_clock::now();
+		educated_guess_memory_in_mb = -1; // we don't have one yet.
+		reserved_memory_in_mb = -1;
+		//educated_guess_memory_in_mb = 1024; // fixed value as implementation does not work
+		//utils::reserve_extra_memory_padding(educated_guess_memory_in_mb);
 	}
 	
 	void terminate_planner(){
@@ -81,9 +98,7 @@ struct SAT_Scheduler{
 		for (auto& [_nr, instance]: currentInstances)
 			instance->run_mutex.release();
 		// allow the main algorithm to run
-		cout << "A ";
 		done_mutex.release();
-		cout << "done" << endl;
 	}
 
 
@@ -184,7 +199,12 @@ struct SAT_Scheduler{
 		// let this call sleep	
 		current_call->run_mutex.acquire();
 
-		cout << current_call->identifier << "run" << endl;
+
+		// if we exceeded our expectation, we need to mark more memory as taken.
+		int current_memory = std::ceil(utils::get_peak_memory_in_kb() / 1024);
+		if (current_memory > reserved_memory_in_mb) reserved_memory_in_mb = current_memory;
+
+		//cout << current_call->identifier << "run" << endl;
 
 		// HI! We just work up. So we first need to check whether we got terminated!
 		return plannerTerminated || current_call->terminated;
@@ -208,9 +228,12 @@ bool rintanen_scheduler_callback(void * solver){
 
 namespace sat_search {
 RintanenSATSearch::RintanenSATSearch(const options::Options &opts): SearchEngine(opts),
-	length_strategy(opts.get<shared_ptr<LengthStrategy>>("length_strategy")),
 	encoding_factory(opts.get<shared_ptr<SATEncodingFactory>>("encoder")),
-	fts(g_main_task) {
+	max_parallel_calls(size_t(opts.get<int>("max_parallel_calls"))),
+	scheduler_interval_seconds(opts.get<int>("scheduler_interval")),
+	memory_limit_mbs(opts.get<int>("memory_limit_mb")),
+	fts(g_main_task),
+	length_strategy(opts.get<shared_ptr<LengthStrategy>>("length_strategy")) {
 
 	kissat_quietMode = opts.get<bool>("solver_quiet");
 
@@ -238,6 +261,7 @@ struct length_runner {
 		cout << call->identifier << "started" << endl;
 		// try to acquire the mutex. Will cause this thread to wait until it is allowed to run
 		call->run_mutex.acquire();
+		int memory_before_formula = utils::get_peak_memory_in_kb();
 		
 		// actually create and run the encoding!
 		std::vector<std::pair<int,int>> time_step_order; // for plan extraction
@@ -245,13 +269,37 @@ struct length_runner {
 		for(int timestep = 1 ; timestep <= call->timesteps ; timestep++){
 			call->encoding->encode(timestep,timestep+1);
 			time_step_order.push_back({timestep,timestep+1});
+			
 			// if formula generation takes a long time, we check whether we need to call the scheduler here
-			if (call->scheduler->runScheduler(call->capsule->solver,false,false)) return;
+			// the first generations need to happen uninterrupted (to measure memory usage)
+			if (call->iterationNr > 0 || call->scheduler->educated_guess_memory_in_mb == -1){
+				if (call->scheduler->runScheduler(call->capsule->solver,false,false)) return;
+			}
 		}
 		call->encoding->encodeInit(1);
 		call->encoding->encodeGoal(call->timesteps + 1);
 
+		int memory_after_formula = utils::get_peak_memory_in_kb();
+		int memory_usage = memory_after_formula - memory_before_formula;
+		if (call->scheduler->educated_guess_memory_in_mb == -1 && memory_usage != 0){
+			int mbs_per_timestep = std::ceil(double(memory_usage) / call->timesteps / 1024) * 3; // safety factor; 1000 is for kb in mb
+			cout << call->identifier << "estimated memory usage: " << mbs_per_timestep << endl;
+			call->scheduler->educated_guess_memory_in_mb = mbs_per_timestep;
+			call->scheduler->reserved_memory_in_mb = std::ceil(double(memory_after_formula) / 1024) + 500; // 50 MB of buffer
+
+			//auto nextLengthOpt = call->search->length_strategy->get_next_length(call->scheduler->nextStepNumber,call->scheduler->previousLength);
+			//if (nextLengthOpt){
+			//	int nextLength = nextLengthOpt.value();
+			//	int mbs_for_next_call = call->scheduler->educated_guess_memory_in_mb * nextLength;
+			//	cout << "Reserving " << mbs_for_next_call << " for " << nextLength << endl;
+			//	utils::maybe_reserve_extra_memory_padding(mbs_for_next_call);
+			//}
+		}
+
+
 		cout << call->identifier << call->capsule->get_number_of_clauses() << " clauses " << call->capsule->number_of_variables << " variables" << endl;
+		cout << call->identifier << "Currently reserved: " << call->scheduler->reserved_memory_in_mb << " MB. Actual: " <<  std::ceil(double(memory_after_formula) / 1024) << endl;
+
 
 		// start calling the solver	
 		int solverState = ipasir_solve(call->capsule->solver);
@@ -283,6 +331,15 @@ struct length_runner {
 			call->scheduler->runScheduler(call->capsule->solver,true,false);
 		}
 
+		if (call->scheduler->educated_guess_memory_in_mb != -1){
+			// release my memory for scheduler
+			int this_needed_memory = call->scheduler->educated_guess_memory_in_mb * call->timesteps;
+
+			call->scheduler->reserved_memory_in_mb -= this_needed_memory;
+			cout << call->identifier << "freeing " << this_needed_memory << " MB. Currently reserved: " << call->scheduler->reserved_memory_in_mb<< endl;
+		}
+
+
 		// erase myself from the map
 		sat_solver_to_data.erase(call->capsule->solver);
 	}
@@ -304,6 +361,42 @@ bool RintanenSATSearch::create_next_length_run(std::shared_ptr<SAT_Scheduler> gl
 		if (!next_length) return false;
 
 		currentLength = next_length.value();
+	}
+
+	// guesstimate whether this will exhaust the memory limit
+	if (global_scheduler->educated_guess_memory_in_mb != -1){
+		// if we have a guess on the per-step memory usage use it.
+		
+		string identifier = "Step " + utils::pad_int(myStepNumber,2) + " for " + utils::pad_int(currentLength,4) + " timesteps: ";
+		// how much memory is needed for this call?
+		int this_needed_memory = global_scheduler->educated_guess_memory_in_mb * currentLength;
+
+		if (global_scheduler->reserved_memory_in_mb + this_needed_memory > global_scheduler->memory_limit_mbs){
+			int current_memory = utils::get_peak_memory_in_kb();
+			cout << identifier << "not generating due to memory limit. Reserved " << global_scheduler->reserved_memory_in_mb << "MB. Actual " << std::ceil(double(current_memory) / 1024) << "MB" << endl;
+			return false;
+		}
+
+		global_scheduler->reserved_memory_in_mb += this_needed_memory;
+		cout << identifier << "reserved " << this_needed_memory << " MB. Currently reserved: " << global_scheduler->reserved_memory_in_mb<< endl;
+
+		//// if the extra memory padding is gone, we likely cannot generate this formula any more
+		//if (!utils::extra_memory_padding_is_reserved()){
+		//	cout << identifier << "not generating due to memory limit" << endl;
+		//	return false;
+		//}
+
+		//// release the current memory padding which should be enough for me
+		//utils::release_extra_memory_padding();
+
+		//// memory padding needed for next call
+		//auto nextLengthOpt = length_strategy->get_next_length(myStepNumber+1,currentLength);
+		//if (nextLengthOpt){
+		//	int nextLength = nextLengthOpt.value();
+		//	int mbs_for_next_call = global_scheduler->educated_guess_memory_in_mb * nextLength;
+		//	cout << identifier << "reserving " << mbs_for_next_call << " MiB for " << nextLength << endl;
+		//	utils::maybe_reserve_extra_memory_padding(mbs_for_next_call);
+		//}
 	}
 	
 	global_scheduler->nextStepNumber++; // increase the global next step number
@@ -336,7 +429,7 @@ SearchStatus RintanenSATSearch::step() {
     utils::Timer step_timer;
 	cout << "Starting Rintanen's algorithms C with SAT solver " << ipasir_signature() << endl;
 
-	std::shared_ptr<SAT_Scheduler> global_scheduler = make_shared<SAT_Scheduler>();
+	std::shared_ptr<SAT_Scheduler> global_scheduler = make_shared<SAT_Scheduler>(max_parallel_calls,scheduler_interval_seconds, memory_limit_mbs);
 
 	// create the first length run of the SAT planner and start it!
 	// it will wait immediately as the mutex starts in locked state
