@@ -389,7 +389,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						if (useSelfloopOptimisation && fts_matrix->get_always_self_loop_labels_for_state(src).size() >= 1)
 							allOnes.push_back(selfLoopAuxVar);
 
-						sat.andImpliesOr(-selfLoopAuxVar, previousStateVars[ts][src], allOnes);
+						sat.impliesOr(previousStateVars[ts][src], allOnes);
 						cnt_1_source_label++;
 						
 						// we have now encode all 0's from this source label to all impossible labels
