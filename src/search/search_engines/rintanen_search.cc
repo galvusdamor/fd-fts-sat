@@ -220,6 +220,10 @@ extern "C" {
 // call-back function for the SAT solver. SAT solver provides pointer to itself to identify who it is.
 bool rintanen_scheduler_callback(void * solver){
 	// call the actual scheduler -> since we call from within the SAT solver, we are definitely not finished yet!
+	if (!sat_solver_to_data.contains(solver))
+		cout << "Missing " << solver << endl;
+	assert(sat_solver_to_data.contains(solver));
+	assert(sat_solver_to_data[solver]->scheduler.get() != nullptr);
 	return sat_solver_to_data[solver]->scheduler->runScheduler(solver, false, false);
 }
 
@@ -258,7 +262,8 @@ struct length_runner {
 
 
 	void operator() () {
-		cout << call->identifier << "started" << endl;
+		if (!call->scheduler->plannerTerminated && !call->terminated)
+			cout << call->identifier << "started" << endl;
 		// try to acquire the mutex. Will cause this thread to wait until it is allowed to run
 		call->run_mutex.acquire();
 		int memory_before_formula = utils::get_peak_memory_in_kb();
@@ -283,7 +288,8 @@ struct length_runner {
 		int memory_usage = memory_after_formula - memory_before_formula;
 		if (call->scheduler->educated_guess_memory_in_mb == -1 && memory_usage != 0){
 			int mbs_per_timestep = std::ceil(double(memory_usage) / call->timesteps / 1024) * 3; // safety factor; 1000 is for kb in mb
-			cout << call->identifier << "estimated memory usage: " << mbs_per_timestep << endl;
+			if (!call->scheduler->plannerTerminated && !call->terminated)
+				cout << call->identifier << "estimated memory usage: " << mbs_per_timestep << endl;
 			call->scheduler->educated_guess_memory_in_mb = mbs_per_timestep;
 			call->scheduler->reserved_memory_in_mb = std::ceil(double(memory_after_formula) / 1024) + 500; // 50 MB of buffer
 
@@ -296,39 +302,40 @@ struct length_runner {
 			//}
 		}
 
-
-		cout << call->identifier << call->capsule->get_number_of_clauses() << " clauses " << call->capsule->number_of_variables << " variables" << endl;
-		cout << call->identifier << "Currently reserved: " << call->scheduler->reserved_memory_in_mb << " MB. Actual: " <<  std::ceil(double(memory_after_formula) / 1024) << endl;
+		if (!call->scheduler->plannerTerminated && !call->terminated){
+			cout << call->identifier << call->capsule->get_number_of_clauses() << " clauses " << call->capsule->number_of_variables << " variables" << endl;
+			cout << call->identifier << "Currently reserved: " << call->scheduler->reserved_memory_in_mb << " MB. Actual: " <<  std::ceil(double(memory_after_formula) / 1024) << "MB" << endl;
+		}
 
 
 		// start calling the solver	
 		int solverState = ipasir_solve(call->capsule->solver);
 		//cout << call->identifier << "SAT solver state: " << solverState << endl;
 
-		if (solverState == 10){
-			// run plan extraction
-			auto [goalState, states, labels, timesteps_with_labels] = call->encoding->extractSolution(1,time_step_order);
-			// set the plan and run FTS extraction		
-			call->search->check_goal_and_set_plan(goalState, states, std::move(labels), call->search->fts);
+		if (!call->scheduler->plannerTerminated && !call->terminated){
+			if (solverState == 10){
+				// run plan extraction
+				auto [goalState, states, labels, timesteps_with_labels] = call->encoding->extractSolution(1,time_step_order);
+				// set the plan and run FTS extraction		
+				call->search->check_goal_and_set_plan(goalState, states, std::move(labels), call->search->fts);
 
-			cout << call->identifier
-					<< "SAT"
-					<< " clauses " << call->capsule->get_number_of_clauses() << " vars " << call->capsule->number_of_variables
-					<< " labels " << labels.size() << " timesteps with label " << timesteps_with_labels.size()
-					<< " compression " << double(labels.size()) / timesteps_with_labels.size()
-					<< endl;
-			
-			ipasir_release(call->capsule->solver);
-			// finished and found a plan; we will terminate anyway now, so ignore the return value
-			call->scheduler->runScheduler(call->capsule->solver,true,true);
-		} else {
-			cout << call->identifier
-					<< "UNSAT"
-					<< " clauses " << call->capsule->get_number_of_clauses() << " vars " << call->capsule->number_of_variables
-					<< endl;
-			ipasir_release(call->capsule->solver);
-			// finished and did not find a plan; we will terminate anyway now, so ignore the return value
-			call->scheduler->runScheduler(call->capsule->solver,true,false);
+				cout << call->identifier
+						<< "SAT"
+						<< " clauses " << call->capsule->get_number_of_clauses() << " vars " << call->capsule->number_of_variables
+						<< " labels " << labels.size() << " timesteps with label " << timesteps_with_labels.size()
+						<< " compression " << double(labels.size()) / timesteps_with_labels.size()
+						<< endl;
+				
+				// finished and found a plan; we will terminate anyway now, so ignore the return value
+				call->scheduler->runScheduler(call->capsule->solver,true,true);
+			} else {
+				cout << call->identifier
+						<< "UNSAT"
+						<< " clauses " << call->capsule->get_number_of_clauses() << " vars " << call->capsule->number_of_variables
+						<< endl;
+				// finished and did not find a plan; we will terminate anyway now, so ignore the return value
+				call->scheduler->runScheduler(call->capsule->solver,true,false);
+			}
 		}
 
 		if (call->scheduler->educated_guess_memory_in_mb != -1){
@@ -336,12 +343,15 @@ struct length_runner {
 			int this_needed_memory = call->scheduler->educated_guess_memory_in_mb * call->timesteps;
 
 			call->scheduler->reserved_memory_in_mb -= this_needed_memory;
-			cout << call->identifier << "freeing " << this_needed_memory << " MB. Currently reserved: " << call->scheduler->reserved_memory_in_mb<< endl;
+			if (!call->scheduler->plannerTerminated && !call->terminated)
+				cout << call->identifier << "freeing " << this_needed_memory << " MB. Currently reserved: " << call->scheduler->reserved_memory_in_mb<< endl;
 		}
 
 
 		// erase myself from the map
 		sat_solver_to_data.erase(call->capsule->solver);
+		// important: we first need to erase and *then* free the pointer. Otherwise the pointer can be used a second time
+		ipasir_release(call->capsule->solver);
 	}
 };
 
