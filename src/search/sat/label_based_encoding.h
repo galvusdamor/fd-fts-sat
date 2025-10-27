@@ -57,7 +57,7 @@ protected:
 
 public:
     explicit LabelBasedEncoding(
-		sat_capsule & capsule,
+		std::shared_ptr<sat_capsule> capsule,
 		const std::shared_ptr<task_representation::FTSTask> & _fts,
 		bool _statisticsPrinted,
 		bool _useLabelGroups,
@@ -95,7 +95,7 @@ public:
 	explicit LabelBasedEncodingFactory(const options::Options &opts);
 
 	void initialize() override;
-	std::unique_ptr<SATEncoding> createEncodingInstance(sat_capsule & capsule) override;
+	std::unique_ptr<SATEncoding> createEncodingInstance(std::shared_ptr<sat_capsule> capsule) override;
     ~LabelBasedEncodingFactory() override = default;
 };
 

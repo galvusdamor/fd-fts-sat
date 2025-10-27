@@ -16,11 +16,11 @@ namespace sat_search {
 // abstract interface for a SAT encoding
 class SATEncoding {
 protected:
-	sat_capsule & sat;
+	std::shared_ptr<sat_capsule> sat;
 	std::shared_ptr<task_representation::FTSTask> fts;
 	bool forceAtLeastOneAction;
 public:
-	SATEncoding(sat_capsule & capsule, const std::shared_ptr<task_representation::FTSTask> &_fts, bool forceAtLeastOneAction) :
+	SATEncoding(std::shared_ptr<sat_capsule> capsule, const std::shared_ptr<task_representation::FTSTask> &_fts, bool forceAtLeastOneAction) :
 		sat(capsule), fts(_fts), forceAtLeastOneAction(forceAtLeastOneAction) {};
 	virtual ~SATEncoding() = default;
 	virtual void encode(int fromTime, int toTime) = 0;
@@ -37,7 +37,7 @@ protected:
 public:
 	SATEncodingFactory(bool _forceAtLeastOneAction) : fts(g_main_task), forceAtLeastOneAction(_forceAtLeastOneAction) {};
 	virtual ~SATEncodingFactory() = default;
-	virtual std::unique_ptr<SATEncoding> createEncodingInstance(sat_capsule & capsule) = 0;
+	virtual std::unique_ptr<SATEncoding> createEncodingInstance(std::shared_ptr<sat_capsule> capsule) = 0;
 	virtual void initialize() = 0;
 };
 

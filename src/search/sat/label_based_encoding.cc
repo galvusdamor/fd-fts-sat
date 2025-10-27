@@ -104,7 +104,7 @@ static options::PluginShared<SATEncodingFactory> _plugin_label_based_sat_factory
 
 
 LabelBasedEncoding::LabelBasedEncoding(
-	sat_capsule & capsule,
+	std::shared_ptr<sat_capsule> capsule,
 	const std::shared_ptr<FTSTask> & _fts,
 	bool _statisticsPrinted,
 	bool _useLabelGroups,
@@ -143,7 +143,7 @@ void LabelBasedEncodingFactory::initialize() {
 
 
 
-unique_ptr<SATEncoding> LabelBasedEncodingFactory::createEncodingInstance(sat_capsule & capsule){
+unique_ptr<SATEncoding> LabelBasedEncodingFactory::createEncodingInstance(std::shared_ptr<sat_capsule> capsule){
 	bool oldStatisticsPrinted = statisticsPrinted;
 	statisticsPrinted = true;
 	return make_unique<LabelBasedEncoding>(capsule,fts,oldStatisticsPrinted,useLabelGroups,useSelfloopOptimisation,
@@ -158,12 +158,12 @@ vector<vector<int>> LabelBasedEncoding::generateStateVars(/* , int timestep */) 
 	vector<vector<int>> stateVars(fts->get_size());
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
-			int stateVar = sat.new_variable();
+			int stateVar = sat->new_variable();
 			stateVars[ts].push_back(stateVar);
-			DEBUG(sat.registerVariable(stateVar,"TS:"+to_string(ts)+";Val:"+to_string(states)));
+			DEBUG(sat->registerVariable(stateVar,"TS:"+to_string(ts)+";Val:"+to_string(states)));
 		}
-		sat.atMostOne(stateVars[ts]);
-		sat.atLeastOne(stateVars[ts]);
+		sat->atMostOne(stateVars[ts]);
+		sat->atLeastOne(stateVars[ts]);
 	}
 	return stateVars;
 }
@@ -171,9 +171,9 @@ vector<vector<int>> LabelBasedEncoding::generateStateVars(/* , int timestep */) 
 vector<int> LabelBasedEncoding::generateLabelVars(/* , int timestep */) const {
 	vector<int> labelVars(fts->get_num_labels());
 	for(int label = 0 ; label < fts->get_num_labels() ; label++){
-		int labelVar = sat.new_variable();
+		int labelVar = sat->new_variable();
 		labelVars[label] = labelVar;
-		DEBUG(sat.registerVariable(labelVar,"Label:"+to_string(label)));
+		DEBUG(sat->registerVariable(labelVar,"Label:"+to_string(label)));
 		//cout << labelVar << endl;
 	}
 	return labelVars;
@@ -191,15 +191,15 @@ vector<vector<vector<int>>> LabelBasedEncoding::generateLabelGroupVars(const vec
 					labelGroupVars[ts][lg].push_back(labelVars[fts_matrix->get_labels_in_label_group(lg)[0]]);
 					continue;
 				}
-				int lab_group = sat.new_variable();
-				DEBUG(sat.registerVariable(lab_group,"LabelGroup:"+to_string(lg)));
+				int lab_group = sat->new_variable();
+				DEBUG(sat->registerVariable(lab_group,"LabelGroup:"+to_string(lg)));
 				labelGroupVars[ts][lg].push_back(lab_group);
 				vector<int> labels;
 				for(int label : fts_matrix->get_labels_in_label_group(lg)){
-					sat.implies(labelVars[label], lab_group);
+					sat->implies(labelVars[label], lab_group);
 					labels.push_back(labelVars[label]);
 				}
-				sat.impliesOr(lab_group, labels);
+				sat->impliesOr(lab_group, labels);
 			} else {
 				for(int label : fts_matrix->get_labels_in_label_group(lg)) {
 					labelGroupVars[ts][lg].push_back(labelVars[label]);
@@ -216,8 +216,8 @@ map<int, map<int, vector<int>>> LabelBasedEncoding::generateHelperVars(/* , int 
 		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
 			int num_helper_vars = fts_matrices[ts]->get_not_always_selfloop_labels_reaching_target(states).size() - 1;
 			for(int h = 0 ; h < num_helper_vars ; h++){
-				int helperVar = sat.new_variable();
-				DEBUG(sat.registerVariable(helperVar, "Helpers"));
+				int helperVar = sat->new_variable();
+				DEBUG(sat->registerVariable(helperVar, "Helpers"));
 				helperVars[ts][states].push_back(helperVar);
 			}
 		}
@@ -227,7 +227,7 @@ map<int, map<int, vector<int>>> LabelBasedEncoding::generateHelperVars(/* , int 
 
 
 void LabelBasedEncoding::encode_sequential(const vector<int> & labelVars){
-	sat.atMostOne(labelVars);
+	sat->atMostOne(labelVars);
 }
 
 void LabelBasedEncoding::encode_self_loop_parallel(const vector<int> & labelVars){
@@ -239,7 +239,7 @@ void LabelBasedEncoding::encode_self_loop_parallel(const vector<int> & labelVars
  				non_parallelisable_labels.push_back(labelVars[label]);
  			}
  		}
- 		sat.atMostOne(non_parallelisable_labels);
+ 		sat->atMostOne(non_parallelisable_labels);
  	}
 }
 
@@ -254,20 +254,20 @@ void LabelBasedEncoding::encode_chains_parallel(const vector<int> & labelVars, c
 			const auto & labelsWithEffect = fts_matrices[ts]->get_not_always_selfloop_labels_reaching_target(states);
 			for(size_t l = 0 ; l < labelsWithEffect.size() ; l++){
 				if(l < labelsWithEffect.size()-1){
-					sat.andImplies(labelVars[labelsWithEffect[l]], nextStateVars[ts][states], topHelperVars[ts][states][l]);
+					sat->andImplies(labelVars[labelsWithEffect[l]], nextStateVars[ts][states], topHelperVars[ts][states][l]);
 					if(!tss.hasSelfLoopOnValue(states, labelsWithEffect[l+1])){
-						sat.implies(topHelperVars[ts][states][l], -labelVars[labelsWithEffect[l+1]]);
+						sat->implies(topHelperVars[ts][states][l], -labelVars[labelsWithEffect[l+1]]);
 					}
 					if(!tss.hasSelfLoopOnValue(states, labelsWithEffect[l])){
-						sat.implies(bottomHelperVars[ts][states][l], -labelVars[labelsWithEffect[l]]);
+						sat->implies(bottomHelperVars[ts][states][l], -labelVars[labelsWithEffect[l]]);
 					}
 				}
 				if(l > 0){
-					sat.andImplies(labelVars[labelsWithEffect[l]], nextStateVars[ts][states], bottomHelperVars[ts][states][l-1]);
+					sat->andImplies(labelVars[labelsWithEffect[l]], nextStateVars[ts][states], bottomHelperVars[ts][states][l-1]);
 				}
 				if(l > 0 && l < labelsWithEffect.size()-1){
-					sat.implies(topHelperVars[ts][states][l-1], topHelperVars[ts][states][l]);
-					sat.implies(bottomHelperVars[ts][states][l], bottomHelperVars[ts][states][l-1]);
+					sat->implies(topHelperVars[ts][states][l-1], topHelperVars[ts][states][l]);
+					sat->implies(bottomHelperVars[ts][states][l], bottomHelperVars[ts][states][l-1]);
 				}
 			}
 		}
@@ -315,8 +315,8 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					}
 
 					for(const int var : labelGroupVars[ts][lg]){
-						sat.impliesOr(var, preconditions);
-						sat.impliesOr(var, effects);
+						sat->impliesOr(var, preconditions);
+						sat->impliesOr(var, effects);
 					}
 					continue;
 				}
@@ -326,16 +326,16 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 				}
 			}
 			// frame axioms for self-loops. If no label with an actual transition was executed, enforce frame axiom
-			selfLoopAuxVar = sat.new_variable();
-			DEBUG(sat.registerVariable(selfLoopAuxVar,"selfLoopAuxVar"));
-			sat.impliesOr(-selfLoopAuxVar, labelGroupsWithActualTransitions);
+			selfLoopAuxVar = sat->new_variable();
+			DEBUG(sat->registerVariable(selfLoopAuxVar,"selfLoopAuxVar"));
+			sat->impliesOr(-selfLoopAuxVar, labelGroupsWithActualTransitions);
 			// Note: these clauses are equivalent to: 
 			// s + p -> n = -s v -p v n = p & -n -> -s
 			// -s + p -> -n = s v -p v -n = p & n -> s
 			// Since one of the p's is always true, they *force* s to be true of we remain in the same state.
 			for(int states = 0 ; states < numStates ; states++){
-				sat.andImplies(selfLoopAuxVar, previousStateVars[ts][states], nextStateVars[ts][states]);
-				sat.andImplies(-selfLoopAuxVar, previousStateVars[ts][states], -nextStateVars[ts][states]);
+				sat->andImplies(selfLoopAuxVar, previousStateVars[ts][states], nextStateVars[ts][states]);
+				sat->andImplies(-selfLoopAuxVar, previousStateVars[ts][states], -nextStateVars[ts][states]);
 			}
 		}
 
@@ -366,7 +366,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						for (int source : fts_matrix->get_possible_sources_for_label(lg))
 							allOnes.push_back(previousStateVars[ts][source]);
 
-						sat.orImpliesOr(labelGroupVars[ts][lg], allOnes);
+						sat->orImpliesOr(labelGroupVars[ts][lg], allOnes);
 						cnt_1_label_source++;
 						// we have now encode all 0's from this label to all impossible sources
 						for(int source : fts_matrix->get_impossible_sources_for_label(lg)) label_covered_sources[lg].insert(source);
@@ -393,7 +393,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						if (useSelfloopOptimisation && fts_matrix->get_always_self_loop_labels_for_state(src).size() >= 1)
 							allOnes.push_back(selfLoopAuxVar);
 
-						sat.impliesOr(previousStateVars[ts][src], allOnes);
+						sat->impliesOr(previousStateVars[ts][src], allOnes);
 						cnt_1_source_label++;
 						
 						// we have now encode all 0's from this source label to all impossible labels
@@ -415,7 +415,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					// check if impossible source is already covered
 					if (label_covered_sources[lg].contains(source)) continue; 
 					// if not, encode it
-					sat.orImpliesNot(labelGroupVars[ts][lg], previousStateVars[ts][source]);
+					sat->orImpliesNot(labelGroupVars[ts][lg], previousStateVars[ts][source]);
 					cnt_0_label_source++;
 					label_covered_sources[lg].insert(source);
 				}
@@ -438,7 +438,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						for (int target : fts_matrix->get_possible_targets_for_label(lg))
 							allOnes.push_back(nextStateVars[ts][target]);
 
-						sat.orImpliesOr(labelGroupVars[ts][lg], allOnes);
+						sat->orImpliesOr(labelGroupVars[ts][lg], allOnes);
 						cnt_1_label_target++;
 						// we have now encode all 0's from this label to all impossible targets
 						for(int target : fts_matrix->get_impossible_targets_for_label(lg)) label_covered_targets[lg].insert(target);
@@ -465,7 +465,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						if (useSelfloopOptimisation && fts_matrix->get_always_self_loop_labels_for_state(target).size() >= 1)
 							allOnes.push_back(selfLoopAuxVar);
 
-						sat.impliesOr(nextStateVars[ts][target], allOnes);
+						sat->impliesOr(nextStateVars[ts][target], allOnes);
 						cnt_1_target_label++;
 						// we have now encode all 0's from this source label to all impossible labels
 						// but only, if we know that forcing one of the labels actually makes executing any other labels impossible
@@ -485,7 +485,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					// check if impossible target is already covered
 					if (label_covered_targets[lg].contains(target)) continue; 
 					// if not, encode it
-					sat.orImpliesNot(labelGroupVars[ts][lg], nextStateVars[ts][target]);
+					sat->orImpliesNot(labelGroupVars[ts][lg], nextStateVars[ts][target]);
 					cnt_0_label_target++;
 					label_covered_targets[lg].insert(target);
 				}
@@ -505,7 +505,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						for (int target : fts_matrix->get_possible_targets_for_source(src))
 							allOnes.push_back(nextStateVars[ts][target]);
 
-						sat.impliesOr(previousStateVars[ts][src], allOnes);
+						sat->impliesOr(previousStateVars[ts][src], allOnes);
 						cnt_1_source_target++;
 						for(int target : fts_matrix->get_impossible_targets_for_source(src)) source_covered_targets[src].insert(target);
 					}
@@ -521,7 +521,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						for (int src : fts_matrix->get_possible_sources_for_target(target))
 							allOnes.push_back(previousStateVars[ts][src]);
 
-						sat.impliesOr(nextStateVars[ts][target], allOnes);
+						sat->impliesOr(nextStateVars[ts][target], allOnes);
 						cnt_1_target_source++;
 						for (int src : fts_matrix->get_impossible_sources_for_target(target)) source_covered_targets[src].insert(target);
 					}
@@ -532,7 +532,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 				for(int target : fts_matrix->get_impossible_targets_for_source(src)){
 					if (source_covered_targets[src].contains(target)) continue;
 
-					sat.implies(previousStateVars[ts][src], -nextStateVars[ts][target]);
+					sat->implies(previousStateVars[ts][src], -nextStateVars[ts][target]);
 					cnt_0_source_target++;
 					source_covered_targets[src].insert(target);
 				}
@@ -567,7 +567,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						continue;
 					}
 				
-					sat.orAndImplies(labelGroupVars[ts][lg], previousStateVars[ts][src], nextStateVars[ts][target]);
+					sat->orAndImplies(labelGroupVars[ts][lg], previousStateVars[ts][src], nextStateVars[ts][target]);
 					cnt_1_label_source_target++;
 				} else {
 					// if there are multiple ones, we encode negatively instead
@@ -579,7 +579,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					
 						// if the transition src+lg->target is impossible, then we need to encode that the transition is forbidden	
 						if(!fts_matrix->get_targets_for_source_and_label(lg,src).contains(target)){
-							sat.orAndImplies(labelGroupVars[ts][lg], previousStateVars[ts][src], -nextStateVars[ts][target]);
+							sat->orAndImplies(labelGroupVars[ts][lg], previousStateVars[ts][src], -nextStateVars[ts][target]);
 							cnt_0_label_source_target++;
 						}
 					}
@@ -623,11 +623,11 @@ void LabelBasedEncoding::encode_frame_axioms(const vector<vector<int>> & previou
 		}
 		
 		// frame axioms. If label was executed, enforce frame axiom
-		int someLabelExecuted = sat.new_variable();
-		DEBUG(sat.registerVariable(someLabelExecuted,"someLabelExecuted_ts=" + to_string(ts)));
-		sat.impliesOr(someLabelExecuted, labelGroups);
+		int someLabelExecuted = sat->new_variable();
+		DEBUG(sat->registerVariable(someLabelExecuted,"someLabelExecuted_ts=" + to_string(ts)));
+		sat->impliesOr(someLabelExecuted, labelGroups);
 		for(int states = 0 ; states < numStates ; states++){
-			sat.andImplies(previousStateVars[ts][states], - nextStateVars[ts][states], someLabelExecuted);
+			sat->andImplies(previousStateVars[ts][states], - nextStateVars[ts][states], someLabelExecuted);
 		}
 	}
 }
@@ -635,7 +635,7 @@ void LabelBasedEncoding::encode_frame_axioms(const vector<vector<int>> & previou
 
 void LabelBasedEncoding::encodeInit(int fromTime){
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
-		sat.assertYes(allTimesStateVars[fromTime][ts][fts->get_ts(ts).get_init_state()]);
+		sat->assertYes(allTimesStateVars[fromTime][ts][fts->get_ts(ts).get_init_state()]);
 	}
 }
 
@@ -647,7 +647,7 @@ void LabelBasedEncoding::encodeGoal(int toTime){
 		for(int goal : goals){
 			goalStateVars.push_back(allTimesStateVars[toTime][ts][goal]);
 		}
-		sat.atLeastOne(goalStateVars);
+		sat->atLeastOne(goalStateVars);
 	}
 }
 
@@ -682,7 +682,7 @@ void LabelBasedEncoding::encode(int fromTime, int toTime){
 
 	// 3. Step encode at least one action constraint if necessary	
 	if (forceAtLeastOneAction) {
-		sat.atLeastOne(labelVars);
+		sat->atLeastOne(labelVars);
 	} else if (!useSelfloopOptimisation){
 		// if we don't force at least one action and we don't have self-loop optimisation, we need frame axioms
 		encode_frame_axioms(previousStateVars,labelGroupVars,nextStateVars);
@@ -707,7 +707,7 @@ std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> Labe
 	vector<int> stateReconstructor;
 	for(size_t ts = 0 ; ts < allTimesStateVars[initTime].size() ; ts++){
 		for(size_t state = 0 ; state < allTimesStateVars[initTime][ts].size() ; state++){
-			if(ipasir_val(sat.solver, allTimesStateVars[initTime][ts][state]) > 0){
+			if(ipasir_val(sat->solver, allTimesStateVars[initTime][ts][state]) > 0){
 				stateReconstructor.push_back(state);
 				break;
 			}
@@ -724,7 +724,7 @@ std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> Labe
 		cout << "Time " << labelTimestep << endl;
 		vector<int> selectedLabels;
 		for(size_t label = 0 ; label < allTimesLabelVars[labelTimestep].size() ; label++){
-			if(ipasir_val(sat.solver, allTimesLabelVars[labelTimestep][label]) <= 0){
+			if(ipasir_val(sat->solver, allTimesLabelVars[labelTimestep][label]) <= 0){
 				continue;
 			}else{
 				selectedLabels.push_back(label);
@@ -732,7 +732,7 @@ std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> Labe
 				cout << "Label : " << label << endl;
 				for(int ts = 0 ; ts < fts->get_size() ; ts++){
 					for(size_t state = 0 ; state < allTimesStateVars[stateAfterTimestep][ts].size() ; state++){
-						if(ipasir_val(sat.solver, allTimesStateVars[stateAfterTimestep][ts][state]) > 0){
+						if(ipasir_val(sat->solver, allTimesStateVars[stateAfterTimestep][ts][state]) > 0){
 							stateReconstructor.push_back(state);
 							break;
 						}

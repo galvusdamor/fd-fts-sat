@@ -85,7 +85,7 @@ SearchStatus SATSearch::step() {
 
 	void* solver = ipasir_init();
 
-	sat_capsule capsule(solver);
+	shared_ptr<sat_capsule> capsule = make_shared<sat_capsule>(solver);
 
 	// create encoding object
 	auto thisEncoding = encoding_factory->createEncodingInstance(capsule);
@@ -100,9 +100,9 @@ SearchStatus SATSearch::step() {
 	thisEncoding->encodeGoal(currentLength + 1);
 
 
-	//DEBUG(capsule.printVariables());
+	//DEBUG(capsule->printVariables());
 
-	cout << "Formula has " << capsule.get_number_of_clauses() << " clauses and " << capsule.number_of_variables << " variables." << endl;
+	cout << "Formula has " << capsule->get_number_of_clauses() << " clauses and " << capsule->number_of_variables << " variables." << endl;
 
 	// start calling the solver	
 	int solverState;
@@ -133,7 +133,7 @@ SearchStatus SATSearch::step() {
 		
 		cout << "STEP " << stepNumber << " length " << currentLength
 				<< " SAT time " << step_timer
-				<< " clauses " << capsule.get_number_of_clauses() << " vars " << capsule.number_of_variables
+				<< " clauses " << capsule->get_number_of_clauses() << " vars " << capsule->number_of_variables
 				<< " labels " << labels.size() << " timesteps with label " << timesteps_with_labels.size()
 				<< " compression " << double(labels.size()) / timesteps_with_labels.size()
 				<< endl;
@@ -142,7 +142,7 @@ SearchStatus SATSearch::step() {
 	} else {
 		cout << "STEP " << stepNumber << " length " << currentLength
 				<< " UNSAT time " << step_timer
-				<< " clauses " << capsule.get_number_of_clauses() << " vars " << capsule.number_of_variables
+				<< " clauses " << capsule->get_number_of_clauses() << " vars " << capsule->number_of_variables
 				<< endl;
 		ipasir_release(solver);
 	}
