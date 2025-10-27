@@ -26,6 +26,7 @@ std::unique_ptr<T> make_unique_ptr(Args && ... args) {
   of the planner to reserve extra memory padding at the same time.
 */
 extern void reserve_extra_memory_padding(int memory_in_mb);
+extern bool maybe_reserve_extra_memory_padding(int memory_in_mb);
 extern void release_extra_memory_padding();
 extern bool extra_memory_padding_is_reserved();
 }

@@ -10,16 +10,39 @@ static char *extra_memory_padding = nullptr;
 
 // Save standard out-of-memory handler.
 static void (*standard_out_of_memory_handler)() = nullptr;
+static bool failed_reserving_memory = false;
 
 void continuing_out_of_memory_handler() {
     release_extra_memory_padding();
     cout << "Failed to allocate memory. Released extra memory padding." << endl;
 }
 
+void continuing_out_of_memory_handler_while_reserving_padding() {
+    failed_reserving_memory = true;
+	cout << "Failed to allocate memory while reserving padding." << endl;
+}
+
 void reserve_extra_memory_padding(int memory_in_mb) {
     assert(!extra_memory_padding);
     extra_memory_padding = new char[memory_in_mb * 1024 * 1024];
     standard_out_of_memory_handler = set_new_handler(continuing_out_of_memory_handler);
+}
+
+bool maybe_reserve_extra_memory_padding(int memory_in_mb) {
+	assert(!extra_memory_padding);
+    standard_out_of_memory_handler = set_new_handler(continuing_out_of_memory_handler_while_reserving_padding);
+
+    extra_memory_padding = new char[memory_in_mb * 1024 * 1024];
+   
+   	if (failed_reserving_memory) {
+		delete[] extra_memory_padding;
+    	set_new_handler(standard_out_of_memory_handler);
+		extra_memory_padding = nullptr; // make sure this is not allocated
+		return false;
+	} else {
+		set_new_handler(continuing_out_of_memory_handler);
+		return true;
+	}
 }
 
 void release_extra_memory_padding() {
