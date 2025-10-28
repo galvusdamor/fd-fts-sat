@@ -227,7 +227,7 @@ struct SAT_Scheduler{
 		// wake the next call up
 		next_call->run_mutex.release();	
 
-		if (! finished){
+		if (!finished){
 			// let this call sleep
 			// if it is finished, it will exit immediately.
 			current_call->run_mutex.acquire();
@@ -235,7 +235,7 @@ struct SAT_Scheduler{
 
 
 		// if we exceeded our expectation, we need to mark more memory as taken.
-		int current_memory = std::ceil(utils::get_peak_memory_in_kb() / 1024);
+		int current_memory = std::ceil(utils::get_current_memory_in_kb() / 1024);
 		if (current_memory > reserved_memory_in_mb) reserved_memory_in_mb = current_memory;
 
 		//cout << current_call->identifier << "run" << endl;
@@ -307,7 +307,7 @@ struct length_runner {
 
 
 		// get memory usage at start of formula generation
-		int memory_before_formula = utils::get_peak_memory_in_kb();
+		int memory_before_formula = utils::get_current_memory_in_kb();
 	
 		if (call->scheduler->dont_schedule_formula_generation)
 			cout << call->identifier << "formula generation starts with " << std::ceil(memory_before_formula / 1024) << "MB" << endl;
@@ -322,11 +322,12 @@ struct length_runner {
 			if (call->scheduler->dont_schedule_formula_generation){
 				// Formula generation should happen without interruption.
 				// We only pause if creating this formula would use too much memory
-				int current_memory = utils::get_peak_memory_in_kb();
+				int current_memory = utils::get_current_memory_in_kb();
+				cout << call->identifier << "formula generation " << timestep << " at " << std::ceil(current_memory / 1024) << "MB" << endl;
 			
 				bool firstRound = true;
 				// check if we have used too much memory; we add 500 MB of leeway
-				while (current_memory + 500*1024 > call->scheduler->memory_limit_mbs * 1024){
+				while (current_memory + 1000*1024 > call->scheduler->memory_limit_mbs * 1024){
 					if (firstRound)
 						cout << call->identifier << "formula generation paused at " << std::ceil(current_memory / 1024) << "MB" << endl;
 					firstRound = false;
@@ -341,10 +342,13 @@ struct length_runner {
 					}
 
 					if (ignoreMemoryLimit) {
-						current_memory = utils::get_peak_memory_in_kb();
-						cout << call->identifier << " resuming formula generation at " << std::ceil(current_memory / 1024) << "MB" << endl;
 						break; // scheduler told us to keep working despite the memory limit
 					}
+				}
+				if (!firstRound){
+					// resumption message
+					current_memory = utils::get_current_memory_in_kb();
+					cout << call->identifier << " resuming formula generation at " << std::ceil(current_memory / 1024) << "MB" << endl;
 				}
 			} else {
 				// if formula generation takes a long time, we check whether we need to call the scheduler here
@@ -362,7 +366,7 @@ struct length_runner {
 		call->encoding->encodeInit(1);
 		call->encoding->encodeGoal(call->timesteps + 1);
 		
-		int memory_after_formula = utils::get_peak_memory_in_kb();
+		int memory_after_formula = utils::get_current_memory_in_kb();
 		
 		if (call->scheduler->dont_schedule_formula_generation)
 			cout << call->identifier << "formula generation ends with " << std::ceil(memory_after_formula / 1024) << "MB" << endl;
@@ -444,6 +448,7 @@ struct length_runner {
 			// acknowledge the handshake
 			call->scheduler->shutdown_handshake.release();	
 		}
+		cout << call->identifier << "ending thread freeing memory" << endl;
 	}
 };
 
@@ -474,7 +479,7 @@ bool RintanenSATSearch::create_next_length_run(std::shared_ptr<SAT_Scheduler> gl
 		int this_needed_memory = global_scheduler->educated_guess_memory_in_mb * currentLength;
 
 		if (global_scheduler->reserved_memory_in_mb + this_needed_memory > global_scheduler->memory_limit_mbs){
-			int current_memory = utils::get_peak_memory_in_kb();
+			int current_memory = utils::get_current_memory_in_kb();
 			cout << identifier << "not generating due to memory limit. Reserved " << global_scheduler->reserved_memory_in_mb << "MB. Actual " << std::ceil(double(current_memory) / 1024) << "MB" << endl;
 			return false;
 		}
