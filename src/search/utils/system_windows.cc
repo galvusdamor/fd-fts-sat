@@ -40,6 +40,19 @@ int get_peak_memory_in_kb() {
     return pmc.PeakPagefileUsage / 1024;
 }
 
+int get_current_memory_in_kb() {
+    PROCESS_MEMORY_COUNTERS_EX pmc;
+    bool success = GetProcessMemoryInfo(
+        GetCurrentProcess(),
+        reinterpret_cast<PROCESS_MEMORY_COUNTERS *>(&pmc),
+        sizeof(pmc));
+    if (!success) {
+        cerr << "warning: could not determine peak memory" << endl;
+        return -1;
+    }
+    return pmc.PrivateUsage / 1024;
+}
+
 void register_event_handlers() {
     // Terminate when running out of memory.
     set_new_handler(out_of_memory_handler);

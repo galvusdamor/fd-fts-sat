@@ -219,6 +219,43 @@ int get_peak_memory_in_kb() {
     return memory_in_kb;
 }
 
+
+int get_current_memory_in_kb() {
+    // On error, produces a warning on cerr and returns -1.
+    int memory_in_kb = -1;
+
+#if OPERATING_SYSTEM == OSX
+    // Based on http://stackoverflow.com/questions/63166
+    task_basic_info t_info;
+    mach_msg_type_number_t t_info_count = TASK_BASIC_INFO_COUNT;
+
+    if (task_info(mach_task_self(), TASK_BASIC_INFO,
+                  reinterpret_cast<task_info_t>(&t_info),
+                  &t_info_count) == KERN_SUCCESS) {
+        memory_in_kb = t_info.virtual_size / 1024;
+    }
+#else
+    ifstream procfile;
+    procfile.open("/proc/self/status");
+    string word;
+    while (procfile.good()) {
+        procfile >> word;
+        if (word == "VmSize:") {
+            procfile >> memory_in_kb;
+            break;
+        }
+        // Skip to end of line.
+        procfile.ignore(numeric_limits<streamsize>::max(), '\n');
+    }
+    if (procfile.fail())
+        memory_in_kb = -1;
+#endif
+
+    if (memory_in_kb == -1)
+        cerr << "warning: could not determine peak memory" << endl;
+    return memory_in_kb;
+}
+
 void register_event_handlers() {
     // Terminate when running out of memory.
     set_new_handler(out_of_memory_handler);
