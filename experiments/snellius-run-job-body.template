@@ -20,6 +20,10 @@ function execute_run {
     fi
 
     (
+	ulimit -m -v
+	ulimit -Sv 3584000
+	ulimit -Sm 3584000 
+	ulimit -m -v
     "%(python)s" run
     RETCODE=$?
     if [[ $RETCODE != 0 ]]; then
@@ -62,4 +66,5 @@ export -f print_run_dir
 export -f print
 
 # Execute runs in parallel in shuffled order.
-parallel -j $RUNS_PER_TASK cd_and_execute_run ::: $(seq $FIRST_RUN_ID $LAST_RUN_ID | shuf)
+##parallel -j $RUNS_PER_TASK cd_and_execute_run ::: $(seq $FIRST_RUN_ID $LAST_RUN_ID | shuf)
+parallel -j 12 cd_and_execute_run ::: $(seq $FIRST_RUN_ID $LAST_RUN_ID | shuf)
