@@ -21,6 +21,8 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
 		"scheduler_interval","interval for the schedule in seconds", "1");
 	parser.add_option<int> (
 		"memory_limit_mb","memory limit in MBs", "3500");
+	parser.add_option<bool> (
+		"schedule_formula_as_one","schedule the creation of a formula as one item (helps keeping to the memory limit)", "true");
 
 	parser.add_option<bool>(
 		"solver_quiet",

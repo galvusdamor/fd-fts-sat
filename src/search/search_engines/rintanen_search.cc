@@ -62,6 +62,7 @@ std::map<void*, std::shared_ptr<SAT_Call_Data>> sat_solver_to_data;
 struct SAT_Scheduler{
 	const size_t maximum_number_of_parallel_calls;
 	std::chrono::milliseconds schedule_interval;
+	const bool dont_schedule_formula_generation;
 	const int memory_limit_mbs;
 
 	// maps step number to the SAT call instance of that step
@@ -80,9 +81,11 @@ struct SAT_Scheduler{
 	int reserved_memory_in_mb;
 	
 
-	SAT_Scheduler(size_t max_parallel_calls, int scheduler_interval_seconds, int _memory_limit_mbs) :
+	SAT_Scheduler(size_t max_parallel_calls, int scheduler_interval_seconds,
+			bool _dont_schedule_formula_generation, int _memory_limit_mbs) :
 		maximum_number_of_parallel_calls(max_parallel_calls),
 		schedule_interval(scheduler_interval_seconds * 1000),
+		dont_schedule_formula_generation(_dont_schedule_formula_generation),
 		memory_limit_mbs(_memory_limit_mbs),
 		nextStepNumber(0), previousLength(-1), done_mutex(0), shutdown_handshake(0), plannerTerminated(false), planFound(false) {
 		// done_mutex is is initially locked
@@ -109,9 +112,16 @@ struct SAT_Scheduler{
 
 
 	// this function gets called from within a length tread
-	bool runScheduler(void * solver, bool finished, bool foundPlans){
-		// check whether my time has elapsed
-		if (! finished){
+	// return value: if forcePauseForMemory = 1, returns true of thread should continue despite being low in memory, false if thread should suspend
+	//               if forcePauseForMemory = 0, returns true if thread needs to be terminated, false if thread should continue
+	bool runScheduler(void * solver, bool finished, bool foundPlans, bool forcePauseForMemory){
+		if (forcePauseForMemory){
+			if (currentInstances.size() == 1) return true;
+		}
+		
+
+		// check whether my time has elapsed; but ignore if thread has finished or wants to be paused for memory
+		if (! finished && !forcePauseForMemory){
 			auto t_now = std::chrono::system_clock::now();
 			std::chrono::milliseconds elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last_schedule);
 		
@@ -188,7 +198,8 @@ struct SAT_Scheduler{
 		// current step was the largest step
 		if (nextStep == currentInstances.end()){
 			// do we need to generate a next step?
-			if (currentInstances.size() < maximum_number_of_parallel_calls &&
+			// don't try to do this, if the current thread is memory-limited. Then we start with the smaller threads again
+			if (!forcePauseForMemory && currentInstances.size() < maximum_number_of_parallel_calls &&
 					current_call->search->create_next_length_run(current_call->scheduler)){
 				// next call was created, so this is our next call
 				assert(currentInstances.size() >= 1);
@@ -198,12 +209,16 @@ struct SAT_Scheduler{
 				if (currentInstances.size() == 0){
 					// there are no calls left, so terminate
 					terminate_planner(current_call_step);
+					// if we are memory limited, there must be a current instance, i.e., *us*.
+					assert(!forcePauseForMemory);
 					return plannerTerminated;
 				} else {
 					next_call = currentInstances.begin()->second;	
 				}
 			}
 		} else {
+			// if we are memory limited, *we* are the largest step.
+			assert(!forcePauseForMemory);
 			next_call = nextStep->second;
 		}
 
@@ -226,7 +241,10 @@ struct SAT_Scheduler{
 		//cout << current_call->identifier << "run" << endl;
 
 		// HI! We just work up. So we first need to check whether we got terminated!
-		return plannerTerminated || current_call->terminated;
+		if (forcePauseForMemory)
+			return false; // must check memory limit again if work up
+		else
+			return plannerTerminated || current_call->terminated;
 	}
 
 };
@@ -241,7 +259,9 @@ bool rintanen_scheduler_callback(void * solver){
 	// call the actual scheduler -> since we call from within the SAT solver, we are definitely not finished yet!
 	assert(sat_solver_to_data.contains(solver));
 	assert(sat_solver_to_data[solver]->scheduler.get() != nullptr);
-	return sat_solver_to_data[solver]->scheduler->runScheduler(solver, false, false);
+
+	// TODO maybe also pause the solver if it uses too much memory?
+	return sat_solver_to_data[solver]->scheduler->runScheduler(solver, false, false, false);
 }
 
 }
@@ -252,6 +272,7 @@ RintanenSATSearch::RintanenSATSearch(const options::Options &opts): SearchEngine
 	encoding_factory(opts.get<shared_ptr<SATEncodingFactory>>("encoder")),
 	max_parallel_calls(size_t(opts.get<int>("max_parallel_calls"))),
 	scheduler_interval_seconds(opts.get<int>("scheduler_interval")),
+	dont_schedule_formula_generation(opts.get<bool>("schedule_formula_as_one")),
 	memory_limit_mbs(opts.get<int>("memory_limit_mb")),
 	fts(g_main_task),
 	length_strategy(opts.get<shared_ptr<LengthStrategy>>("length_strategy")) {
@@ -283,32 +304,73 @@ struct length_runner {
 			cout << call->identifier << "started" << endl;
 		// try to acquire the mutex. Will cause this thread to wait until it is allowed to run
 		call->run_mutex.acquire();
+
+
+		// get memory usage at start of formula generation
 		int memory_before_formula = utils::get_peak_memory_in_kb();
-		
+	
+		if (call->scheduler->dont_schedule_formula_generation)
+			cout << call->identifier << "formula generation starts with " << std::ceil(memory_before_formula / 1024) << "MB" << endl;
+		///////////////////////////////////////////////////////	
 		// actually create and run the encoding!
 		std::vector<std::pair<int,int>> time_step_order; // for plan extraction
 		// encode all state transitions
 		for(int timestep = 1 ; timestep <= call->timesteps ; timestep++){
 			call->encoding->encode(timestep,timestep+1);
 			time_step_order.push_back({timestep,timestep+1});
+		
+			if (call->scheduler->dont_schedule_formula_generation){
+				// Formula generation should happen without interruption.
+				// We only pause if creating this formula would use too much memory
+				int current_memory = utils::get_peak_memory_in_kb();
 			
-			// if formula generation takes a long time, we check whether we need to call the scheduler here
-			// the first generations need to happen uninterrupted (to measure memory usage)
-			if (call->iterationNr > 0 || call->scheduler->educated_guess_memory_in_mb == -1){
-				if (call->scheduler->runScheduler(call->capsule->solver,false,false)) {
-					ipasir_release(call->capsule->solver);
-					// I will exit immediately, so allow main thread to run again
-					call->scheduler->shutdown_handshake.release();
-					return;
+				bool firstRound = true;
+				// check if we have used too much memory; we add 500 MB of leeway
+				while (current_memory + 500*1024 > call->scheduler->memory_limit_mbs * 1024){
+					if (firstRound)
+						cout << call->identifier << "formula generation paused at " << std::ceil(current_memory / 1024) << "MB" << endl;
+					firstRound = false;
+					// invoke the schedule to notify that we need to be stopped due to memory
+					bool ignoreMemoryLimit = call->scheduler->runScheduler(call->capsule->solver,false,false,true);
+					// it could be that the solution was found while we were waiting to get more memory. Then exit immediately
+					assert(call->terminated == false); // we are the largest call, we cannot be terminated individually
+					if (call->scheduler->plannerTerminated){
+						// acknowledge shutdown handshake and exit immediately afterwards
+						call->scheduler->shutdown_handshake.release();
+						return;
+					}
+
+					if (ignoreMemoryLimit) {
+						current_memory = utils::get_peak_memory_in_kb();
+						cout << call->identifier << " resuming formula generation at " << std::ceil(current_memory / 1024) << "MB" << endl;
+						break; // scheduler told us to keep working despite the memory limit
+					}
+				}
+			} else {
+				// if formula generation takes a long time, we check whether we need to call the scheduler here
+				// the first generations need to happen uninterrupted (to measure memory usage)
+				if (call->iterationNr > 0 || call->scheduler->educated_guess_memory_in_mb == -1){
+					if (call->scheduler->runScheduler(call->capsule->solver,false,false,false)) {
+						ipasir_release(call->capsule->solver);
+						// I will exit immediately, so allow main thread to run again
+						call->scheduler->shutdown_handshake.release();
+						return;
+					}
 				}
 			}
 		}
 		call->encoding->encodeInit(1);
 		call->encoding->encodeGoal(call->timesteps + 1);
-
+		
 		int memory_after_formula = utils::get_peak_memory_in_kb();
+		
+		if (call->scheduler->dont_schedule_formula_generation)
+			cout << call->identifier << "formula generation ends with " << std::ceil(memory_after_formula / 1024) << "MB" << endl;
+
 		int memory_usage = memory_after_formula - memory_before_formula;
-		if (call->scheduler->educated_guess_memory_in_mb == -1 && memory_usage != 0){
+		// never compute expected memory usage if we run formula generation in one block
+		if (call->scheduler->dont_schedule_formula_generation == false &&
+				call->scheduler->educated_guess_memory_in_mb == -1 && memory_usage != 0){
 			int mbs_per_timestep = std::ceil(double(memory_usage) / call->timesteps / 1024) * 3; // safety factor; 1000 is for kb in mb
 			if (!call->scheduler->plannerTerminated && !call->terminated)
 				cout << call->identifier << "estimated memory usage: " << mbs_per_timestep << endl;
@@ -326,7 +388,9 @@ struct length_runner {
 
 		if (!call->scheduler->plannerTerminated && !call->terminated){
 			cout << call->identifier << call->capsule->get_number_of_clauses() << " clauses " << call->capsule->number_of_variables << " variables" << endl;
-			cout << call->identifier << "Currently reserved: " << call->scheduler->reserved_memory_in_mb << " MB. Actual: " <<  std::ceil(double(memory_after_formula) / 1024) << "MB" << endl;
+			if (call->scheduler->dont_schedule_formula_generation == false){
+				cout << call->identifier << "Currently reserved: " << call->scheduler->reserved_memory_in_mb << " MB. Actual: " <<  std::ceil(double(memory_after_formula) / 1024) << "MB" << endl;
+			}
 		}
 
 
@@ -360,7 +424,7 @@ struct length_runner {
 				ipasir_release(call->capsule->solver);
 				
 				// finished and found a plan; we will terminate anyway now, so ignore the return value
-				call->scheduler->runScheduler(call->capsule->solver,true,true);
+				call->scheduler->runScheduler(call->capsule->solver,true,true,false);
 			} else {
 				cout << call->identifier
 						<< "UNSAT"
@@ -370,7 +434,7 @@ struct length_runner {
 				ipasir_release(call->capsule->solver);
 
 				// finished and did not find a plan; we will terminate anyway now, so ignore the return value
-				call->scheduler->runScheduler(call->capsule->solver,true,false);
+				call->scheduler->runScheduler(call->capsule->solver,true,false,false);
 			}
 			// no handshake for shutting down. The current threat is the one that is executed
 		} else {
@@ -467,7 +531,7 @@ SearchStatus RintanenSATSearch::step() {
     utils::Timer step_timer;
 	cout << "Starting Rintanen's algorithms C with SAT solver " << ipasir_signature() << endl;
 
-	std::shared_ptr<SAT_Scheduler> global_scheduler = make_shared<SAT_Scheduler>(max_parallel_calls,scheduler_interval_seconds, memory_limit_mbs);
+	std::shared_ptr<SAT_Scheduler> global_scheduler = make_shared<SAT_Scheduler>(max_parallel_calls,scheduler_interval_seconds, dont_schedule_formula_generation, memory_limit_mbs);
 
 	// create the first length run of the SAT planner and start it!
 	// it will wait immediately as the mutex starts in locked state
