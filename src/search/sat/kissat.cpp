@@ -17,7 +17,7 @@ std::vector<std::vector<int>> formula;
 std::vector<int> curclause;
 int maxVar = -1;
 
-//#undef NDEBUG
+#define NDEBUG
 
 extern "C" {
 
@@ -76,6 +76,7 @@ IPASIR_API void ipasir_release (void * solver){
 IPASIR_API void ipasir_add (void * solver, int lit_or_zero){
 #ifndef NDEBUG
 	curclause.push_back(lit_or_zero);
+	sldfksdlfj
 	if (lit_or_zero > maxVar) maxVar = lit_or_zero;
 #endif
 	if (lit_or_zero == 0){
