@@ -76,8 +76,9 @@ public:
 	~LabelBasedEncoding() override { std::cout << "Deleting encoding instance" << std::endl; };
 
 	void encode(int fromTime, int toTime) override;
-	void encodeInit(int fromTime) override;
-	void encodeGoal(int toTime) override;
+	void encodeInit(int fromTime, bool retractable) override;
+	void encodeGoal(int toTime, bool retractable) override;
+	void encodeStateEquals(int fromTime, int toTime, bool retractable) override;
 	std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> extractSolution(int initTime, std::vector<std::pair<int,int>> time_step_order) override;
 };
 

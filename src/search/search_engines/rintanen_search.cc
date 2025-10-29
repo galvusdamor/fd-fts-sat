@@ -328,7 +328,7 @@ struct length_runner {
 				// Formula generation should happen without interruption.
 				// We only pause if creating this formula would use too much memory
 				int current_memory = utils::get_current_memory_in_kb();
-				cout << call->identifier << "formula generation " << timestep << " at " << std::ceil(current_memory / 1024) << "MB" << endl;
+				//cout << call->identifier << "formula generation " << timestep << " at " << std::ceil(current_memory / 1024) << "MB" << endl;
 			
 				bool firstRound = true;
 				// check if we have used too much memory; we add 500 MB of leeway
@@ -341,8 +341,9 @@ struct length_runner {
 					// it could be that the solution was found while we were waiting to get more memory. Then exit immediately
 					assert(call->terminated == false); // we are the largest call, we cannot be terminated individually
 					if (call->scheduler->plannerTerminated){
+						// no output as this interfere with lab
+						//cout << call->identifier << "ending thread freeing memory" << endl; 
 						// acknowledge shutdown handshake and exit immediately afterwards
-						cout << call->identifier << "ending thread freeing memory" << endl;
 						call->scheduler->shutdown_handshake.release();
 						return;
 					}
@@ -362,16 +363,17 @@ struct length_runner {
 				if (call->iterationNr > 0 || call->scheduler->educated_guess_memory_in_mb == -1){
 					if (call->scheduler->runScheduler(call->capsule->solver,false,false,false)) {
 						ipasir_release(call->capsule->solver);
+						// no output as this interfere with lab
+						//cout << call->identifier << "ending thread freeing memory" << endl;
 						// I will exit immediately, so allow main thread to run again
-						cout << call->identifier << "ending thread freeing memory" << endl;
 						call->scheduler->shutdown_handshake.release();
 						return;
 					}
 				}
 			}
 		}
-		call->encoding->encodeInit(1);
-		call->encoding->encodeGoal(call->timesteps + 1);
+		call->encoding->encodeInit(1,false);
+		call->encoding->encodeGoal(call->timesteps + 1,false);
 		
 		int memory_after_formula = utils::get_current_memory_in_kb();
 		
@@ -455,7 +457,8 @@ struct length_runner {
 			// acknowledge the handshake
 			call->scheduler->shutdown_handshake.release();	
 		}
-		cout << call->identifier << "ending thread freeing memory" << endl;
+		// no output as this interfere with lab
+		//cout << call->identifier << "ending thread freeing memory" << endl;
 	}
 };
 

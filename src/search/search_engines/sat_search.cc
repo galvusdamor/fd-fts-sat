@@ -96,8 +96,8 @@ SearchStatus SATSearch::step() {
 		thisEncoding->encode(timestep,timestep+1);
 		time_step_order.push_back({timestep,timestep+1});
 	}
-	thisEncoding->encodeInit(1);
-	thisEncoding->encodeGoal(currentLength + 1);
+	thisEncoding->encodeInit(1,false);
+	thisEncoding->encodeGoal(currentLength + 1,false);
 
 
 	//DEBUG(capsule->printVariables());

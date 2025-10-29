@@ -24,8 +24,9 @@ public:
 		sat(capsule), fts(_fts), forceAtLeastOneAction(forceAtLeastOneAction) {};
 	virtual ~SATEncoding() = default;
 	virtual void encode(int fromTime, int toTime) = 0;
-	virtual void encodeInit(int fromTime) = 0;
-	virtual void encodeGoal(int toTime) = 0;
+	virtual void encodeInit(int fromTime, bool retractable) = 0;
+	virtual void encodeGoal(int toTime, bool retractable) = 0;
+	virtual void encodeStateEquals(int fromTime, int toTime, bool retractable) = 0;
 	virtual std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> extractSolution(int initTime, std::vector<std::pair<int,int>> time_step_order) = 0;
 };
 
