@@ -402,6 +402,10 @@ def filter_error_string(run,error_string):
             if  len(run["unexplained_errors"]) == 0: del run["unexplained_errors"]
     return run
 
+def filter_exitcode250_unexplained_errors(run):
+    run1 = filter_oom_string(run, "exitcode-250")
+    return run1
+
 def filter_kissat_known_unexplained_errors(run):
     run1 = filter_oom_string(run, "kissat: fatal error: out-of-memory")
     return run1
