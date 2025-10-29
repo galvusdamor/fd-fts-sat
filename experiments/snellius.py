@@ -7,15 +7,15 @@ from pathlib import Path
 
 class SnelliusEnvironment(SlurmEnvironment):
 
-    DEFAULT_MEMORY_PER_CPU="1700M"
+    DEFAULT_MEMORY_PER_CPU="3500M"
     MAX_TASKS=1000
-    PARALLEL_RUNS_PER_TASK=24
+    PARALLEL_RUNS_PER_TASK=12
     DEFAULT_QOS = "normal"
     DEFAULT_PARTITION = "genoa"
 
     RUN_JOB_BODY_TEMPLATE_FILE="../../../../../../snellius-run-job-body"
     JOB_HEADER_TEMPLATE_FILE="../../../../../../snellius-run-job-header"
-    DEFAULT_TIME_LIMIT_PER_TASK="00:40:00"
+    DEFAULT_TIME_LIMIT_PER_TASK="00:35:00"
 
     #def run_steps(self, steps):
     #    print("Hello This is Snellius")
