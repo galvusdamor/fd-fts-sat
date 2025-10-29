@@ -16,12 +16,6 @@ class Feature;
 namespace sat_search{
 
 class LengthStrategy;
-enum encoding_type {
-	SEQUENTIAL,
-	SELF_LOOP_PARALLEL,
-	CHAINS_PARALLEL
-};
-
 
 class SATSearch : public SearchEngine {
 	const int stepTimeLimit;
