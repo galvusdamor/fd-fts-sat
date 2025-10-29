@@ -100,11 +100,14 @@ struct SAT_Scheduler{
 		plannerTerminated = true; // planner will terminate		
 		// wake up any running instance, they will terminate immediately
 		for (auto& [_nr, instance]: currentInstances){
+			cout << "Instance Nr " << _nr << endl;
 			if (_nr == currentNr) continue;
-
+			
+			cout << "Release and waiting for handshake" << _nr << endl;
 			instance->run_mutex.release();
 			// wait until that instance has released us
 			shutdown_handshake.acquire();
+			cout << "Handshake" << _nr << endl;
 		}
 		// allow the main algorithm to run -- as we now know that all threads (except the one we were in) have shut down.
 		done_mutex.release();
@@ -250,7 +253,6 @@ struct SAT_Scheduler{
 };
 
 
-
 // Call-back function to reach the scheduler. Thus must be a pure C function, as it is executed by the SAT solver.
 // Functions passed to the SAT solver need to be pure C functions.
 extern "C" {
@@ -261,7 +263,10 @@ bool rintanen_scheduler_callback(void * solver){
 	assert(sat_solver_to_data[solver]->scheduler.get() != nullptr);
 
 	// TODO maybe also pause the solver if it uses too much memory?
-	return sat_solver_to_data[solver]->scheduler->runScheduler(solver, false, false, false);
+	bool return_value = sat_solver_to_data[solver]->scheduler->runScheduler(solver, false, false, false);
+	if (return_value)
+		cout << "Terminating kissat" << endl;
+	return return_value;
 }
 
 }
@@ -337,6 +342,7 @@ struct length_runner {
 					assert(call->terminated == false); // we are the largest call, we cannot be terminated individually
 					if (call->scheduler->plannerTerminated){
 						// acknowledge shutdown handshake and exit immediately afterwards
+						cout << call->identifier << "ending thread freeing memory" << endl;
 						call->scheduler->shutdown_handshake.release();
 						return;
 					}
@@ -357,6 +363,7 @@ struct length_runner {
 					if (call->scheduler->runScheduler(call->capsule->solver,false,false,false)) {
 						ipasir_release(call->capsule->solver);
 						// I will exit immediately, so allow main thread to run again
+						cout << call->identifier << "ending thread freeing memory" << endl;
 						call->scheduler->shutdown_handshake.release();
 						return;
 					}
