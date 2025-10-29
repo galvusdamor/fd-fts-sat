@@ -27,6 +27,7 @@ class LabelBasedEncoding : public SATEncoding {
 	bool useEmptyRows;
 	bool useEmptyCols;
 	bool useEmptyPillars;
+	bool useOnesInLastDimension;
 	bool usePositiveOneForEmpty;
 	encoding_type encoding;
 
@@ -65,6 +66,7 @@ public:
 		bool _useEmptyRows,
 		bool _useEmptyCols,
 		bool _useEmptyPillars,
+		bool _useOnesInLastDimension,
 		bool _usePositiveOneForEmpty,
 		bool _forceAtLeastOneAction,
 		const encoding_type & _encoding,
@@ -86,6 +88,7 @@ class LabelBasedEncodingFactory : public SATEncodingFactory {
 	const bool useEmptyRows;
 	const bool useEmptyCols;
 	const bool useEmptyPillars;
+	const bool useOnesInLastDimension;
 	const bool usePositiveOneForEmpty;
 	const encoding_type encoding;
 	bool statisticsPrinted;

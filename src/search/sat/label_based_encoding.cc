@@ -30,6 +30,7 @@ LabelBasedEncodingFactory::LabelBasedEncodingFactory(const options::Options &opt
 	useEmptyRows(opts.get<bool>("use_empty_rows")),
 	useEmptyCols(opts.get<bool>("use_empty_cols")),
 	useEmptyPillars(opts.get<bool>("use_empty_pillars")),
+	useOnesInLastDimension(opts.get<bool>("use_ones_in_last_dimension")),
 	usePositiveOneForEmpty(opts.get<bool>("use_positive_one")),
 	encoding(encoding_type(opts.get_enum("encoding")))
 	 {
@@ -83,6 +84,11 @@ static shared_ptr<SATEncodingFactory> _parse_label_based_sat_factory(options::Op
     	"false");
 
 	parser.add_option<bool>(
+    	"use_ones_in_last_dimension",
+    	"if in the last dimension implication (source + label -> target), there is only one possible target use the positive edge for encoding instead of the negative edge",
+    	"true");
+
+	parser.add_option<bool>(
     	"use_positive_one",
     	"when encoding empty row/col/pillars, use special encoding if there is only one 1 (then positive encoding instead of negative)",
     	"false");
@@ -112,6 +118,7 @@ LabelBasedEncoding::LabelBasedEncoding(
 	bool _useEmptyRows,
 	bool _useEmptyCols,
 	bool _useEmptyPillars,
+	bool _useOnesInLastDimension,
 	bool _usePositiveOneForEmpty,
 	bool forceAtLeastOneAction,
 	const encoding_type & _encoding,
@@ -122,6 +129,7 @@ LabelBasedEncoding::LabelBasedEncoding(
 	useEmptyRows(_useEmptyRows),
 	useEmptyCols(_useEmptyCols),
 	useEmptyPillars(_useEmptyPillars),
+	useOnesInLastDimension(_useOnesInLastDimension),
 	usePositiveOneForEmpty(_usePositiveOneForEmpty),
 	encoding(_encoding),
 	fts(_fts),
@@ -147,7 +155,7 @@ unique_ptr<SATEncoding> LabelBasedEncodingFactory::createEncodingInstance(std::s
 	bool oldStatisticsPrinted = statisticsPrinted;
 	statisticsPrinted = true;
 	return make_unique<LabelBasedEncoding>(capsule,fts,oldStatisticsPrinted,useLabelGroups,useSelfloopOptimisation,
-			useEmptyRows,useEmptyCols,useEmptyPillars,usePositiveOneForEmpty,forceAtLeastOneAction,encoding,
+			useEmptyRows,useEmptyCols,useEmptyPillars,useOnesInLastDimension,usePositiveOneForEmpty,forceAtLeastOneAction,encoding,
 			fts_matrices);
 }
 
@@ -553,7 +561,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 
 				// decision: if label+source can yield only one state encode positively
 				// TODO: maybe also do this if there is more than one possible target, but few compared to the non-possible targets
-				if(false && fts_matrix->get_targets_for_source_and_label(lg,src).size() == 1) {
+				if(useOnesInLastDimension && fts_matrix->get_targets_for_source_and_label(lg,src).size() == 1) {
 					int target = *fts_matrix->get_targets_for_source_and_label(lg,src).begin();
 
 					// for this label group, all other targets are impossible	
