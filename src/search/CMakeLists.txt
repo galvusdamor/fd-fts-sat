@@ -1,7 +1,11 @@
 cmake_minimum_required(VERSION 2.8.3...3.13)
 
-option(USE_KISSAT "Compile with the kissat SAT solver" OFF)
-message("Link dir: ${SAT_DIR}")
+option(USE_KISSAT "Compile with the kissat SAT solver")
+option(USE_CUSTOM_KISSAT "Compile with custom modifications to the kissat SAT solver")
+message("OPTION K: ${USE_KISSAT}")
+message("OPTION C: ${USE_CUSTOM_KISSAT}")
+message("Link SAT dir: ${SAT_DIR}")
+message("Link SAT lib: ${SAT_LIB}")
 link_directories(${SAT_DIR})
 option(USE_SAT "Compile with support for SAT solvers. Building is only possible against a single SAT solver" TRUE)
 
@@ -84,7 +88,7 @@ if (USE_SAT)
         if (USE_KISSAT)
                 message("Build against kissat")
                 target_sources(downward PRIVATE sat/kissat.h sat/kissat.cpp)
-				target_link_libraries(downward PUBLIC kissat)
+				target_link_libraries(downward PUBLIC ${SAT_LIB})
         else (USE_KISSAT)
                 message("Build against regular ipasir solver")
                 target_link_libraries(sat_search INTERFACE ipasircryptominisat5)
@@ -92,6 +96,14 @@ if (USE_SAT)
                 target_link_libraries(sat_search INTERFACE cadiback)
                 target_link_libraries(sat_search INTERFACE cadical)
         endif()
+		if (USE_CUSTOM_KISSAT)
+			message("Do not add dummy implementation of missing custom kissat function")
+			## nothing to do
+		else (USE_CUSTOM_KISSAT)
+			## we need to provide dummy implementations of the custom functions so that downward compiles
+			message("Add dummy implementation of missing custom kissat function")
+			target_sources(downward PRIVATE sat/kissat_dummy.cc)
+		endif ()
 endif()
 
 
