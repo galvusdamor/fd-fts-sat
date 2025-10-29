@@ -84,7 +84,6 @@ SearchStatus IncrementalSATSearch::step() {
 		newStepsBeforeGoal = 0;
 		newStepsAfterInit = 0;
 
-		cout << currentGenerated << " " << stepsToGenerate << endl;
 		// if current length is odd, we add the first step before the goal (as the last one would be added after init)
 		if (currentGenerated % 2 == 1){
 			newStepsBeforeGoal++;
