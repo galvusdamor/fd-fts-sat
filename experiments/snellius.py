@@ -72,7 +72,7 @@ class SnelliusEnvironment(SlurmEnvironment):
             print(f"Step {step}")
             job_name = self._get_job_name(step)
             job_file = self.job_dir / job_name
-            job_content = self._get_job(step, is_last=(step == steps[-1]))
+            job_content = self._get_job(step, is_last=(step == steps[-1])).replace("PARALLEL_RUNS_PER_TASK",PARALLEL_RUNS_PER_TASK)
             print(f"File {job_file}")
             tools.write_file(job_file, job_content)
             prev_job_id = self._submit_job(job_file, dependency=prev_job_id)
