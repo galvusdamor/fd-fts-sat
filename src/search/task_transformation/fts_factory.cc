@@ -259,7 +259,7 @@ void FTSFactory::build_transitions() {
                              << effect.var << " value: " << effect.conditions[0].val << endl;
                         utils::exit_with(utils::ExitCode::UNSUPPORTED);
                     }
-                    cout << "Encoding factored conditional effect" << op.get_name() << endl;
+                    //cout << "Encoding factored conditional effect" << op.get_name() << endl;
                     auto & values = factored_variables[effect.var];
                     if (values.empty()) {
                         for (int val = 0; val < sas_task.get_variable_domain_size(effect.var); ++val) {
