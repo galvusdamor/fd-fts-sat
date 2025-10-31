@@ -27,6 +27,7 @@ from snellius import SnelliusEnvironment
 DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
 BENCHMARKS_DIR = os.environ["DOWNWARD_BENCHMARKS"]
+BENCHMARKS_FTS_DIR = os.environ["FTS_BENCHMARKS"]
 REVISION = "c7214d568159a77e1f0222d0d1785074770edc38"
 REVISIONS = [REVISION]
 
@@ -65,7 +66,7 @@ for s_name, s_opt in searches.items():
             CONFIGS.append(IssueConfig(f'{s_name}{t_name}', t_opt + ['--search',  f'{s_opt}'], driver_options=DRIVER_OPTS, build_options=["-j16", "-s/gpfs/home2/behnkeg/software/kissat-p/build", "--kissat"]))
 
 
-SUITE = common_setup.DEFAULT_SATISFICING_SUITE
+SUITE = common_setup.FTS_SUITE
 
 
 #ENVIRONMENT = LocalEnvironment(processes=1)
@@ -79,7 +80,7 @@ exp = IssueExperiment(
     environment=ENVIRONMENT,
 )
 
-exp.add_suite(BENCHMARKS_DIR, SUITE)
+exp.add_suite(BENCHMARKS_FTS_DIR, SUITE)
 
 
 exp.add_parser(exp.EXITCODE_PARSER)
