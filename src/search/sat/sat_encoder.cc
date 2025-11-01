@@ -84,6 +84,16 @@ void sat_capsule::impliesAnd(int i, const std::vector<int> & j){
 	}
 }
 
+void sat_capsule::impliesAndNot(int i, const std::vector<int> & j){
+	for (const int & x : j){
+		assert(x);
+		ipasir_add(solver,-i);
+		ipasir_add(solver,-x);
+		ipasir_add(solver,0);
+		number_of_clauses++;
+	}
+}
+
 void sat_capsule::impliesNot(int i, int j){
 	assert(i != 0);
 	assert(j != 0);
