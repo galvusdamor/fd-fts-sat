@@ -25,13 +25,44 @@ IncrementalSATSearch::IncrementalSATSearch(const options::Options &opts): Search
 	encoding_factory(opts.get<shared_ptr<SATEncodingFactory>>("encoder")),
 	inc_strategy(incremental_strategy(opts.get_enum("strategy"))),
 	fts(g_main_task),
-	stepNumber(0), currentLength (length_strategy->get_first_length()) {
+	stepNumber(0), currentLength (length_strategy->get_first_length()),
+   	trivially_unsolvable(false)	{
 
 	kissat_quietMode = opts.get<bool>("solver_quiet");
 
 }
 
 void IncrementalSATSearch::initialize() {
+
+	// check if task is trivially unsolvable
+	set<int> applicableLables;
+	for(int l = 0 ; l < fts->get_num_labels() ; l++) applicableLables.insert(l);
+
+	for(int ts = 0 ; ts < fts->get_size() ; ts++){
+		const TransitionSystem & tss = fts->get_ts(ts);
+		int init = tss.get_init_state();
+
+		for(int l = 0 ; l < fts->get_num_labels() ; l++) {
+			auto transitions = tss.get_transitions_with_label(l);
+			bool appli = false;
+			for(Transition t : transitions){
+				if (t.src == init){
+					appli = true;
+					break;
+				}
+			}
+
+			if (!appli) applicableLables.erase(l); 
+		}
+	}
+
+
+	if (applicableLables.size() == 0){
+		trivially_unsolvable = true;
+	}
+
+
+
 	utils::Timer sat_init_timer;
 	cout << "Initialising with " << ipasir_signature() << endl;
 	cout << "My FTS task has " << fts->get_size() << " systems and " << fts->get_num_labels() << " labels." << endl;
@@ -66,6 +97,7 @@ void IncrementalSATSearch::initialize() {
 
 
 SearchStatus IncrementalSATSearch::step() {
+	if (trivially_unsolvable) return SOLVED;
     utils::Timer step_timer;
 
 	// how many time-steps are missing?
