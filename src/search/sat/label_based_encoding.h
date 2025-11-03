@@ -72,8 +72,7 @@ public:
 		const encoding_type & _encoding,
 		const std::vector<std::shared_ptr<FTSMatrix>> & fts_matrices
 			);
-	//~LabelBasedEncoding() override = default;
-	~LabelBasedEncoding() override { std::cout << "Deleting encoding instance" << std::endl; };
+	~LabelBasedEncoding() override = default;
 
 	void encode(int fromTime, int toTime) override;
 	void encodeInit(int fromTime, bool retractable) override;
