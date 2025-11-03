@@ -29,12 +29,13 @@ class LabelBasedEncoding : public SATEncoding {
 	bool useEmptyPillars;
 	bool useOnesInLastDimension;
 	bool usePositiveOneForEmpty;
+	size_t oneEncodingThreshold;
+	int oneEncodingThresholdPercent;
 	encoding_type encoding;
 
 	std::shared_ptr<task_representation::FTSTask> fts;
 	std::vector<std::shared_ptr<FTSMatrix>> fts_matrices;
 
-	size_t oneEncodingThreshold = 1;
 protected:
 	//// persistent data structures
 	std::map<int,std::vector<std::vector<int>>> allTimesStateVars;
@@ -52,9 +53,10 @@ protected:
 	void encode_chains_parallel(const std::vector<int> & labelVars, const std::vector<std::vector<int>> & nextStateVars);
 
 	/// encoding function for the main transition relation
-	void encode_transition(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<std::vector<int>>> &labelGroupVars, const std::vector<std::vector<int>> & nextStateVars);
-	void encode_frame_axioms(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<std::vector<int>>> &labelGroupVars, const std::vector<std::vector<int>> & nextStateVars);
+	void encode_transition(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<std::vector<int>>> &labelGroupVars, const int someLabelExecutedVar, const std::vector<std::vector<int>> & nextStateVars);
+	int encode_frame_axioms(const std::vector<std::vector<int>> & previousStateVars, const std::vector<int> &labelVars, const std::vector<std::vector<int>> & nextStateVars);
 
+	bool is_below_threshold(int ts, size_t ones_to_consider);
 
 public:
     explicit LabelBasedEncoding(
@@ -69,6 +71,8 @@ public:
 		bool _useOnesInLastDimension,
 		bool _usePositiveOneForEmpty,
 		bool _forceAtLeastOneAction,
+		const size_t _oneEncodingThreshold,
+		const int _oneEncodingThresholdPercent,
 		const encoding_type & _encoding,
 		const std::vector<std::shared_ptr<FTSMatrix>> & fts_matrices
 			);
@@ -90,6 +94,8 @@ class LabelBasedEncodingFactory : public SATEncodingFactory {
 	const bool useEmptyPillars;
 	const bool useOnesInLastDimension;
 	const bool usePositiveOneForEmpty;
+	const size_t oneEncodingThreshold;
+	const int oneEncodingThresholdPercent;
 	const encoding_type encoding;
 	bool statisticsPrinted;
 	
