@@ -335,7 +335,6 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 		const int numLabelGroups = fts_matrix->get_num_label_groups();
 		const int numStates = fts->get_ts(ts).get_size();
 
-		int executedTransitionIsSelfLoop = 0; // for later use
 		int executedNonSelfLoopLabel = 0; // for later use
 
 		// 1. Step: if desired, handle self-loops separately	
@@ -371,7 +370,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					labelGroupsWithActualTransitions.push_back(var);
 			}
 			// frame axioms for self-loops. If no label with an actual transition was executed, enforce frame axiom
-			executedTransitionIsSelfLoop = sat->new_variable();
+			int executedTransitionIsSelfLoop = sat->new_variable();
 			DEBUG(sat->registerVariable(executedTransitionIsSelfLoop,"executedTransitionIsSelfLoop@" + to_string(ts)));
 			sat->impliesOr(-executedTransitionIsSelfLoop, labelGroupsWithActualTransitions);
 			// if we are in sequential encoding *and*
@@ -392,6 +391,8 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 				DEBUG(sat->registerVariable(executedNonSelfLoopLabel,"executedNonSelfLoopLabel@" + to_string(ts)));
 				sat->impliesOr(executedNonSelfLoopLabel,labelGroupsWithActualTransitions);
 				sat->orImplies(labelGroupsWithActualTransitions,executedNonSelfLoopLabel);
+				// connection between vars (might help SAT solver)
+				sat->implies(-executedTransitionIsSelfLoop, executedNonSelfLoopLabel);
 			}
 		} else {
 			// if we don't optimise self-loops, we did execute a "non-self-loop" label, if we executed some label
