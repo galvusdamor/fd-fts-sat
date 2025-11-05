@@ -337,7 +337,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 
 		int executedNonSelfLoopLabel = 0; // for later use
 
-		// 1. Step: if desired, handle self-loops separately	
+		// 1. Step: if desired, handle self-loops separately
 		if(useSelfloopOptimisation) {
 			vector<int> labelGroupsWithActualTransitions;
 			
@@ -573,9 +573,10 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						for (int target : fts_matrix->get_possible_targets_for_source(src))
 							allOnes.push_back(nextStateVars[ts][target]);
 
-						// if there is no self-loop we can also stay in the state by not executing any action
+						// If there is no self-loop we can also stay in the state by not executing any action
+						// The fact that we have to stay in the same state is encoded by other means: either frame axioms or self-loop
 						if (self_loop_deduction == 0 && forceAtLeastOneAction == false)
-							allOnes.push_back(someLabelExecutedVar);
+							allOnes.push_back(executedNoActualTransition);
 
 						sat->impliesOr(previousStateVars[ts][src], allOnes);
 						cnt_1_source_target++;
@@ -593,9 +594,10 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						for (int src : fts_matrix->get_possible_sources_for_target(target))
 							allOnes.push_back(previousStateVars[ts][src]);
 						
-						// if there is no self-loop we can also stay in the state by not executing any action
+						// If there is no self-loop we can also stay in the state by not executing any action
+						// The fact that we have to stay in the same state is encoded by other means: either frame axioms or self-loop
 						if (self_loop_deduction == 0 && forceAtLeastOneAction == false)
-							allOnes.push_back(someLabelExecutedVar);
+							allOnes.push_back(executedNoActualTransition);
 
 						sat->impliesOr(nextStateVars[ts][target], allOnes);
 						cnt_1_target_source++;
