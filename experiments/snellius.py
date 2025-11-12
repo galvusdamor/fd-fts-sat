@@ -15,7 +15,7 @@ class SnelliusEnvironment(SlurmEnvironment):
 
     RUN_JOB_BODY_TEMPLATE_FILE="../../../../../../snellius-run-job-body"
     JOB_HEADER_TEMPLATE_FILE="../../../../../../snellius-run-job-header"
-    DEFAULT_TIME_LIMIT_PER_TASK="00:35:00"
+    DEFAULT_TIME_LIMIT_PER_TASK="05:00:00"
 
     #def run_steps(self, steps):
     #    print("Hello This is Snellius")
@@ -72,7 +72,7 @@ class SnelliusEnvironment(SlurmEnvironment):
             print(f"Step {step}")
             job_name = self._get_job_name(step)
             job_file = self.job_dir / job_name
-            job_content = self._get_job(step, is_last=(step == steps[-1])).replace("PARALLEL_RUNS_PER_TASK",PARALLEL_RUNS_PER_TASK)
+            job_content = self._get_job(step, is_last=(step == steps[-1])).replace("PARALLEL_RUNS_PER_TASK",str(self.PARALLEL_RUNS_PER_TASK))
             print(f"File {job_file}")
             tools.write_file(job_file, job_content)
             prev_job_id = self._submit_job(job_file, dependency=prev_job_id)

@@ -27,43 +27,43 @@ from snellius import SnelliusEnvironment
 DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
 BENCHMARKS_DIR = os.environ["DOWNWARD_BENCHMARKS"]
-BENCHMARKS_FTS_DIR = os.environ["FTS_BENCHMARKS"]
-REVISION = "c7214d568159a77e1f0222d0d1785074770edc38"
+REVISION = "a938b5d2d5697b3c17c045512fe56824101e2b6c"
 REVISIONS = [REVISION]
 
 CONFIGS = []
 
 encodings = {
 		"chains_slf_lg_rcpol": "label_sat(encoding=CHAINS_PARALLEL,use_self_loop_optimisation=true,use_label_group=true,use_empty_pillars=true,use_empty_rows=true,use_empty_cols=true,use_positive_one=true,use_ones_in_last_dimension=true,force_at_least_one_action=FORCE)",
+		"chains_slf_lg_rcp_l": "label_sat(encoding=CHAINS_PARALLEL,use_self_loop_optimisation=true,use_label_group=true,use_empty_pillars=true,use_empty_rows=true,use_empty_cols=true,use_positive_one=false,use_ones_in_last_dimension=true,force_at_least_one_action=FORCE)",
 		"chains_slf_lg_____l": "label_sat(encoding=CHAINS_PARALLEL,use_self_loop_optimisation=true,use_label_group=true,use_empty_pillars=false,use_empty_rows=false,use_empty_cols=false,use_positive_one=false,use_ones_in_last_dimension=true,force_at_least_one_action=FORCE)",
-		#"chains_slf_lg_rcp_l": "label_sat(encoding=CHAINS_PARALLEL,use_self_loop_optimisation=true,use_label_group=true,use_empty_pillars=true,use_empty_rows=true,use_empty_cols=true,use_positive_one=false,use_ones_in_last_dimension=true,force_at_least_one_action=FORCE)",
-		##"seq_slf_lg_rcpo": "label_sat(encoding=SEQUENTIAL,use_self_loop_optimisation=true,use_label_group=true,use_empty_pillars=true,use_empty_rows=true,use_empty_cols=true,force_at_least_one_action=true)",
+		"seq____slf_lg_rcpol": "label_sat(encoding=SEQUENTIAL,use_self_loop_optimisation=true,use_label_group=true,use_empty_pillars=true,use_empty_rows=true,use_empty_cols=true,use_positive_one=true,use_ones_in_last_dimension=true,force_at_least_one_action=FORCE)",
+		"slflpp_slf_lg_rcpol": "label_sat(encoding=SELF_LOOP_PARALLEL,use_self_loop_optimisation=true,use_label_group=true,use_empty_pillars=true,use_empty_rows=true,use_empty_cols=true,use_positive_one=true,use_ones_in_last_dimension=true,force_at_least_one_action=FORCE)",
         }
 
-searches = {
-        ("A1--" + name): ("sat(encoder=" + encodings[name].replace("FORCE","true") +
-            ", solver_quiet=true,continue_after_first_plan=false,length_strategy=one_by_one())") for name in encodings
-        } | {
-        #("A-it" + name): ("sat(encoder=" + encodings[name].replace("FORCE","false") +
-        #    ", solver_quiet=true,continue_after_first_plan=false,length_strategy=by_iteration())") for name in encodings
-        #} | {
-        ("CMit" + name) : ("rintanen(encoder=" + encodings[name].replace("FORCE","false") +
-            ", solver_quiet=true,length_strategy=by_iteration(),memory_limit_mb=3500,max_parallel_calls=20,scheduler_interval=1,schedule_formula_as_one=true)") for name in encodings
-}
+searches = sum([
+        [
+            (("A_1__" + name),("sat(encoder=" + encodings[name].replace("FORCE","true") + ",solver_quiet=true,length_strategy=one_by_one())")),
+            #(("A_it_" + name), ("sat(encoder=" + encodings[name].replace("FORCE","false") + ",solver_quiet=true,continue_after_first_plan=false,length_strategy=by_iteration())")),
+            (("CMit_" + name), ("rintanen(encoder=" + encodings[name].replace("FORCE","false") + ",solver_quiet=true,length_strategy=by_iteration(),memory_limit_mb=3500,max_parallel_calls=20,scheduler_interval=1,schedule_formula_as_one=true)"))]
+            for name in encodings
+        ],[]) + [
+        ("ff",'lazy_greedy([ff(cost_type=one)], cost_type=one)')]
+
 
 DRIVER_OPTS = ["--overall-time-limit", "30m", "--overall-memory-limit", "3500m"]
 TRANSFORM_OPTS = {
-        "-ntr" : ["--transform", "cost(cost_type=one)"],
+        #"-ntr" : ["--transform", "cost(cost_type=one)"],
         "-shr" : ["--transform", "transform_merge_and_shrink(shrink_strategy=shrink_weak_bisimulation(ignore_irrelevant_tau_groups=false),label_reduction=exact(max_time=300,atomic_fts=true,before_shrinking=true,before_merging=false),shrink_atomic_fts=true,run_main_loop=false,max_time=900,cost_type=one,prune_transitions_from_goal=true,prune_transitions_from_goal=true)"],
 #        "-mrg" : ["--transform", "transform_merge_and_shrink(shrink_strategy=shrink_bisimulation(greedy=false),merge_strategy=merge_stateless(merge_selector=score_based_filtering(scoring_functions=[product_size(1000),sf_miasm(shrink_strategy=shrink_bisimulation(greedy=false),max_states=100,threshold_before_merge=1),total_order(atomic_ts_order=reverse_level,product_ts_order=new_to_old,atomic_before_product=false)])),label_reduction=exact(max_time=300,atomic_fts=true,before_shrinking=true,before_merging=false),shrink_atomic_fts=true,run_main_loop=true,max_time=900)"],
         }
 
-for s_name, s_opt in searches.items():
+for s_name, s_opt in searches:
+    print("Search: " + s_name)
     for t_name, t_opt in TRANSFORM_OPTS.items():
-        CONFIGS.append(IssueConfig(f'{s_name}{t_name}', t_opt + ['--search',  f'{s_opt}'], driver_options=DRIVER_OPTS, build_options=["-j16", "-s/gpfs/home2/behnkeg/software/kissat-p/build", "--kissat"]))
+        CONFIGS.append(IssueConfig(f'{s_name}{t_name}', t_opt + ['--search',  f'{s_opt}'], driver_options=DRIVER_OPTS, build_options=["-j24", "-s/gpfs/home2/behnkeg/software/kissat-p/build", "--custom-kissat"]))
 
 
-SUITE = common_setup.FTS_SUITE
+SUITE = common_setup.DEFAULT_SATISFICING_SUITE
 
 
 #ENVIRONMENT = LocalEnvironment(processes=1)
@@ -77,7 +77,7 @@ exp = IssueExperiment(
     environment=ENVIRONMENT,
 )
 
-exp.add_suite(BENCHMARKS_FTS_DIR, SUITE)
+exp.add_suite(BENCHMARKS_DIR, SUITE)
 
 
 exp.add_parser(exp.EXITCODE_PARSER)
@@ -94,10 +94,7 @@ exp.add_parser(fts_parser.FTSParser())
 exp.add_fetcher(name='fetch', filter=[filters.remove_revision])
 
 
-
-
 tofetch = [
-        ("2025-10-22-fts-benchmarks-three-tests", ["chains_slf_lg_rcp-onlyshrink","loopparallel_slf_lg_rcp-onlyshrink","seq_slf_lg_rcp-onlyshrink","seq_---_--_----onlyshrink"]),
         #("2025-06-13-second-debugging-run", ["ff-pure"]),
         #("2025-06-18-thrid-debugging-run", ["ff-trans"]),
         #("2025-10-23-row-col-pillar-ones", ["seq_---_--_----shr", "chains_slf_lg_rcp_-shr",

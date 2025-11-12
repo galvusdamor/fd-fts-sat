@@ -24,7 +24,7 @@ function execute_run {
 	ulimit -Sv 3584000
 	ulimit -Sm 3584000 
 	ulimit -m -v
-    "%(python)s" run
+    timeout 35m "%(python)s" run
     RETCODE=$?
     if [[ $RETCODE != 0 ]]; then
         >&2 echo "The run script finished with exit code $RETCODE"

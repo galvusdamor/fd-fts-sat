@@ -28,12 +28,16 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
 BENCHMARKS_DIR = os.environ["DOWNWARD_BENCHMARKS"]
 BENCHMARKS_FTS_DIR = os.environ["FTS_BENCHMARKS"]
-REVISION = "c7214d568159a77e1f0222d0d1785074770edc38"
+REVISION = "f408a8794844738e30aa888c2a4af9c15672675c"
 REVISIONS = [REVISION]
 
 CONFIGS = []
 
 encodings = {
+		"loop_slf_lg_rcpol": "label_sat(encoding=SELF_LOOP_PARALLEL,use_self_loop_optimisation=true,use_label_group=true,use_empty_pillars=true,use_empty_rows=true,use_empty_cols=true,use_positive_one=true,use_ones_in_last_dimension=true,force_at_least_one_action=FORCE)",
+		"loop_slf_lg_____l": "label_sat(encoding=SELF_LOOP_PARALLEL,use_self_loop_optimisation=true,use_label_group=true,use_empty_pillars=false,use_empty_rows=false,use_empty_cols=false,use_positive_one=false,use_ones_in_last_dimension=true,force_at_least_one_action=FORCE)",
+		"seq_slf_lg_rcpol": "label_sat(encoding=SEQUENTIAL,use_self_loop_optimisation=true,use_label_group=true,use_empty_pillars=true,use_empty_rows=true,use_empty_cols=true,use_positive_one=true,use_ones_in_last_dimension=true,force_at_least_one_action=FORCE)",
+		"seq_slf_lg_____l": "label_sat(encoding=SEQUENTIAL,use_self_loop_optimisation=true,use_label_group=true,use_empty_pillars=false,use_empty_rows=false,use_empty_cols=false,use_positive_one=false,use_ones_in_last_dimension=true,force_at_least_one_action=FORCE)",
 		"chains_slf_lg_rcpol": "label_sat(encoding=CHAINS_PARALLEL,use_self_loop_optimisation=true,use_label_group=true,use_empty_pillars=true,use_empty_rows=true,use_empty_cols=true,use_positive_one=true,use_ones_in_last_dimension=true,force_at_least_one_action=FORCE)",
 		"chains_slf_lg_____l": "label_sat(encoding=CHAINS_PARALLEL,use_self_loop_optimisation=true,use_label_group=true,use_empty_pillars=false,use_empty_rows=false,use_empty_cols=false,use_positive_one=false,use_ones_in_last_dimension=true,force_at_least_one_action=FORCE)",
 		#"chains_slf_lg_rcp_l": "label_sat(encoding=CHAINS_PARALLEL,use_self_loop_optimisation=true,use_label_group=true,use_empty_pillars=true,use_empty_rows=true,use_empty_cols=true,use_positive_one=false,use_ones_in_last_dimension=true,force_at_least_one_action=FORCE)",
@@ -60,7 +64,7 @@ TRANSFORM_OPTS = {
 
 for s_name, s_opt in searches.items():
     for t_name, t_opt in TRANSFORM_OPTS.items():
-        CONFIGS.append(IssueConfig(f'{s_name}{t_name}', t_opt + ['--search',  f'{s_opt}'], driver_options=DRIVER_OPTS, build_options=["-j16", "-s/gpfs/home2/behnkeg/software/kissat-p/build", "--kissat"]))
+        CONFIGS.append(IssueConfig(f'{s_name}{t_name}', t_opt + ['--search',  f'{s_opt}'], driver_options=DRIVER_OPTS, build_options=["-j24", "-s/gpfs/home2/behnkeg/software/kissat-p/build", "--kissat"]))
 
 
 SUITE = common_setup.FTS_SUITE
