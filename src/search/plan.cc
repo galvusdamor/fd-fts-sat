@@ -53,16 +53,32 @@ void Plan::set_plan_operators(const std::vector<GlobalState> & states_,
 //    }
 }
 
-
+void Plan::remove_redundant_actions() {
+    for (size_t i = 0; i < labels.size(); ++i) {
+        if (states[i] == states[i+1]) {
+            // Remove action i
+            labels.erase(labels.begin() + i);
+            states.erase(states.begin() + i + 1);
+            --i;
+        }
+    }
+}
 ostream &operator<<(ostream &os, const PlanState & s) {
     for (int val : s.values) {
         os << " " << val;
     }
-    
 
     return os << " ";
 }
 
+std::ostream & operator<<(std::ostream &os, const Plan &plan) {
+    assert(plan.get_labels().size() + 1 == plan.get_traversed_states().size());
+    for (size_t i = 0; i < plan.get_labels().size(); ++i) {
+        os << "("<< plan.get_traversed_states()[i] << ") -- " << plan.get_labels()[i] << " --> ";
+    }
+    os << "(" << plan.get_traversed_states().back() <<")" << endl;
+    return os;
+}
 
 
 PlanState::PlanState(const PlanState & other,

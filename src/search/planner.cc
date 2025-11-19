@@ -115,6 +115,9 @@ int main(int argc, const char **argv) {
     if (engine->found_solution()) {
         Plan plan = engine->get_plan();
 
+        plan.remove_redundant_actions();
+        // cout << plan << endl;
+
         if (transformer) {
             utils::Timer reconstruct_timer;
             cout << "Plan reconstruction " << *g_plan_reconstruction << endl;
