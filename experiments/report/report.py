@@ -11,6 +11,7 @@ from report_utils.remove_file_step import remove_file
 from report_utils.table_relative_expansions import get_table_relative_expansions
 from report_utils.report_filters import joint_domains, invert_min_negative_dominance, unsolvable_wo_mystery, ignore_unexplained_errors, FilterAtr
 from report_utils.total_coverage_table import TotalCoverageTable
+from report_utils.my_table import MyTable
 
 
 TARGET_DIR = f"{os.path.dirname(os.path.abspath(__file__))}/report"
@@ -27,24 +28,29 @@ exp.add_report(AbsoluteReport(attributes=[
     "planner_time",
     #'sat_variables', 'sat_clauses'
     #"unsolvable_wo_mystery"
-], filter= [change_domain,ignore_unexplained_errors], filter_algorithm=['ff-trans','el_rnc_slfloopt_labgr_chain-shr', 'MpC-E-seq'],
-                              ), name="report", outfile="report-coverage-against-FF.html")
+], filter= [change_domain,ignore_unexplained_errors], # filter_algorithm=['ff-trans','el_rnc_slfloopt_labgr_chain-shr', 'MpC-E-seq'],
+                              ), name="report", outfile="report-all.html")
 
 
-exp.add_report(AbsoluteReport(attributes=[
-    "coverage",
-    "cost",
-    "planner_time",
-    'time_steps_with_label',
-    #'sat_variables', 'sat_clauses'
-    #"unsolvable_wo_mystery"
-], filter= [change_domain,ignore_unexplained_errors], filter_algorithm=['el_rnc_slfloopt_labgr_seq-shr','el_rnc_slfloopt_labgr_chain-shr'],
-                              ), name="report2", outfile="report-2.html")
+# exp.add_report(AbsoluteReport(attributes=[
+#     "coverage",
+#     "cost",
+#     "planner_time",
+#     'time_steps_with_label',
+#     #'sat_variables', 'sat_clauses'
+#     #"unsolvable_wo_mystery"
+# ], filter= [change_domain,ignore_unexplained_errors], filter_algorithm=['el_rnc_slfloopt_labgr_seq-shr','el_rnc_slfloopt_labgr_chain-shr'],
+#                               ), name="report2", outfile="report-2.html")
 
 
 
 
 exp.add_report(TotalCoverageTable(), name="cov_table", outfile="cov_table.txt")
+
+
+exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '____lg______', 'slf_________', 'slf________l', 'slf____rcpo_', 'slf____rcpol', 'slf_lg______', 'slf_lg_____l', 'slf_lg___p_l', 'slf_lg___pol', 'slf_lg__c__l', 'slf_lg__c_ol', 'slf_lg_r___l', 'slf_lg_r__ol', 'slf_lg_rcp__', 'slf_lg_rcp_l', 'slf_lg_rcpo_', 'slf_lg_rcpol'],['A_1__chains', 'A_1__seq___', 'A_1__slflpp', 'CMit_chains', 'CMit_seq___', 'CMit_slflpp'], lambda row,column : f"a938b5d2d5697b3c17c045512fe56824101e2b6c-{column}_{row}-ntr"), name="cov_table_ntr", outfile="cov_table_ntr.txt")
+
+exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '____lg______', 'slf_________', 'slf________l', 'slf____rcpo_', 'slf____rcpol', 'slf_lg______', 'slf_lg_____l', 'slf_lg___p_l', 'slf_lg___pol', 'slf_lg__c__l', 'slf_lg__c_ol', 'slf_lg_r___l', 'slf_lg_r__ol', 'slf_lg_rcp__', 'slf_lg_rcp_l', 'slf_lg_rcpo_', 'slf_lg_rcpol'],['A_1__chains', 'A_1__seq___', 'A_1__slflpp', 'CMit_chains', 'CMit_seq___', 'CMit_slflpp'], lambda row,column : f"a938b5d2d5697b3c17c045512fe56824101e2b6c-{column}_{row}-shr"), name="cov_table_shr", outfile="cov_table_shr.txt")
 
 
 algo_to_latex = {
