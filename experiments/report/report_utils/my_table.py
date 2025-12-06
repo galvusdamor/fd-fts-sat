@@ -36,10 +36,14 @@ class MyTable(PlanningReport):
 
                     
         def format_result(algorithm_to_coverage, conf):
+            #print(f"{conf}  {algorithm_to_coverage}")
             if conf in algorithm_to_coverage:
                 return algorithm_to_coverage[conf]
             # print (conf, algorithm_to_coverage)
-            return "--"
+            if "chains" in conf and not ("slf" in conf):
+                return "X"
+            else:
+                return "--"
 
 
         
