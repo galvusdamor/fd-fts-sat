@@ -32,6 +32,9 @@ exp.add_report(AbsoluteReport(attributes=[
                               ), name="report", outfile="report-all.html")
 
 
+
+
+
 # exp.add_report(AbsoluteReport(attributes=[
 #     "coverage",
 #     "cost",
@@ -85,12 +88,8 @@ exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '____lg_
 
 
 
-algo_to_latex = {
-    'blind': r'\configblind',
-}
 
-
-def scatter_alg(name, alg1, alg2, atr, domain_category):
+def scatter_alg(name, alg1, alg2, atr, domain_category, algo_to_latex):
     plot_options = {
         'size': '10cm',
         'num_extra_diagonal_lines': 2,
@@ -108,17 +107,48 @@ def scatter_alg(name, alg1, alg2, atr, domain_category):
                                   **plot_options))
 
 
-scatter_plots = [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category")
-                 for atr in ['planner_time', 'sat_clauses', 'sat_variables', 'time_steps_with_label', 'cost', 'plan_length']
-                 for (config1,config2) in [('el_rnc_slfloopt_labgr_seq-shr','el_rnc_slfloopt_labgr_chain-shr')]]
 
-scatter_plots += [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category")
-                 for atr in ['planner_time', 'sat_variables', 'time_steps_with_label']
-                 for (config1,config2) in [('MpC-E-seq', 'el_rnc_slfloopt_labgr_chain-shr'), ('MpC-no-parallel-seq', 'el_rnc_slfloopt_labgr_chain-shr')]]
+('a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf____rcpo_-shr', 'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf_________-shr')
 
-scatter_plots += [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category")
-                 for atr in ['planner_time']
-                 for (config1,config2) in [('ff-trans','el_rnc_slfloopt_labgr_chain-shr')]]
+
+algo_to_latex = {
+    'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf____rcpol-shr' : 'A_1-chains-rcpol-shr',
+    'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf_________-shr' : 'A_1-chains-shr',
+    'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__seq_slf____rcpol-shr' : 'A_1-seq-rcpol-shr',
+    'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__seq_slf_________-shr' : 'A_1-seq-shr',
+    'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__seq____slf_lg_rcpol-shr' : 'A_1-seq-slf-lg-rcpol-shr',
+    'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf_lg_rcpol-shr' : 'A_1-chains-lg-rcpol-shr'
+}
+
+
+#Plots to show differences of optimizations versus not optimizations
+scatter_plots = [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category", algo_to_latex)
+                 for atr in ['planner_time', 'sat_clauses']
+                 for (config1,config2) in [('a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf____rcpol-shr', 'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf_________-shr')]]
+
+  
+#Plots to show differences of parallelism 
+scatter_plots += [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category", algo_to_latex)
+                 for atr in ['planner_time', 'sat_clauses', 'sat_variables', 'time_steps_with_label', 'plan_length']
+                 for (config1,config2) in [('a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__seq____slf_lg_rcpol-shr', 'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf_lg_rcpol-shr')]]
+
+
+# scatter_plots += [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category")
+#                   for atr in ['planner_time', 'sat_clauses']: # 'sat_variables', 'time_steps_with_label', 'cost', 'plan_length']
+#                   for (config1,config2) in []]
+
+
+# scatter_plots = [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category")
+#                  for atr in ['planner_time', 'sat_clauses', 'sat_variables', 'time_steps_with_label', 'cost', 'plan_length']
+#                  for (config1,config2) in [('el_rnc_slfloopt_labgr_seq-shr','el_rnc_slfloopt_labgr_chain-shr')]]
+
+# scatter_plots += [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category")
+#                  for atr in ['planner_time', 'sat_variables', 'time_steps_with_label']
+#                  for (config1,config2) in [('MpC-E-seq', 'el_rnc_slfloopt_labgr_chain-shr'), ('MpC-no-parallel-seq', 'el_rnc_slfloopt_labgr_chain-shr')]]
+
+# scatter_plots += [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category")
+#                  for atr in ['planner_time']
+#                  for (config1,config2) in [('ff-trans','el_rnc_slfloopt_labgr_chain-shr')]]
 
 add_nice_scatter_plot_step(exp, scatter_plots)
 
