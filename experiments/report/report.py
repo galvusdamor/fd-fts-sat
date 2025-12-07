@@ -52,9 +52,37 @@ exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '____lg_
 
 exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '____lg______', 'slf_________', 'slf________l', 'slf____rcpo_', 'slf____rcpol', 'slf_lg______', 'slf_lg_____l', 'slf_lg___p_l', 'slf_lg___pol', 'slf_lg__c__l', 'slf_lg__c_ol', 'slf_lg_r___l', 'slf_lg_r__ol', 'slf_lg_rcp__', 'slf_lg_rcp_l', 'slf_lg_rcpo_', 'slf_lg_rcpol'],['A_1__chains', 'A_1__seq___', 'A_1__slflpp', 'CMit_chains', 'CMit_seq___', 'CMit_slflpp'], lambda row,column : f"a938b5d2d5697b3c17c045512fe56824101e2b6c-{column}_{row}-shr"), name="cov_table_shr", outfile="cov_table_shr.txt")
 
+
+## Explore subsets of RCPOL, but only for chains
 exp.add_report(MyTable(['slf________l', 'slf____rcpol', 'slf_lg_____l', 'slf_lg___p_l', 'slf_lg___pol', 'slf_lg__c__l', 'slf_lg__c_ol', 'slf_lg_r___l', 'slf_lg_r__ol', 'slf_lg_rcp_l', 'slf_lg_rcpol'],['A_1__chains_ntr', 'CMit_chains_ntr','A_1__chains_shr', 'CMit_chains_shr'], lambda row,column : f"{a938b5d2d5697b3c17c045512fe56824101e2b6c-column[:-4]}_{row}-{column[-3:]}"), name="cov_table_rcpol", outfile="cov_table_rcpol.txt")
 
-exp.add_report(MyTable(['slf_lg_rcpol_shr','slf____rcpol_shr','slf________l_shr','slf__________shr','slf_lg_rcpol_ntr','slf____rcpol_ntr','slf________l_ntr','slf__________ntr'],['A_1__chains', 'CMit_chains','A_1__slflpp', 'CMit_slflpp','A_1__seq___', 'CMit_seq___'], lambda row,column : f"a938b5d2d5697b3c17c045512fe56824101e2b6c-{column}_{row[:-4]}-{row[-3:]}"), name="cov_table_shr_vs_ntr", outfile="cov_table_rcpol.txt")
+## explore versions of parallelism (with and without shrinking)
+exp.add_report(MyTable(['slf_lg_rcpol_shr','slf____rcpol_shr','slf________l_shr','slf__________shr','slf_lg_rcpol_ntr','slf____rcpol_ntr','slf________l_ntr','slf__________ntr'],['A_1__chains', 'CMit_chains','A_1__slflpp', 'CMit_slflpp','A_1__seq___', 'CMit_seq___'], lambda row,column : f"a938b5d2d5697b3c17c045512fe56824101e2b6c-{column}_{row[:-4]}-{row[-3:]}"), name="cov_table_shr_vs_ntr", outfile="cov_table_shr_vs_ntr.txt")
+
+## explore RCPOL, but for the case without label group optimisation
+exp.add_report(MyTable(['slf________l', 'slf______p_l', 'slf______pol', 'slf_____c__l', 'slf_____c_ol', 'slf____r___l', 'slf____r__ol', 'slf____rcp_l', 'slf____rcpol'],['A_1__chains_ntr', 'CMit_chains_ntr','A_1__chains_shr', 'CMit_chains_shr'], lambda row,column : f"a938b5d2d5697b3c17c045512fe56824101e2b6c-{column[:-4]}_{row}-{column[-3:]}"), name="cov_table_rcpol-no-lg", outfile="cov_table_rcpol-no-lg.txt")
+
+### explore impact of self-loop optimisation in seq (only applicable there)
+exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '____lg______', 'slf_________', 'slf________l', 'slf____rcpo_', 'slf____rcpol', 'slf_lg______', 'slf_lg_____l', 'slf_lg_rcpo_', 'slf_lg_rcpol'],['A_1__seq____shr', 'CMit_seq____shr', 'A_1__seq____ntr', 'CMit_seq____ntr'], lambda row,column : f"a938b5d2d5697b3c17c045512fe56824101e2b6c-{column[:-4]}_{row}-{column[-3:]}"), name="cov_table_slf", outfile="cov_table_slf.txt")
+
+
+#####################################################################
+### rcpo table
+exp.add_report(MyTable(['slf________l', 'slf____rcpol', 'slf_lg_____l', 'slf_lg___p_l', 'slf_lg___pol', 'slf_lg__c__l', 'slf_lg__c_ol', 'slf_lg_r___l', 'slf_lg_r__ol', 'slf_lg_rcp_l', 'slf_lg_rcpol'],['A_1__chains_ntr','A_1__chains_shr', 'CMit_chains_ntr', 'CMit_chains_shr'], lambda row,column : f"a938b5d2d5697b3c17c045512fe56824101e2b6c-{column[:-4]}_{row}-{column[-3:]}"), name="g-cov_table_rcpol", outfile="g-cov_table_rcpol.txt")
+
+exp.add_report(MyTable(['slf________l', 'slf______p_l', 'slf______pol', 'slf_____c__l', 'slf_____c_ol', 'slf____r___l', 'slf____r__ol', 'slf____rcp_l', 'slf____rcpol'],['A_1__chains_ntr','A_1__chains_shr', 'CMit_chains_ntr', 'CMit_chains_shr'], lambda row,column : f"a938b5d2d5697b3c17c045512fe56824101e2b6c-{column[:-4]}_{row}-{column[-3:]}"), name="cov_table_rcpol-no-lg", outfile="g-cov_table_rcpol-no-lg.txt")
+
+exp.add_report(MyTable(['slf_lg_rcpol_shr','slf____rcpol_shr','slf________l_shr','slf__________shr','slf_lg_rcpol_ntr','slf____rcpol_ntr','slf________l_ntr','slf__________ntr'],['A_1__chains','A_1__slflpp','A_1__seq___', 'CMit_chains', 'CMit_slflpp', 'CMit_seq___'], lambda row,column : f"a938b5d2d5697b3c17c045512fe56824101e2b6c-{column}_{row[:-4]}-{row[-3:]}"), name="g-cov_table_shr_vs_ntr", outfile="g-cov_table_parallel_shr_vs_ntr.txt")
+
+
+###
+exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '_______rcpo_', '____lg______', '____lg_____l', '____lg_rcpol', '____lg_rcpo_', 'slf_________', 'slf________l', 'slf____rcpo_', 'slf____rcpol', 'slf_lg______', 'slf_lg_____l', 'slf_lg_rcpo_', 'slf_lg_rcpol'],['A_1__seq____shr', 'A_1__seq____ntr', 'CMit_seq____shr', 'CMit_seq____ntr'], lambda row,column : f"a938b5d2d5697b3c17c045512fe56824101e2b6c-{column[:-4]}_{row}-{column[-3:]}"), name="g-cov_table_slf", outfile="g-cov_table_slf.txt")
+
+### base table
+exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '____lg______', 'slf_________', 'slf________l', 'slf____rcpo_', 'slf____rcpol', 'slf_lg______', 'slf_lg_____l', 'slf_lg_rcpo_', 'slf_lg_rcpol'],['A_1__chains', 'A_1__seq___', 'A_1__slflpp', 'CMit_chains', 'CMit_seq___', 'CMit_slflpp'], lambda row,column : f"a938b5d2d5697b3c17c045512fe56824101e2b6c-{column}_{row}-ntr"), name="g-cov_table_ntr", outfile="g-cov_table_ntr.txt")
+exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '____lg______', 'slf_________', 'slf________l', 'slf____rcpo_', 'slf____rcpol', 'slf_lg______', 'slf_lg_____l', 'slf_lg_rcpo_', 'slf_lg_rcpol'],['A_1__chains', 'A_1__seq___', 'A_1__slflpp', 'CMit_chains', 'CMit_seq___', 'CMit_slflpp'], lambda row,column : f"a938b5d2d5697b3c17c045512fe56824101e2b6c-{column}_{row}-shr"), name="g-cov_table_shr", outfile="g-cov_table_shr.txt")
+
+
 
 
 algo_to_latex = {

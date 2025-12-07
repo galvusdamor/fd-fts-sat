@@ -15,7 +15,7 @@ class SnelliusEnvironment(SlurmEnvironment):
 
     RUN_JOB_BODY_TEMPLATE_FILE="../../../../../../snellius-run-job-body"
     JOB_HEADER_TEMPLATE_FILE="../../../../../../snellius-run-job-header"
-    DEFAULT_TIME_LIMIT_PER_TASK="05:00:00"
+    DEFAULT_TIME_LIMIT_PER_TASK="00:40:00"
 
     #def run_steps(self, steps):
     #    print("Hello This is Snellius")

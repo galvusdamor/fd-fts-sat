@@ -40,7 +40,7 @@ class MyTable(PlanningReport):
             if conf in algorithm_to_coverage:
                 return algorithm_to_coverage[conf]
             # print (conf, algorithm_to_coverage)
-            if "chains" in conf and not ("slf" in conf):
+            if (("chains" in conf) or ("slflpp" in conf)) and not ("slf_" in conf):
                 return "X"
             else:
                 return "--"

@@ -11,15 +11,10 @@ from lab.environments import TetralithEnvironment, LocalEnvironment
 from lab.reports import Attribute, geometric_mean, arithmetic_mean
 from lab import tools
 from lab.parser import Parser
-from lab.experiment import Experiment
 
 from downward.reports.absolute import AbsoluteReport
 from downward.reports.compare import ComparativeReport
 from downward.reports.scatter import ScatterPlotReport
-
-
-from report.report_utils.total_coverage_table import TotalCoverageTable
-from report.report_utils.my_table import MyTable
 
 import common_setup
 from common_setup import IssueConfig, IssueExperiment
@@ -37,6 +32,34 @@ REVISIONS = [REVISION]
 
 CONFIGS = []
 
+encodings = {
+        "slflpp_slf_lg______": "label_sat(encoding=SELF_LOOP_PARALLEL,use_self_loop_optimisation=true,use_label_group=true,use_empty_pillars=false,use_empty_rows=false,use_empty_cols=false,use_positive_one=false,use_ones_in_last_dimension=false,force_at_least_one_action=FORCE)",
+        "slflpp_slf_lg_____l": "label_sat(encoding=SELF_LOOP_PARALLEL,use_self_loop_optimisation=true,use_label_group=true,use_empty_pillars=false,use_empty_rows=false,use_empty_cols=false,use_positive_one=false,use_ones_in_last_dimension=true,force_at_least_one_action=FORCE)",
+        }
+
+searches = sum([
+        [
+            (("A_1__" + name),("sat(encoder=" + encodings[name].replace("FORCE","true") + ",solver_quiet=true,length_strategy=one_by_one())")),
+            #(("A_it_" + name), ("sat(encoder=" + encodings[name].replace("FORCE","false") + ",solver_quiet=true,continue_after_first_plan=false,length_strategy=by_iteration())")),
+            (("CMit_" + name), ("rintanen(encoder=" + encodings[name].replace("FORCE","false") + ",solver_quiet=true,length_strategy=by_iteration(),memory_limit_mb=3500,max_parallel_calls=20,scheduler_interval=1,schedule_formula_as_one=true)"))]
+            for name in encodings
+        ],[])# + [
+        #("ff",'lazy_greedy([ff(cost_type=one)], cost_type=one)')]
+
+
+DRIVER_OPTS = ["--overall-time-limit", "30m", "--overall-memory-limit", "3500m"]
+TRANSFORM_OPTS = {
+        #"-ntr" : ["--transform", "cost(cost_type=one)"],
+        "-shr" : ["--transform", "transform_merge_and_shrink(shrink_strategy=shrink_weak_bisimulation(ignore_irrelevant_tau_groups=false),label_reduction=exact(max_time=300,atomic_fts=true,before_shrinking=true,before_merging=false),shrink_atomic_fts=true,run_main_loop=false,max_time=900,cost_type=one,prune_transitions_from_goal=true,prune_transitions_from_goal=true)"],
+#        "-mrg" : ["--transform", "transform_merge_and_shrink(shrink_strategy=shrink_bisimulation(greedy=false),merge_strategy=merge_stateless(merge_selector=score_based_filtering(scoring_functions=[product_size(1000),sf_miasm(shrink_strategy=shrink_bisimulation(greedy=false),max_states=100,threshold_before_merge=1),total_order(atomic_ts_order=reverse_level,product_ts_order=new_to_old,atomic_before_product=false)])),label_reduction=exact(max_time=300,atomic_fts=true,before_shrinking=true,before_merging=false),shrink_atomic_fts=true,run_main_loop=true,max_time=900)"],
+        }
+
+for s_name, s_opt in searches:
+    print("Search: " + s_name)
+    for t_name, t_opt in TRANSFORM_OPTS.items():
+        CONFIGS.append(IssueConfig(f'{s_name}{t_name}', t_opt + ['--search',  f'{s_opt}'], driver_options=DRIVER_OPTS, build_options=["-j24", "-s/gpfs/home2/behnkeg/software/kissat-p/build", "--custom-kissat"]))
+
+
 SUITE = common_setup.DEFAULT_SATISFICING_SUITE
 
 
@@ -45,9 +68,24 @@ ENVIRONMENT = SnelliusEnvironment(
         email="g.behnke@uva.nl",
         )
 
-exp = Experiment(
+exp = IssueExperiment(
+    revisions=REVISIONS,
+    configs=CONFIGS,
+    environment=ENVIRONMENT,
 )
 
+exp.add_suite(BENCHMARKS_DIR, SUITE)
+
+
+exp.add_parser(exp.EXITCODE_PARSER)
+exp.add_parser(exp.TRANSLATOR_PARSER)
+exp.add_parser(exp.SINGLE_SEARCH_PARSER)
+exp.add_parser(exp.PLANNER_PARSER)
+
+exp.add_step('build', exp.build)
+exp.add_step('start', exp.start_runs)
+exp.add_step("parse", exp.parse)
+exp.add_parser(fts_parser.FTSParser())
 
 ## fetch for my own data
 exp.add_fetcher(name='fetch', filter=[filters.remove_revision])
@@ -86,13 +124,6 @@ tofetchAll = [
         "2025-11-06-madagascar",
         "2025-11-07-good-configurations-3",
         "2025-11-07-good-configurations-4",
-        "2025-12-03-remaining-configs",
-        "2025-12-04-remaining-configs-2",
-        "2025-12-04-remaining-configs-3",
-        "2025-12-05-remaining-configs-5-rerun",
-        "2025-12-05-remaining-configs-6",
-        "2025-12-06-remaining-configs-7",
-        "2025-12-06-remaining-configs-8"
         ]
 
 for expname in tofetchAll:
@@ -118,23 +149,6 @@ def remove_ff_configs(run):
 
 exp.add_report(AbsoluteReport(attributes=attributes, filter=[filters.filter_bdd_known_unexplained_errors,filters.filter_kissat_known_unexplained_errors,filters.filter_exitcode250_unexplained_errors]), outfile=f"{SCRIPT_NAME}-all.html")
 #exp.add_report(AbsoluteReport(attributes=attributes, filter_algorithm=["C-chains_slf_lg_rcpo-shr","CM2-chains_slf_lg_rcpo-shr"], filter=[filters.filter_bdd_known_unexplained_errors,filters.filter_kissat_known_unexplained_errors,filters.filter_exitcode250_unexplained_errors]), outfile=f"{SCRIPT_NAME}-memory-variants.html")
-
-
-
-### rcpo table
-exp.add_report(MyTable(['slf________l', 'slf____rcpol', 'slf_lg_____l', 'slf_lg___p_l', 'slf_lg___pol', 'slf_lg__c__l', 'slf_lg__c_ol', 'slf_lg_r___l', 'slf_lg_r__ol', 'slf_lg_rcp_l', 'slf_lg_rcpol'],['A_1__chains_ntr','A_1__chains_shr', 'CMit_chains_ntr', 'CMit_chains_shr'], lambda row,column : f"{column[:-4]}_{row}-{column[-3:]}"), name="cov_table_rcpol", outfile="cov_table_rcpol.txt")
-
-exp.add_report(MyTable(['slf________l', 'slf______p_l', 'slf______pol', 'slf_____c__l', 'slf_____c_ol', 'slf____r___l', 'slf____r__ol', 'slf____rcp_l', 'slf____rcpol'],['A_1__chains_ntr','A_1__chains_shr', 'CMit_chains_ntr', 'CMit_chains_shr'], lambda row,column : f"{column[:-4]}_{row}-{column[-3:]}"), name="cov_table_rcpol-no-lg", outfile="cov_table_rcpol-no-lg.txt")
-
-exp.add_report(MyTable(['slf_lg_rcpol_shr','slf____rcpol_shr','slf________l_shr','slf__________shr','slf_lg_rcpol_ntr','slf____rcpol_ntr','slf________l_ntr','slf__________ntr'],['A_1__chains','A_1__slflpp','A_1__seq___', 'CMit_chains', 'CMit_slflpp', 'CMit_seq___'], lambda row,column : f"{column}_{row[:-4]}-{row[-3:]}"), name="cov_table_shr_vs_ntr", outfile="cov_table_parallel_shr_vs_ntr.txt")
-
-
-###
-exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '_______rcpo_', '____lg______', '____lg_____l', '____lg_rcpol', '____lg_rcpo_', 'slf_________', 'slf________l', 'slf____rcpo_', 'slf____rcpol', 'slf_lg______', 'slf_lg_____l', 'slf_lg_rcpo_', 'slf_lg_rcpol'],['A_1__seq____shr', 'A_1__seq____ntr', 'CMit_seq____shr', 'CMit_seq____ntr'], lambda row,column : f"{column[:-4]}_{row}-{column[-3:]}"), name="cov_table_slf", outfile="cov_table_slf.txt")
-
-### base table
-exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '____lg______', 'slf_________', 'slf________l', 'slf____rcpo_', 'slf____rcpol', 'slf_lg______', 'slf_lg_____l', 'slf_lg_rcpo_', 'slf_lg_rcpol'],['A_1__chains', 'A_1__seq___', 'A_1__slflpp', 'CMit_chains', 'CMit_seq___', 'CMit_slflpp'], lambda row,column : f"{column}_{row}-ntr"), name="cov_table_ntr", outfile="cov_table_ntr.txt")
-exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '____lg______', 'slf_________', 'slf________l', 'slf____rcpo_', 'slf____rcpol', 'slf_lg______', 'slf_lg_____l', 'slf_lg_rcpo_', 'slf_lg_rcpol'],['A_1__chains', 'A_1__seq___', 'A_1__slflpp', 'CMit_chains', 'CMit_seq___', 'CMit_slflpp'], lambda row,column : f"{column}_{row}-shr"), name="cov_table_shr", outfile="cov_table_shr.txt")
 
 
 # SCATTER PLOTS
