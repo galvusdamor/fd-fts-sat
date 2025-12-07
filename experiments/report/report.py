@@ -71,7 +71,7 @@ exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '____lg_
 
 #####################################################################
 ### rcpo table
-exp.add_report(MyTable(['slf________l', 'slf____rcpol', 'slf_lg_____l', 'slf_lg___p_l', 'slf_lg___pol', 'slf_lg__c__l', 'slf_lg__c_ol', 'slf_lg_r___l', 'slf_lg_r__ol', 'slf_lg_rcp_l', 'slf_lg_rcpol'],['A_1__chains_ntr','A_1__chains_shr', 'CMit_chains_ntr', 'CMit_chains_shr'], lambda row,column : f"a938b5d2d5697b3c17c045512fe56824101e2b6c-{column[:-4]}_{row}-{column[-3:]}"), name="g-cov_table_rcpol", outfile="g-cov_table_rcpol.txt")
+exp.add_report(MyTable(['slf________l', 'slf______p_l', 'slf______pol', 'slf_____c__l', 'slf_____c_ol', 'slf____r___l', 'slf____r__ol', 'slf____rcp_l', 'slf____rcpol', 'slf_lg_____l', 'slf_lg___p_l', 'slf_lg___pol', 'slf_lg__c__l', 'slf_lg__c_ol', 'slf_lg_r___l', 'slf_lg_r__ol', 'slf_lg_rcp_l', 'slf_lg_rcpol'],['A_1__chains_ntr','A_1__chains_shr', 'CMit_chains_ntr', 'CMit_chains_shr'], lambda row,column : f"a938b5d2d5697b3c17c045512fe56824101e2b6c-{column[:-4]}_{row}-{column[-3:]}"), name="g-cov_table_rcpol", outfile="g-cov_table_rcpol.txt")
 
 exp.add_report(MyTable(['slf________l', 'slf______p_l', 'slf______pol', 'slf_____c__l', 'slf_____c_ol', 'slf____r___l', 'slf____r__ol', 'slf____rcp_l', 'slf____rcpol'],['A_1__chains_ntr','A_1__chains_shr', 'CMit_chains_ntr', 'CMit_chains_shr'], lambda row,column : f"a938b5d2d5697b3c17c045512fe56824101e2b6c-{column[:-4]}_{row}-{column[-3:]}"), name="cov_table_rcpol-no-lg", outfile="g-cov_table_rcpol-no-lg.txt")
 
