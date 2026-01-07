@@ -20,6 +20,7 @@ from downward.reports.scatter import ScatterPlotReport
 
 from report.report_utils.total_coverage_table import TotalCoverageTable
 from report.report_utils.my_table import MyTable
+from report.report_utils.ValueTable import ValueTable
 
 import common_setup
 from common_setup import IssueConfig, IssueExperiment
@@ -92,7 +93,8 @@ tofetchAll = [
         "2025-12-05-remaining-configs-5-rerun",
         "2025-12-05-remaining-configs-6",
         "2025-12-06-remaining-configs-7",
-        "2025-12-06-remaining-configs-8"
+        "2025-12-06-remaining-configs-8",
+        "2025-12-06-remaining-configs-9"
         ]
 
 for expname in tofetchAll:
@@ -120,6 +122,12 @@ exp.add_report(AbsoluteReport(attributes=attributes, filter=[filters.filter_bdd_
 #exp.add_report(AbsoluteReport(attributes=attributes, filter_algorithm=["C-chains_slf_lg_rcpo-shr","CM2-chains_slf_lg_rcpo-shr"], filter=[filters.filter_bdd_known_unexplained_errors,filters.filter_kissat_known_unexplained_errors,filters.filter_exitcode250_unexplained_errors]), outfile=f"{SCRIPT_NAME}-memory-variants.html")
 
 
+#exp.add_report(ValueTable('A_1__chains_slf_________-shr', ['A_1__chains_slf________l-shr', 'A_1__chains_slf____rcpol-shr'],[('0_label_source_target',['1_label_source_target']), ('0_label_target',["1_label_target","1_target_label"]), ("0_label_source", ["1_label_source","1_source_label"]), ("0_source_target", ["1_source_target","1_target_source"])]), name="x_tab", outfile="x_tab.txt")
+exp.add_report(ValueTable('A_1__chains_slf_________-shr', ['A_1__chains_slf________l-shr', 'A_1__chains_slf____r___l-shr', 'A_1__chains_slf____r__ol-shr', 'A_1__chains_slf_____c__l-shr', 'A_1__chains_slf_____c_ol-shr', 'A_1__chains_slf______p_l-shr', 'A_1__chains_slf______pol-shr', 'A_1__chains_slf____rcp_l-shr', 'A_1__chains_slf____rcp_l-shr', 'A_1__chains_slf____rcpol-shr'],'0_label_source_target',['0_label_target', "0_label_source", "0_source_target" , '1_label_source_target', "1_label_target","1_target_label", "1_label_source","1_source_label", "1_source_target","1_target_source"]), name="chains_clauses_tab", outfile="chain_clause_tab.txt")
+
+
+exp.add_report(ValueTable('A_1__seq________________-shr', ["A_1__seq_______________l-shr", "A_1__seq___________rcpo_-shr", "A_1__seq___________rcpol-shr", "A_1__seq________lg______-shr", "A_1__seq________lg_____l-shr", "A_1__seq________lg_rcpo_-shr", "A_1__seq________lg_rcpol-shr", "A_1__seq____slf_________-shr", "A_1__seq____slf________l-shr", "A_1__seq____slf____rcpo_-shr", "A_1__seq____slf____rcpol-shr", "A_1__seq____slf_lg______-shr", "A_1__seq____slf_lg_____l-shr", "A_1__seq____slf_lg_rcpo_-shr", "A_1__seq____slf_lg_rcpol-shr"],'0_label_source_target',['0_label_target', "0_label_source", "0_source_target" , '1_label_source_target', "1_label_target","1_target_label", "1_label_source","1_source_label", "1_source_target","1_target_source"]), name="seq_clauses_tab", outfile="seq_clause_tab.txt")
+
 
 ### rcpo table
 exp.add_report(MyTable(['slf________l', 'slf____rcpol', 'slf_lg_____l', 'slf_lg___p_l', 'slf_lg___pol', 'slf_lg__c__l', 'slf_lg__c_ol', 'slf_lg_r___l', 'slf_lg_r__ol', 'slf_lg_rcp_l', 'slf_lg_rcpol'],['A_1__chains_ntr','A_1__chains_shr', 'CMit_chains_ntr', 'CMit_chains_shr'], lambda row,column : f"{column[:-4]}_{row}-{column[-3:]}"), name="cov_table_rcpol", outfile="cov_table_rcpol.txt")
@@ -133,8 +141,8 @@ exp.add_report(MyTable(['slf_lg_rcpol_shr','slf____rcpol_shr','slf________l_shr'
 exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '_______rcpo_', '____lg______', '____lg_____l', '____lg_rcpol', '____lg_rcpo_', 'slf_________', 'slf________l', 'slf____rcpo_', 'slf____rcpol', 'slf_lg______', 'slf_lg_____l', 'slf_lg_rcpo_', 'slf_lg_rcpol'],['A_1__seq____shr', 'A_1__seq____ntr', 'CMit_seq____shr', 'CMit_seq____ntr'], lambda row,column : f"{column[:-4]}_{row}-{column[-3:]}"), name="cov_table_slf", outfile="cov_table_slf.txt")
 
 ### base table
-exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '____lg______', 'slf_________', 'slf________l', 'slf____rcpo_', 'slf____rcpol', 'slf_lg______', 'slf_lg_____l', 'slf_lg_rcpo_', 'slf_lg_rcpol'],['A_1__chains', 'A_1__seq___', 'A_1__slflpp', 'CMit_chains', 'CMit_seq___', 'CMit_slflpp'], lambda row,column : f"{column}_{row}-ntr"), name="cov_table_ntr", outfile="cov_table_ntr.txt")
-exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '____lg______', 'slf_________', 'slf________l', 'slf____rcpo_', 'slf____rcpol', 'slf_lg______', 'slf_lg_____l', 'slf_lg_rcpo_', 'slf_lg_rcpol'],['A_1__chains', 'A_1__seq___', 'A_1__slflpp', 'CMit_chains', 'CMit_seq___', 'CMit_slflpp'], lambda row,column : f"{column}_{row}-shr"), name="cov_table_shr", outfile="cov_table_shr.txt")
+exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '____lg______', 'slf_________', 'slf________l', 'slf____rcpo_', 'slf____rcpol', 'slf_lg______', 'slf_lg_____l', 'slf_lg_rcpo_', 'slf_lg_rcpol'],['A_1__chains', 'A_1__slflpp', 'A_1__seq___', 'CMit_chains', 'CMit_slflpp', 'CMit_seq___'], lambda row,column : f"{column}_{row}-ntr"), name="cov_table_ntr", outfile="cov_table_ntr.txt")
+exp.add_report(MyTable(['____________', '___________l', '_______rcpol', '____lg______', 'slf_________', 'slf________l', 'slf____rcpo_', 'slf____rcpol', 'slf_lg______', 'slf_lg_____l', 'slf_lg_rcpo_', 'slf_lg_rcpol'],['A_1__chains', 'A_1__slflpp', 'A_1__seq___', 'CMit_chains', 'CMit_slflpp', 'CMit_seq___'], lambda row,column : f"{column}_{row}-shr"), name="cov_table_shr", outfile="cov_table_shr.txt")
 
 
 # SCATTER PLOTS
