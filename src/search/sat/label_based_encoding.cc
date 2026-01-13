@@ -459,7 +459,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						if (forceAtLeastOneAction == false || useSelfloopOptimisation == true)
 							allOnes.push_back(executedNoActualTransition);
 
-						if (encoding == SEQUENTIAL || encoding == SELF_LOOP_PARALLEL)
+						//if (encoding == SEQUENTIAL || encoding == SELF_LOOP_PARALLEL)
 							for (int lg : fts_matrix->get_impossible_labels_for_source(src)) label_covered_sources[lg].insert(src);
 						// if encoding == CHAINS_PARALLEL, the parallelism restriction does not force at most one non-always-self-loop label 
 						// to be executed. Thus the disjunction over the actual transitions does not
@@ -534,7 +534,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 						if (forceAtLeastOneAction == false || useSelfloopOptimisation == true)
 							allOnes.push_back(executedNoActualTransition);
 				
-						if (encoding == SEQUENTIAL || encoding == SELF_LOOP_PARALLEL)
+						//if (encoding == SEQUENTIAL || encoding == SELF_LOOP_PARALLEL)
 							for (int lg : fts_matrix->get_impossible_labels_for_target(target)) label_covered_targets[lg].insert(target);
 					
 						sat->impliesOr(nextStateVars[ts][target], allOnes);
