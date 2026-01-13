@@ -90,10 +90,18 @@ SearchStatus SATSearch::step() {
 	// create encoding object
 	auto thisEncoding = encoding_factory->createEncodingInstance(capsule);
 
+
+	//vector<int> planToAssert = {8, 1260, 1389, 2596, 1825, 3334, 3485, 114, 1139, 1499, 2877, 3620, 3212, 3485, 115, 1166, 1510, 2865, 2224, 3237, 3485, 135, 1230, 1527, 2503, 3470, 3301, 3485, 2022, 2124, 3519, 3553, 20, 1190, 1400, 2458, 1753, 3260, 3485, 3655, 21, 1209, 1403, 2530, 1772, 3283, 3485, 208, 1116, 1610, 2734, 1677, 3183, 3485, 220, 1312, 1614, 2590, 1876, 3379, 3485, 3, 1174, 1383, 2548, 1739, 3244, 3485, 5, 1212, 1389, 2517, 2043, 3276, 3485, 2056}; 
+	//vector<int> planToAssert = {133, 12, 158, 15, 143, 13, 168, 16, 153, 14, 190, 18, 3, 51, 4, 62, 191, 19, 110, 10, 2, 39, 0, 23, 6, 82, 8, 92, 129, 12, 1, 31, 2, 39, 182, 18, 113, 10, 8, 92, 152, 14, 7, 89, 4, 62, 182, 18, 0, 23, 8, 92, 129, 12, 121, 11, 2, 39, 141, 13, 5, 72, 3, 51, 129, 12, 1, 31, 2, 39}; 
+	//vector<int> planToAssert = {24, 5, 26, 6, 22, 4, 3, 19, 0, 8, 31, 7, 2, 14, 3, 19}; 
+	//cout << "Plan to Assert Length: " << planToAssert.size() << endl;
+
 	std::vector<std::pair<int,int>> time_step_order; // for plan extraction
 	// encode all state transitions
 	for(int timestep = 1 ; timestep <= currentLength ; timestep++){
 		thisEncoding->encode(timestep,timestep+1);
+		//set<int> singleLabel = {planToAssert[timestep - 1]};
+		//thisEncoding->assertLabelsAtTime(timestep,singleLabel);
 		time_step_order.push_back({timestep,timestep+1});
 	}
 	thisEncoding->encodeInit(1,false);

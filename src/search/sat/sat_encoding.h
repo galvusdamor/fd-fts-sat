@@ -28,6 +28,9 @@ public:
 	virtual void encodeGoal(int toTime, bool retractable) = 0;
 	virtual void encodeStateEquals(int fromTime, int toTime, bool retractable) = 0;
 	virtual std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> extractSolution(int initTime, std::vector<std::pair<int,int>> time_step_order) = 0;
+	
+	// functions for debugging
+	virtual void assertLabelsAtTime(int fromTime, std::set<int> labels) = 0;
 };
 
 // abstract interface for initialisation of SAT encoding

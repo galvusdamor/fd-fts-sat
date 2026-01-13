@@ -79,7 +79,8 @@ void SearchEngine::search() {
 bool SearchEngine::check_goal_and_set_plan(const GlobalState &state) {
     if (task->is_goal_state(state)) {
         cout << "Solution found!" << endl;
-        search_space.trace_path(state, plan);
+        cout << "Trace path" << endl;
+		search_space.trace_path(state, plan);
         solution_found = true;
         return true;
     }

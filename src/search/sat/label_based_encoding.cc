@@ -795,6 +795,19 @@ void LabelBasedEncoding::encodeGoal(int toTime, bool retractable){
 }
 
 
+void LabelBasedEncoding::assertLabelsAtTime(int fromTime, set<int> labels) {
+	assert(allTimesStateVars.count(fromTime));
+	const vector<int> thisTimeLabelVars = allTimesLabelVars[fromTime];
+	for (int l = 0; l < int(thisTimeLabelVars.size()); l++){
+		if (labels.contains(l))
+			sat->assertYes(thisTimeLabelVars[l]);
+		else
+			sat->assertNot(thisTimeLabelVars[l]);
+	}
+	cout << "Asserted Plan for time: " << fromTime << endl;
+}
+
+
 void LabelBasedEncoding::encode(int fromTime, int toTime){
     //utils::Timer step_timer;  // needed later to stop the encoding if we want to schedule a different instance
 	//auto t_start = std::chrono::system_clock::now();

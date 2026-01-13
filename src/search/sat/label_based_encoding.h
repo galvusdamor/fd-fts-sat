@@ -83,6 +83,9 @@ public:
 	void encodeGoal(int toTime, bool retractable) override;
 	void encodeStateEquals(int fromTime, int toTime, bool retractable) override;
 	std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> extractSolution(int initTime, std::vector<std::pair<int,int>> time_step_order) override;
+	
+	// functions for debugging
+	void assertLabelsAtTime(int fromTime, std::set<int> labels) override;
 };
 
 

@@ -144,6 +144,14 @@ void SearchSpace::trace_path(const GlobalState &goal_state,
     reverse(operators.begin(), operators.end());
     reverse(states.begin(), states.end());
 
+	//cout << "Plan: {";
+	//bool first = true;
+	//for (OperatorID id : operators) {
+	//	if (!first) cout << ", ";
+	//	cout << id.get_index();
+	//	first = false;
+	//}
+	//cout << "}" << endl;
     plan.set_plan_operators(states, operators);
 
 }
