@@ -12,6 +12,7 @@ from report_utils.table_relative_expansions import get_table_relative_expansions
 from report_utils.report_filters import joint_domains, invert_min_negative_dominance, unsolvable_wo_mystery, ignore_unexplained_errors, FilterAtr
 from report_utils.total_coverage_table import TotalCoverageTable
 from report_utils.my_table import MyTable
+from report_utils.better_solved_table import BetterSolvedTable 
 
 
 TARGET_DIR = f"{os.path.dirname(os.path.abspath(__file__))}/report-transform"
@@ -22,9 +23,18 @@ exp = Experiment(TARGET_DIR)
 #     run['domain'] = run['domain_category']
 #     return run
 
-exp.add_fetcher('/home/alvaro/projects/joao/fd-fts-sat/experiments/report/data-transform') # filter=[ignore_unexplained_errors2, joint_domains, invert_min_negative_dominance, unsolvable_wo_mystery,rename_time_steps])
+exp.add_fetcher('/gpfs/home2/behnkeg/lab/fd-fts-sat/experiments/data/2026-01-13-new-transformer-missing-configs-eval',merge=True)
+exp.add_fetcher('/gpfs/home2/behnkeg/lab/fd-fts-sat/experiments/data/2025-12-05-new-transformer-rerun-eval',merge=True)
+exp.add_fetcher('/gpfs/home2/behnkeg/lab/fd-fts-sat/experiments/data/2025-12-08-classical-report-eval',merge=True)
+exp.add_fetcher('/gpfs/home2/behnkeg/lab/fd-fts-sat/experiments/data/2025-12-04-remaining-configs-4-ff-lama-eval',merge=True)
+exp.add_fetcher('/gpfs/home2/behnkeg/lab/fd-fts-sat/experiments/data/2025-11-12-new-transformations-eval', filter_algorithm=["CMit_slflpp_slf____rcpol-lr","CMit_chains_slf____rcpol-lr","ff-lr", "ff-fwb-lr-m100"],merge=True)
+exp.add_fetcher('/gpfs/home2/behnkeg/lab/fd-fts-sat/experiments/data/2026-01-14-new-transformer-more-missing-configs-eval',merge=True)
+exp.add_fetcher('/gpfs/home2/behnkeg/lab/fd-fts-sat/experiments/data/2026-01-14-new-transformer-more-more-missing-configs-eval',merge=True)
+#exp.add_fetcher('/gpfs/home2/behnkeg/lab/fd-fts-sat/experiments/data/2026-01-14-new-transformer-more-missing-configs-eval',merge=True)
 
-exp.add_fetcher('/home/alvaro/projects/joao/fd-fts-sat/experiments/report/report-eval') # filter=[ignore_unexplained_errors2, joint_domains, invert_min_negative_dominance, unsolvable_wo_mystery,rename_time_steps])
+#exp.add_fetcher('/home/alvaro/projects/joao/fd-fts-sat/experiments/report/data-transform') # filter=[ignore_unexplained_errors2, joint_domains, invert_min_negative_dominance, unsolvable_wo_mystery,rename_time_steps])
+
+#exp.add_fetcher('/home/alvaro/projects/joao/fd-fts-sat/experiments/report/report-eval') # filter=[ignore_unexplained_errors2, joint_domains, invert_min_negative_dominance, unsolvable_wo_mystery,rename_time_steps])
 
         
 exp.add_report(AbsoluteReport(attributes=[
@@ -33,7 +43,7 @@ exp.add_report(AbsoluteReport(attributes=[
     "planner_time",
     #'sat_variables', 'sat_clauses'
     #"unsolvable_wo_mystery"
-], filter= [ignore_unexplained_errors], # filter_algorithm=['ff-trans','el_rnc_slfloopt_labgr_chain-shr', 'MpC-E-seq'],
+], filter= [ignore_unexplained_errors], filter_algorithm=['ff-pref-ntr', 'ff-pref-shr', 'ff-pref-lr', 'ff-pref-fwb-lr-m100', "CMit_chains_slf____rcpol-fwb-lr-m100","CMit_chains_slf____rcpol-lr","CMit_chains_slf____rcpol-ntr","CMit_chains_slf____rcpol-shr",'MpC-A-C', 'MpC-E-C'],
                               ), name="report", outfile="report-all.html")
 
 
@@ -52,15 +62,27 @@ exp.add_report(AbsoluteReport(attributes=[
 
 
 def name_config (row, column):
-    
-    prefix =  "" if 'm100' in row else 'a938b5d2d5697b3c17c045512fe56824101e2b6c-'
-    if column == 'ff':
+    prefix = "" #if 'm100' in row else 'a938b5d2d5697b3c17c045512fe56824101e2b6c-'
+    if column.startswith('MpC'):
+        if row == "ntr":
+            return column
+        else:
+            return "nothing"
+    elif column.startswith('ff'):
+        print(f"{prefix}{column}-{row}")
         return f"{prefix}{column}-{row}"
     else:
-        return f"{prefix}{column}_slf_lg_rcpol-{row}"
+        print(f"{prefix}{column}_slf____rcpol-{row}")
+        return f"{prefix}{column}_slf____rcpol-{row}"
     
-exp.add_report(MyTable(['ntr','shr','fwb-lr-m100'],['CMit_seq___', 'CMit_slflpp', 'CMit_chains', 'ff'], name_config), name="cov_table_shr", outfile="cov_table_shr.txt")
+exp.add_report(MyTable(['ntr','lr','shr','fwb-lr-m100'],['CMit_seq___', 'CMit_slflpp', 'CMit_chains', 'ff','ff-pref', 'MpC-A-C', 'MpC-E-C'], name_config), name="cov_table_shr", outfile="cov_table_shr.txt")
 
+
+
+def name_config2 (alg):
+    return alg
+
+exp.add_report(BetterSolvedTable(['CMit_seq____slf____rcpol-shr', 'CMit_slflpp_slf____rcpol-shr', 'CMit_chains_slf____rcpol-shr', 'ff-shr','ff-pref-shr', 'MpC-A-C', 'MpC-E-C'], name_config2), name="better_table_shr", outfile="better_table_shr.txt")
 
 
 
@@ -104,68 +126,62 @@ exp.add_report(MyTable(['ntr','shr','fwb-lr-m100'],['CMit_seq___', 'CMit_slflpp'
 
 
 
-
-# def scatter_alg(name, alg1, alg2, atr, domain_category, algo_to_latex):
-#     plot_options = {
-#         'size': '10cm',
-#         'num_extra_diagonal_lines': 2,
-#         'algo_to_latex': algo_to_latex,
-#         'extra_preamble' : [r"\makeatletter",
-#                             r"\def\input@path{{../}{./}}",
-#                             r"\makeatother",
-#                             # r"\input{packages}",
-#                             # r"\input{macros}"
-#                             ]
-#     }
-#     return (os.path.join(TARGET_DIR, name),
-#             NiceScatterPlotReport(filter_algorithm=[alg1, alg2], attributes=[atr], format='tex',
-#                                   get_category=lambda run1, run2: run1[domain_category],
-#                                   **plot_options))
-
+def scatter_alg(name, alg1, alg2, atr, domain_category, algo_to_latex):
+    plot_options = {
+        'size': '10cm',
+        'num_extra_diagonal_lines': 2,
+        'algo_to_latex': algo_to_latex,
+        'extra_preamble' : [r"\makeatletter",
+                            r"\def\input@path{{../}{./}}",
+                            r"\makeatother",
+                            # r"\input{packages}",
+                            # r"\input{macros}"
+                            ]
+    }
+    return (os.path.join(TARGET_DIR, name),
+            NiceScatterPlotReport(filter_algorithm=[alg1, alg2], attributes=[atr], format='tex',
+                                  # get_category=lambda run1, run2: run1[domain_category],
+                                  **plot_options))
 
 
-# ('a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf____rcpo_-shr', 'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf_________-shr')
+
+('a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf____rcpo_-shr', 'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf_________-shr')
 
 
-# algo_to_latex = {
-#     'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf____rcpol-shr' : 'A_1-chains-rcpol-shr',
-#     'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf_________-shr' : 'A_1-chains-shr',
-#     'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__seq_slf____rcpol-shr' : 'A_1-seq-rcpol-shr',
-#     'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__seq_slf_________-shr' : 'A_1-seq-shr',
-#     'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__seq____slf_lg_rcpol-shr' : 'A_1-seq-slf-lg-rcpol-shr',
-#     'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf_lg_rcpol-shr' : 'A_1-chains-lg-rcpol-shr'
-# }
+algo_to_latex = {
+    'MpC-A-C' : 'MpC-A-C',
+    'ff-pref-shr' : 'ff-pref-shr',
+    'CMit_chains_slf____rcpol-shr' : 'CMit-chains-slf-rcpol-shr',
+}
 
 
-# #Plots to show differences of optimizations versus not optimizations
-# scatter_plots = [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category", algo_to_latex)
-#                  for atr in ['planner_time', 'sat_clauses']
-#                  for (config1,config2) in [('a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf____rcpol-shr', 'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf_________-shr')]]
+#Plots to show differences of between general approaches (our SAT, MpC and FF-pref)
+scatter_plots = [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category", algo_to_latex)
+                 for atr in ['planner_time']
+                 for (config1,config2) in [('CMit_chains_slf____rcpol-shr',
+                                            'ff-pref-shr')]]
 
-  
-# #Plots to show differences of parallelism 
-# scatter_plots += [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category", algo_to_latex)
-#                  for atr in ['planner_time', 'sat_clauses', 'sat_variables', 'time_steps_with_label', 'plan_length']
-#                  for (config1,config2) in [('a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__seq____slf_lg_rcpol-shr', 'a938b5d2d5697b3c17c045512fe56824101e2b6c-A_1__chains_slf_lg_rcpol-shr')]]
+scatter_plots += [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category", algo_to_latex)
+                 for atr in ['planner_time']
+                 for (config1,config2) in [('CMit_chains_slf____rcpol-shr',
+                                            'MpC-A-C')]]
 
+scatter_plots += [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category", algo_to_latex)
+                 for atr in ['planner_time']
+                 for (config1,config2) in [('CMit_chains_slf____rcpol-shr',
+                                            'MpC-E-C')]]
 
-# # scatter_plots += [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category")
-# #                   for atr in ['planner_time', 'sat_clauses']: # 'sat_variables', 'time_steps_with_label', 'cost', 'plan_length']
-# #                   for (config1,config2) in []]
+scatter_plots += [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category", algo_to_latex)
+                 for atr in ['planner_time']
+                 for (config1,config2) in [('ff-pref-shr',
+                                            'MpC-E-C')]]
 
+scatter_plots += [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category", algo_to_latex)
+                 for atr in ['planner_time']
+                 for (config1,config2) in [('ff-pref-shr',
+                                            'MpC-A-C')]]
+ 
+add_nice_scatter_plot_step(exp, scatter_plots)
 
-# # scatter_plots = [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category")
-# #                  for atr in ['planner_time', 'sat_clauses', 'sat_variables', 'time_steps_with_label', 'cost', 'plan_length']
-# #                  for (config1,config2) in [('el_rnc_slfloopt_labgr_seq-shr','el_rnc_slfloopt_labgr_chain-shr')]]
-
-# # scatter_plots += [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category")
-# #                  for atr in ['planner_time', 'sat_variables', 'time_steps_with_label']
-# #                  for (config1,config2) in [('MpC-E-seq', 'el_rnc_slfloopt_labgr_chain-shr'), ('MpC-no-parallel-seq', 'el_rnc_slfloopt_labgr_chain-shr')]]
-
-# # scatter_plots += [scatter_alg(f"{atr}-{config1}-{config2}", config1, config2, atr, "domain_category")
-# #                  for atr in ['planner_time']
-# #                  for (config1,config2) in [('ff-trans','el_rnc_slfloopt_labgr_chain-shr')]]
-
-# add_nice_scatter_plot_step(exp, scatter_plots)
 
 exp.run_steps()
