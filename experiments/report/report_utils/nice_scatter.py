@@ -25,6 +25,10 @@ class NiceScatterPlotReport(PlanningReport):
         ylabel="",
         **kwargs,
     ):
+        self.ommit_preamble = kwargs.pop("ommit_preamble", None)
+        self.hide_legend = kwargs.pop("hide_legend", None)
+        self.sort_categories = kwargs.pop("sort_categories", None)
+        self.axis_options = kwargs.pop("axis_options", None)
         # Backwards compatibility.
         xscale = kwargs.pop("xscale", None)
         yscale = kwargs.pop("yscale", None)
@@ -183,7 +187,7 @@ class NiceScatterPlotReport(PlanningReport):
                     x if x is not None else missing_value,
                     y if y is not None else missing_value,
                 )
-                for x, y in coords
+                for x, y in coords if x is not None or y is not None
             ]
             if coords:
                 new_categories[category] = coords
