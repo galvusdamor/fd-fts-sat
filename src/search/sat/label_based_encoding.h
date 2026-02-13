@@ -2,7 +2,7 @@
 #define SEARCH_ALGORITHMS_SAT_SEARCH
 
 #include "sat_encoder.h"
-#include "sat_encoding.h"
+#include "state_encoding.h"
 #include "../task_representation/transition_system.h"
 
 
@@ -20,7 +20,7 @@ enum encoding_type {
 	CHAINS_PARALLEL
 };
 
-class LabelBasedEncoding : public SATEncoding {
+class LabelBasedEncoding : public StateEncoding {
 	bool statisticsPrinted;
 	bool useLabelGroups;
 	bool useSelfloopOptimisation;
@@ -33,16 +33,13 @@ class LabelBasedEncoding : public SATEncoding {
 	int oneEncodingThresholdPercent;
 	encoding_type encoding;
 
-	std::shared_ptr<task_representation::FTSTask> fts;
 	std::vector<std::shared_ptr<FTSMatrix>> fts_matrices;
 
 protected:
 	//// persistent data structures
-	std::map<int,std::vector<std::vector<int>>> allTimesStateVars;
 	std::map<int,std::vector<int>> allTimesLabelVars;
 
 	//// functions generating data structures
-    std::vector<std::vector<int>> generateStateVars() const;
     std::vector<int> generateLabelVars() const;
 	std::vector<std::vector<std::vector<int>>> generateLabelGroupVars(const std::vector<int> &labelVars) const;
 	std::map<int, std::map<int, std::vector<int>>> generateHelperVars() const;
@@ -79,9 +76,6 @@ public:
 	~LabelBasedEncoding() override = default;
 
 	void encode(int fromTime, int toTime) override;
-	void encodeInit(int fromTime, bool retractable) override;
-	void encodeGoal(int toTime, bool retractable) override;
-	void encodeStateEquals(int fromTime, int toTime, bool retractable) override;
 	std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> extractSolution(int initTime, std::vector<std::pair<int,int>> time_step_order) override;
 };
 
