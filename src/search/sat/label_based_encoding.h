@@ -3,6 +3,7 @@
 
 #include "sat_encoder.h"
 #include "state_encoding.h"
+#include "label_encoding.h"
 #include "../task_representation/transition_system.h"
 
 
@@ -20,9 +21,8 @@ enum encoding_type {
 	CHAINS_PARALLEL
 };
 
-class LabelBasedEncoding : public StateEncoding {
+class LabelBasedEncoding : public LabelEncoding {
 	bool statisticsPrinted;
-	bool useLabelGroups;
 	bool useSelfloopOptimisation;
 	bool useEmptyRows;
 	bool useEmptyCols;
@@ -36,13 +36,6 @@ class LabelBasedEncoding : public StateEncoding {
 	std::vector<std::shared_ptr<FTSMatrix>> fts_matrices;
 
 protected:
-	//// persistent data structures
-	std::map<int,std::vector<int>> allTimesLabelVars;
-
-	//// functions generating data structures
-    std::vector<int> generateLabelVars() const;
-	std::vector<std::vector<std::vector<int>>> generateLabelGroupVars(const std::vector<int> &labelVars) const;
-	std::map<int, std::map<int, std::vector<int>>> generateHelperVars() const;
 
 	/// encoding functions for parallelism
 	void encode_sequential(const std::vector<int> & labelVars);
@@ -54,6 +47,9 @@ protected:
 	int encode_frame_axioms(const std::vector<std::vector<int>> & previousStateVars, const std::vector<int> &labelVars, const std::vector<std::vector<int>> & nextStateVars);
 
 	bool is_below_threshold(int ts, size_t ones_to_consider);
+
+	std::vector<std::vector<int>> extractIntermediateStates(std::vector<int> & selectedLabels, std::vector<int> & currentLastState, std::vector<int> & nextState);
+
 
 public:
     explicit LabelBasedEncoding(

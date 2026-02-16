@@ -136,9 +136,8 @@ LabelBasedEncoding::LabelBasedEncoding(
 	size_t _oneEncodingThreshold,
 	int _oneEncodingThresholdPercent,
 	const encoding_type & _encoding,
-	const std::vector<shared_ptr<FTSMatrix>> & fts_matrix): StateEncoding(capsule,_fts, forceAtLeastOneAction),
+	const std::vector<shared_ptr<FTSMatrix>> & fts_matrix): LabelEncoding(capsule,_fts, forceAtLeastOneAction, _useLabelGroups, fts_matrix),
 	statisticsPrinted(_statisticsPrinted),
-	useLabelGroups(_useLabelGroups),
 	useSelfloopOptimisation(_useSelfloopOptimisation),
 	useEmptyRows(_useEmptyRows),
 	useEmptyCols(_useEmptyCols),
@@ -147,8 +146,7 @@ LabelBasedEncoding::LabelBasedEncoding(
 	usePositiveOneForEmpty(_usePositiveOneForEmpty),
 	oneEncodingThreshold(_oneEncodingThreshold),
 	oneEncodingThresholdPercent(_oneEncodingThresholdPercent),
-	encoding(_encoding),
-	fts_matrices(fts_matrix)
+	encoding(_encoding)
 {
 }
 
@@ -173,63 +171,6 @@ unique_ptr<SATEncoding> LabelBasedEncodingFactory::createEncodingInstance(std::s
 			useEmptyRows,useEmptyCols,useEmptyPillars,useOnesInLastDimension,usePositiveOneForEmpty,forceAtLeastOneAction,
 			oneEncodingThreshold,oneEncodingThresholdPercent,
 			encoding,fts_matrices);
-}
-
-vector<int> LabelBasedEncoding::generateLabelVars(/* , int timestep */) const {
-	vector<int> labelVars(fts->get_num_labels());
-	for(int label = 0 ; label < fts->get_num_labels() ; label++){
-		int labelVar = sat->new_variable();
-		labelVars[label] = labelVar;
-		DEBUG(sat->registerVariable(labelVar,"Label:"+to_string(label)));
-		//cout << labelVar << endl;
-	}
-	return labelVars;
-}
-
-vector<vector<vector<int>>> LabelBasedEncoding::generateLabelGroupVars(const vector<int> &labelVars/* , int timestep */) const{
-	vector<vector<vector<int>>> labelGroupVars(fts->get_size());
-	for(int ts = 0 ; ts < fts->get_size(); ts++){
-		const auto & fts_matrix = fts_matrices[ts];
-		labelGroupVars[ts].resize(fts_matrix->get_num_label_groups());
-		for(int lg = 0 ; lg < fts_matrix->get_num_label_groups(); lg++){
-			if (useLabelGroups) {
-				// if the label group has only one member then always use the variable of that label itself.
-				if(fts_matrix->get_labels_in_label_group(lg).size() == 1){
-					labelGroupVars[ts][lg].push_back(labelVars[fts_matrix->get_labels_in_label_group(lg)[0]]);
-					continue;
-				}
-				int lab_group = sat->new_variable();
-				DEBUG(sat->registerVariable(lab_group,"LabelGroup:"+to_string(lg)));
-				labelGroupVars[ts][lg].push_back(lab_group);
-				vector<int> labels;
-				for(int label : fts_matrix->get_labels_in_label_group(lg)){
-					sat->implies(labelVars[label], lab_group);
-					labels.push_back(labelVars[label]);
-				}
-				sat->impliesOr(lab_group, labels);
-			} else {
-				for(int label : fts_matrix->get_labels_in_label_group(lg)) {
-					labelGroupVars[ts][lg].push_back(labelVars[label]);
-				}
-			}
-		}
-	}
-	return labelGroupVars;
-}
-
-map<int, map<int, vector<int>>> LabelBasedEncoding::generateHelperVars(/* , int timestep */) const{
-	map<int, map<int, vector<int>>> helperVars;
-	for(int ts = 0 ; ts < fts->get_size() ; ts++){
-		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
-			int num_helper_vars = fts_matrices[ts]->get_not_always_selfloop_labels_reaching_target(states).size() - 1;
-			for(int h = 0 ; h < num_helper_vars ; h++){
-				int helperVar = sat->new_variable();
-				DEBUG(sat->registerVariable(helperVar, "Helpers"));
-				helperVars[ts][states].push_back(helperVar);
-			}
-		}
-	}
-	return helperVars;
 }
 
 
@@ -739,6 +680,27 @@ void LabelBasedEncoding::encode(int fromTime, int toTime){
 }
 
 
+std::vector<std::vector<int>> LabelBasedEncoding::extractIntermediateStates(std::vector<int> & selectedLabels, std::vector<int> & currentLastState, std::vector<int> & nextState){
+	vector<vector<int>> intermediateStates;
+	for(size_t l = 0 ; l < selectedLabels.size() - 1 ; l++){
+		vector<int> intermediateState;
+		for(int ts = 0 ; ts < fts->get_size() ; ts++){
+			const TransitionSystem & tss = fts->get_ts(ts);
+			if(tss.isAlwaysSelfLoop(selectedLabels[l])){
+				if (intermediateStates.size() == 0)
+					intermediateState.push_back(currentLastState[ts]);
+				else
+					intermediateState.push_back(intermediateStates.back()[ts]);
+			}else{
+				intermediateState.push_back(nextState[ts]);
+			}
+		}
+		intermediateStates.push_back(intermediateState);
+	}
+
+	return intermediateStates;
+}
+
 // run plan extraction
 std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> LabelBasedEncoding::extractSolution(int initTime,
 	std::vector<std::pair<int,int>> time_step_order){
@@ -785,18 +747,9 @@ std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> Labe
 		// intermediate states
 		// code in this if is dependent on encode. Rest is common to all encodings
 		if(selectedLabels.size() > 1){
-			for(size_t l = 0 ; l < selectedLabels.size() - 1 ; l++){
-				vector<int> intermediateState;
-				for(int ts = 0 ; ts < fts->get_size() ; ts++){
-					const TransitionSystem & tss = fts->get_ts(ts);
-					if(tss.isAlwaysSelfLoop(selectedLabels[l])){
-						intermediateState.push_back(statesPerTimestep.back()[ts]);
-					}else{
-						intermediateState.push_back(stateReconstructor[ts]);
-					}
-				}
-				statesPerTimestep.push_back(intermediateState);
-			}
+			vector<vector<int>> intermediateStates = extractIntermediateStates(selectedLabels, statesPerTimestep.back(), stateReconstructor);
+			for(vector<int> & state : intermediateStates)
+				statesPerTimestep.push_back(state);
 		}
 
 		if (selectedLabels.size() > 0){
