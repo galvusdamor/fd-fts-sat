@@ -2,8 +2,7 @@
 #define SEARCH_ALGORITHMS_SAT_SEARCH
 
 #include "sat_encoder.h"
-#include "state_encoding.h"
-#include "label_encoding.h"
+#include "common_encoding.h"
 #include "../task_representation/transition_system.h"
 
 
@@ -21,9 +20,8 @@ enum encoding_type {
 	CHAINS_PARALLEL
 };
 
-class LabelBasedEncoding : public LabelEncoding {
+class LabelBasedEncoding : public CommonEncoding {
 	bool statisticsPrinted;
-	bool useSelfloopOptimisation;
 	bool useEmptyRows;
 	bool useEmptyCols;
 	bool useEmptyPillars;
@@ -37,14 +35,19 @@ class LabelBasedEncoding : public LabelEncoding {
 
 protected:
 
+	std::map<int,std::vector<std::vector<std::vector<int>>>> allTimesLabelGroupVars;
+	std::map<int,int> someLabelExecutedPerTime;
+
 	/// encoding functions for parallelism
 	void encode_sequential(const std::vector<int> & labelVars);
 	void encode_self_loop_parallel(const std::vector<int> & labelVars);
 	void encode_chains_parallel(const std::vector<int> & labelVars, const std::vector<std::vector<int>> & nextStateVars);
 
 	/// encoding function for the main transition relation
-	void encode_transition(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<std::vector<int>>> &labelGroupVars, const int someLabelExecutedVar, const std::vector<std::vector<int>> & nextStateVars);
-	int encode_frame_axioms(const std::vector<std::vector<int>> & previousStateVars, const std::vector<int> &labelVars, const std::vector<std::vector<int>> & nextStateVars);
+	void encode_transition(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<int>> & nextStateVars, int fromTime/*, int toTime*/);
+	void encode_transition_semantics(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<std::vector<int>>> &labelGroupVars, const int someLabelExecutedVar, const std::vector<std::vector<int>> & nextStateVars);
+	void encode_frame_axioms(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<int>> & nextStateVars, int fromTime);
+	void generateAdditionalVariables(int fromTime/*, int toTime*/);
 
 	bool is_below_threshold(int ts, size_t ones_to_consider);
 
@@ -71,7 +74,7 @@ public:
 			);
 	~LabelBasedEncoding() override = default;
 
-	void encode(int fromTime, int toTime) override;
+	//void encode(int fromTime, int toTime) override;
 	std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> extractSolution(int initTime, std::vector<std::pair<int,int>> time_step_order) override;
 };
 

@@ -564,6 +564,7 @@ fast_downward_plugin(
         sat/sat_encoding
         sat/state_encoding
         sat/label_encoding
+        sat/common_encoding
         sat/label_based_encoding
         #sat/bdd_encoding
 		sat/length_strategy

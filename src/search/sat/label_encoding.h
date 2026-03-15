@@ -3,16 +3,17 @@
 
 #include "state_encoding.h"
 
-namespace sat_search{
+namespace task_representation {
+    class TransitionSystem;
+}
 
-class FTSMatrix;
+namespace sat_search{
 
 class LabelEncoding : public StateEncoding {
 	
-	protected:
+protected:
 	bool useLabelGroups;
-
-	std::vector<std::shared_ptr<FTSMatrix>> fts_matrices;
+	bool useSelfloopOptimisation;
 	
 	//// persistent data structures
 	std::map<int,std::vector<int>> allTimesLabelVars;
@@ -21,6 +22,7 @@ class LabelEncoding : public StateEncoding {
     std::vector<int> generateLabelVars() const;
 	std::vector<std::vector<std::vector<int>>> generateLabelGroupVars(const std::vector<int> &labelVars) const;
 	std::map<int, std::map<int, std::vector<int>>> generateHelperVars() const;
+	std::vector<std::vector<int>> compute_and_return_labels_reaching_target(const task_representation::TransitionSystem & fts) const;
 
 public:
     explicit LabelEncoding(
@@ -28,7 +30,7 @@ public:
 		const std::shared_ptr<task_representation::FTSTask> & _fts,
 		bool _forceAtLeastOneAction,
 		bool _useLabelGroups,
-		const std::vector<std::shared_ptr<FTSMatrix>> & _fts_matrices
+		bool _useSelfloopOptimisation
 			);
 	~LabelEncoding() override = default;
 };
