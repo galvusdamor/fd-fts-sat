@@ -562,6 +562,9 @@ fast_downward_plugin(
 		search_engines/rintanen_search
         sat/sat_encoder
         sat/sat_encoding
+        sat/state_encoding
+        sat/label_encoding
+        sat/common_encoding
         sat/label_based_encoding
         #sat/bdd_encoding
 		sat/length_strategy

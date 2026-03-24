@@ -43,6 +43,8 @@ class IncrementalSATSearch : public SearchEngine {
 	int currentGenerated;
 	int currentLastAfterInit;
 	int currentFirstBeforeGoal;
+	
+	bool trivially_unsolvable;
 
 protected:
     virtual void initialize() override;

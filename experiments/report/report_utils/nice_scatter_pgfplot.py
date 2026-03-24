@@ -14,15 +14,24 @@ class NiceScatterPgfplots:
         if report.y_upper is not None:
             options["ymax"] = report.y_upper
         lines.append(f"\\begin{{axis}}[{cls._format_options(options)}]")
-        for category, coords in sorted(report.categories.items()):
+        
+        sorted_categories = sorted(report.categories, key=report.sort_categories) if hasattr(report,"sort_categories") else sorted(report.categories)
+        
+        for category in sorted_categories:
+            coords = report.categories[category]
             lines.append(
                 "\\addplot+[{}] coordinates {{\n{}\n}};".format(
                     cls._format_options({"only marks": True}),
                     " ".join(str(c) for c in coords),
                 )
             )
+
             if category:
-                lines.append(f"\\addlegendentry{{{category}}}")
+                if report.hide_legend:
+                    lines.append(f"%\\addlegendentry{{{category}}}")
+                else:
+                    lines.append(f"\\addlegendentry{{{category}}}")
+
             elif report.has_multiple_categories():
                 # None is treated as the default category if using multiple
                 # categories. Add a corresponding entry to the legend.
@@ -79,19 +88,23 @@ class NiceScatterPgfplots:
 
     @classmethod
     def write(cls, report, filename):
-        lines = (
-            [
-                r"\documentclass[tikz]{standalone}",
-                r"\usepackage{pgfplots}",
-            ]
-            + report.extra_preamble
-            + [
-                r"\begin{document}",
-                r"\begin{tikzpicture}",
-            ]
-            + cls._get_plot(report)
-            + [r"\end{tikzpicture}", r"\end{document}"]
-        )
+        if report.ommit_preamble:
+            lines = cls._get_plot(report)
+            
+        else:            
+            lines = (
+                [
+                    r"\documentclass[tikz]{standalone}",
+                    r"\usepackage{pgfplots}",
+                ]
+                + report.extra_preamble
+                + [
+                    r"\begin{document}",
+                    r"\begin{tikzpicture}",
+                ]
+                + cls._get_plot(report)
+                + [r"\end{tikzpicture}", r"\end{document}"]
+            )
         tools.makedirs(os.path.dirname(filename))
         tools.write_file(filename, "\n".join(lines))
         logging.info(f"Wrote file://{filename}")
@@ -99,10 +112,20 @@ class NiceScatterPgfplots:
     @classmethod
     def _get_axis_options(cls, report):
         axis = {}
+        if report.axis_options:
+            axis = report.axis_options
+            
         axis["xlabel"] = report.xlabel
         axis["ylabel"] = report.ylabel
-        axis["title"] = report.title
-        axis["legend cell align"] = "left"
+        if report.title: 
+            axis["title"] = report.title
+        if "legend cell align" not in report.axis_options and not report.hide_legend: 
+            axis["legend cell align"] = "left"
+
+            if report.has_multiple_categories():
+                axis["legend style"] = cls._format_options(
+                    {"legend pos": "outer north east"}
+                )
 
         convert_scale = {"log": "log", "symlog": "log", "linear": "normal"}
         axis["xmode"] = convert_scale[report.xscale]
@@ -111,10 +134,6 @@ class NiceScatterPgfplots:
         axis["width"] = report.width
         axis["height"] = report.height
 
-        if report.has_multiple_categories():
-            axis["legend style"] = cls._format_options(
-                {"legend pos": "outer north east"}
-            )
 
         return axis
 

@@ -105,6 +105,8 @@ public:
     void set_plan_operators(const std::vector<GlobalState> & states,
                             const std::vector<OperatorID> & operators);
 
+    void remove_redundant_actions();
+
     const std::vector<int> & get_labels ()const {
         return labels;
     }
@@ -112,6 +114,8 @@ public:
     const std::vector<PlanState> & get_traversed_states ()const {
         return states;
     }
+
+    friend std::ostream &operator<<(std::ostream &os, const Plan & plan);
 
 };
 

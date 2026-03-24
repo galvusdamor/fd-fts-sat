@@ -333,7 +333,8 @@ struct length_runner {
 				bool firstRound = true;
 				// check if we have used too much memory; we add 500 MB of leeway
 				while (current_memory + 1000*1024 > call->scheduler->memory_limit_mbs * 1024){
-					if (firstRound)
+					// don't print messages if we are the only thread still running
+					if (firstRound && call->scheduler->currentInstances.size() > 1)
 						cout << call->identifier << "formula generation paused at " << std::ceil(current_memory / 1024) << "MB" << endl;
 					firstRound = false;
 					// invoke the schedule to notify that we need to be stopped due to memory
@@ -352,7 +353,8 @@ struct length_runner {
 						break; // scheduler told us to keep working despite the memory limit
 					}
 				}
-				if (!firstRound){
+				// don't print messages if we are the only thread still running
+				if (!firstRound && call->scheduler->currentInstances.size() > 1){
 					// resumption message
 					current_memory = utils::get_current_memory_in_kb();
 					cout << call->identifier << " resuming formula generation at " << std::ceil(current_memory / 1024) << "MB" << endl;

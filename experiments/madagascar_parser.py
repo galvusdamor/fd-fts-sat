@@ -51,8 +51,9 @@ def set_planner_error_and_coverage(content, props):
 
     if "oot_time" in props:
         assert props["coverage"] == 0
-        assert "error" not in props
-        props["error"] = "search-out-of-time"
+        #assert "error" not in props
+        if "error" not in props:
+            props["error"] = "search-out-of-time"
 
     if "unsolved_steps" in props:
         assert props["coverage"] == 0
@@ -83,6 +84,7 @@ class MadagascarParser(Parser):
         self.add_pattern('plan_length', '(.+) actions in the plan.', required=False, type=int)
         self.add_pattern('cost', 'Cost of the plan is (.+).', required=False, type=int)
         self.add_pattern('planner_time', 'total time (.+) preprocess', required=False, type=float)
+        self.add_pattern('total_time', 'total time (.+) preprocess', required=False, type=float)
         self.add_pattern('planner_memory_mb', 'total size (.+) MB', required=False, type=float)
         self.add_pattern('planner_memory_gb', 'total size (.+) GB', required=False, type=float)
 
@@ -95,6 +97,9 @@ class MadagascarParser(Parser):
         self.add_pattern("planner_exit_code", r"planner exit code: (.+)\n", type=int, file="driver.log")
         self.add_pattern("validate_exit_code", r"validate exit code: (.+)\n", type=int, file="driver.log")
         self.add_pattern("planner_time", r"planner wall-clock time: (.+)s\n", type=float, file="driver.log")
+        self.add_pattern("total_time", r"planner wall-clock time: (.+)s\n", type=float, file="driver.log")
+        
+        self.add_pattern("sat_variables_length_5","Horizon 5: ([^s]+) variables", type=int)
 
         self.add_function(set_planner_error_and_coverage)
         self.add_function(set_number_of_variables)

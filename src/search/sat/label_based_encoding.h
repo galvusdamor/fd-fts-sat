@@ -2,7 +2,7 @@
 #define SEARCH_ALGORITHMS_SAT_SEARCH
 
 #include "sat_encoder.h"
-#include "sat_encoding.h"
+#include "common_encoding.h"
 #include "../task_representation/transition_system.h"
 
 
@@ -20,31 +20,23 @@ enum encoding_type {
 	CHAINS_PARALLEL
 };
 
-class LabelBasedEncoding : public SATEncoding {
+class LabelBasedEncoding : public CommonEncoding {
 	bool statisticsPrinted;
-	bool useLabelGroups;
-	bool useSelfloopOptimisation;
 	bool useEmptyRows;
 	bool useEmptyCols;
 	bool useEmptyPillars;
 	bool useOnesInLastDimension;
 	bool usePositiveOneForEmpty;
+	size_t oneEncodingThreshold;
+	int oneEncodingThresholdPercent;
 	encoding_type encoding;
 
-	std::shared_ptr<task_representation::FTSTask> fts;
 	std::vector<std::shared_ptr<FTSMatrix>> fts_matrices;
 
-	size_t oneEncodingThreshold = 1;
 protected:
-	//// persistent data structures
-	std::map<int,std::vector<std::vector<int>>> allTimesStateVars;
-	std::map<int,std::vector<int>> allTimesLabelVars;
 
-	//// functions generating data structures
-    std::vector<std::vector<int>> generateStateVars() const;
-    std::vector<int> generateLabelVars() const;
-	std::vector<std::vector<std::vector<int>>> generateLabelGroupVars(const std::vector<int> &labelVars) const;
-	std::map<int, std::map<int, std::vector<int>>> generateHelperVars() const;
+	std::map<int,std::vector<std::vector<std::vector<int>>>> allTimesLabelGroupVars;
+	std::map<int,int> someLabelExecutedPerTime;
 
 	/// encoding functions for parallelism
 	void encode_sequential(const std::vector<int> & labelVars);
@@ -52,8 +44,14 @@ protected:
 	void encode_chains_parallel(const std::vector<int> & labelVars, const std::vector<std::vector<int>> & nextStateVars);
 
 	/// encoding function for the main transition relation
-	void encode_transition(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<std::vector<int>>> &labelGroupVars, const std::vector<std::vector<int>> & nextStateVars);
-	void encode_frame_axioms(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<std::vector<int>>> &labelGroupVars, const std::vector<std::vector<int>> & nextStateVars);
+	void encode_transition(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<int>> & nextStateVars, int fromTime/*, int toTime*/);
+	void encode_transition_semantics(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<std::vector<int>>> &labelGroupVars, const int someLabelExecutedVar, const std::vector<std::vector<int>> & nextStateVars);
+	void encode_frame_axioms(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<int>> & nextStateVars, int fromTime);
+	void generateAdditionalVariables(int fromTime/*, int toTime*/);
+
+	bool is_below_threshold(int ts, size_t ones_to_consider);
+
+	std::vector<std::vector<int>> extractIntermediateStates(std::vector<int> & selectedLabels, std::vector<int> & currentLastState, std::vector<int> & nextState);
 
 
 public:
@@ -69,16 +67,14 @@ public:
 		bool _useOnesInLastDimension,
 		bool _usePositiveOneForEmpty,
 		bool _forceAtLeastOneAction,
+		const size_t _oneEncodingThreshold,
+		const int _oneEncodingThresholdPercent,
 		const encoding_type & _encoding,
 		const std::vector<std::shared_ptr<FTSMatrix>> & fts_matrices
 			);
-	//~LabelBasedEncoding() override = default;
-	~LabelBasedEncoding() override { std::cout << "Deleting encoding instance" << std::endl; };
+	~LabelBasedEncoding() override = default;
 
-	void encode(int fromTime, int toTime) override;
-	void encodeInit(int fromTime, bool retractable) override;
-	void encodeGoal(int toTime, bool retractable) override;
-	void encodeStateEquals(int fromTime, int toTime, bool retractable) override;
+	//void encode(int fromTime, int toTime) override;
 	std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> extractSolution(int initTime, std::vector<std::pair<int,int>> time_step_order) override;
 };
 
@@ -91,6 +87,8 @@ class LabelBasedEncodingFactory : public SATEncodingFactory {
 	const bool useEmptyPillars;
 	const bool useOnesInLastDimension;
 	const bool usePositiveOneForEmpty;
+	const size_t oneEncodingThreshold;
+	const int oneEncodingThresholdPercent;
 	const encoding_type encoding;
 	bool statisticsPrinted;
 	

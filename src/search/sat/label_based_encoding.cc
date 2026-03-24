@@ -32,6 +32,8 @@ LabelBasedEncodingFactory::LabelBasedEncodingFactory(const options::Options &opt
 	useEmptyPillars(opts.get<bool>("use_empty_pillars")),
 	useOnesInLastDimension(opts.get<bool>("use_ones_in_last_dimension")),
 	usePositiveOneForEmpty(opts.get<bool>("use_positive_one")),
+	oneEncodingThreshold(size_t(opts.get<int>("one_encoding_threshold"))),
+	oneEncodingThresholdPercent(opts.get<int>("one_encoding_threshold_percent")),
 	encoding(encoding_type(opts.get_enum("encoding")))
 	 {
 	statisticsPrinted = false;
@@ -98,6 +100,16 @@ static shared_ptr<SATEncodingFactory> _parse_label_based_sat_factory(options::Op
     	"force that every time step contains at least one action",
     	"false");
 
+	parser.add_option<int>(
+    	"one_encoding_threshold",
+    	"if ones in src/target/label is less or equal to this number, use positive encoding instead of negative one",
+    	"1");
+
+	parser.add_option<int>(
+    	"one_encoding_threshold_percent",
+    	"if percentage of ones in src/target/label is less or equal to this number, use positive encoding instead of negative one",
+    	"0");
+
     options::Options opts = parser.parse();
     if (parser.dry_run())
         return nullptr;
@@ -121,18 +133,19 @@ LabelBasedEncoding::LabelBasedEncoding(
 	bool _useOnesInLastDimension,
 	bool _usePositiveOneForEmpty,
 	bool forceAtLeastOneAction,
+	size_t _oneEncodingThreshold,
+	int _oneEncodingThresholdPercent,
 	const encoding_type & _encoding,
-	const std::vector<shared_ptr<FTSMatrix>> & fts_matrix): SATEncoding(capsule,_fts, forceAtLeastOneAction),
+	const std::vector<shared_ptr<FTSMatrix>> & fts_matrix): CommonEncoding(capsule,_fts, forceAtLeastOneAction, _useLabelGroups, _useSelfloopOptimisation),
 	statisticsPrinted(_statisticsPrinted),
-	useLabelGroups(_useLabelGroups),
-	useSelfloopOptimisation(_useSelfloopOptimisation),
 	useEmptyRows(_useEmptyRows),
 	useEmptyCols(_useEmptyCols),
 	useEmptyPillars(_useEmptyPillars),
 	useOnesInLastDimension(_useOnesInLastDimension),
 	usePositiveOneForEmpty(_usePositiveOneForEmpty),
+	oneEncodingThreshold(_oneEncodingThreshold),
+	oneEncodingThresholdPercent(_oneEncodingThresholdPercent),
 	encoding(_encoding),
-	fts(_fts),
 	fts_matrices(fts_matrix)
 {
 }
@@ -155,82 +168,9 @@ unique_ptr<SATEncoding> LabelBasedEncodingFactory::createEncodingInstance(std::s
 	bool oldStatisticsPrinted = statisticsPrinted;
 	statisticsPrinted = true;
 	return make_unique<LabelBasedEncoding>(capsule,fts,oldStatisticsPrinted,useLabelGroups,useSelfloopOptimisation,
-			useEmptyRows,useEmptyCols,useEmptyPillars,useOnesInLastDimension,usePositiveOneForEmpty,forceAtLeastOneAction,encoding,
-			fts_matrices);
-}
-
-
-
-
-vector<vector<int>> LabelBasedEncoding::generateStateVars(/* , int timestep */) const {
-	vector<vector<int>> stateVars(fts->get_size());
-	for(int ts = 0 ; ts < fts->get_size() ; ts++){
-		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
-			int stateVar = sat->new_variable();
-			stateVars[ts].push_back(stateVar);
-			DEBUG(sat->registerVariable(stateVar,"TS:"+to_string(ts)+";Val:"+to_string(states)));
-		}
-		sat->atMostOne(stateVars[ts]);
-		sat->atLeastOne(stateVars[ts]);
-	}
-	return stateVars;
-}
-
-vector<int> LabelBasedEncoding::generateLabelVars(/* , int timestep */) const {
-	vector<int> labelVars(fts->get_num_labels());
-	for(int label = 0 ; label < fts->get_num_labels() ; label++){
-		int labelVar = sat->new_variable();
-		labelVars[label] = labelVar;
-		DEBUG(sat->registerVariable(labelVar,"Label:"+to_string(label)));
-		//cout << labelVar << endl;
-	}
-	return labelVars;
-}
-
-vector<vector<vector<int>>> LabelBasedEncoding::generateLabelGroupVars(const vector<int> &labelVars/* , int timestep */) const{
-	vector<vector<vector<int>>> labelGroupVars(fts->get_size());
-	for(int ts = 0 ; ts < fts->get_size(); ts++){
-		const auto & fts_matrix = fts_matrices[ts];
-		labelGroupVars[ts].resize(fts_matrix->get_num_label_groups());
-		for(int lg = 0 ; lg < fts_matrix->get_num_label_groups(); lg++){
-			if (useLabelGroups) {
-				// if the label group has only one member then always use the variable of that label itself.
-				if(fts_matrix->get_labels_in_label_group(lg).size() == 1){
-					labelGroupVars[ts][lg].push_back(labelVars[fts_matrix->get_labels_in_label_group(lg)[0]]);
-					continue;
-				}
-				int lab_group = sat->new_variable();
-				DEBUG(sat->registerVariable(lab_group,"LabelGroup:"+to_string(lg)));
-				labelGroupVars[ts][lg].push_back(lab_group);
-				vector<int> labels;
-				for(int label : fts_matrix->get_labels_in_label_group(lg)){
-					sat->implies(labelVars[label], lab_group);
-					labels.push_back(labelVars[label]);
-				}
-				sat->impliesOr(lab_group, labels);
-			} else {
-				for(int label : fts_matrix->get_labels_in_label_group(lg)) {
-					labelGroupVars[ts][lg].push_back(labelVars[label]);
-				}
-			}
-		}
-	}
-	return labelGroupVars;
-}
-
-map<int, map<int, vector<int>>> LabelBasedEncoding::generateHelperVars(/* , int timestep */) const{
-	map<int, map<int, vector<int>>> helperVars;
-	for(int ts = 0 ; ts < fts->get_size() ; ts++){
-		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
-			int num_helper_vars = fts_matrices[ts]->get_not_always_selfloop_labels_reaching_target(states).size() - 1;
-			for(int h = 0 ; h < num_helper_vars ; h++){
-				int helperVar = sat->new_variable();
-				DEBUG(sat->registerVariable(helperVar, "Helpers"));
-				helperVars[ts][states].push_back(helperVar);
-			}
-		}
-	}
-	return helperVars;
+			useEmptyRows,useEmptyCols,useEmptyPillars,useOnesInLastDimension,usePositiveOneForEmpty,forceAtLeastOneAction,
+			oneEncodingThreshold,oneEncodingThresholdPercent,
+			encoding,fts_matrices);
 }
 
 
@@ -282,8 +222,19 @@ void LabelBasedEncoding::encode_chains_parallel(const vector<int> & labelVars, c
 	}
 }
 
-void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousStateVars,
-	const vector<vector<vector<int>>> & labelGroupVars, const vector<vector<int>> & nextStateVars){
+bool LabelBasedEncoding::is_below_threshold(int ts, size_t ones_to_consider){
+	if (ones_to_consider <= oneEncodingThreshold) return true;
+	
+	// use integer math here.
+	const int numStates = fts->get_ts(ts).get_size();
+	if (int(ones_to_consider) * 100 <= numStates * oneEncodingThresholdPercent) return true;
+	return false;	
+}
+
+
+void LabelBasedEncoding::encode_transition_semantics(const vector<vector<int>> & previousStateVars,
+	const vector<vector<vector<int>>> & labelGroupVars, const int someLabelExecutedVar, const vector<vector<int>> & nextStateVars){
+
 	// for statistics
 	int cnt_0_label_target = 0;
 	int cnt_0_label_source = 0;
@@ -296,18 +247,23 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 	int cnt_1_target_source = 0;
 	int cnt_1_target_label = 0;
 	int cnt_1_label_source_target = 0;
+
+	if (forceAtLeastOneAction || useSelfloopOptimisation) assert(someLabelExecutedVar == 0);
+	else assert(someLabelExecutedVar > 0);
+	// no label was executed it (\neg some label was executed)
 	
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		const auto &fts_matrix = fts_matrices[ts];
 		const TransitionSystem & tss = fts->get_ts(ts);
 		const int numLabelGroups = fts_matrix->get_num_label_groups();
 		const int numStates = fts->get_ts(ts).get_size();
-		vector<int> labelGroupsWithActualTransitions;
 
-		int selfLoopAuxVar = 0; // for later use
+		int executedNonSelfLoopLabel = 0; // for later use
 
-		// 1. Step: if desired, handle self-loops separately	
+		// 1. Step: if desired, handle self-loops separately
 		if(useSelfloopOptimisation) {
+			vector<int> labelGroupsWithActualTransitions;
+			
 			for(int lg = 0 ; lg < numLabelGroups ; lg++) {
 				// representative label of this group
 				int label = fts_matrix->get_labels_in_label_group(lg)[0];
@@ -315,9 +271,13 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 				if(tss.isIrrelevantLabel(label)) continue;
 				if(tss.isAlwaysSelfLoop(label)){
 					auto transitions = tss.get_transitions_with_label(label);
+				
+					// self-loop transitions force conditions on the previous state and next state
+					// Semantics: these always self-loop-vars are executed either before or after the "main" transition 
 					vector<int> preconditions;
 					vector<int> effects;
 					for(Transition t : transitions){
+						assert(t.src == t.target); // must be a self-loop
 						preconditions.push_back(previousStateVars[ts][t.src]);
 						effects.push_back(nextStateVars[ts][t.target]);
 					}
@@ -329,23 +289,41 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					continue;
 				}
 				// if we reach this point, the label group has actual transitions
-				for(const int var : labelGroupVars[ts][lg]){
+				for(const int var : labelGroupVars[ts][lg])
 					labelGroupsWithActualTransitions.push_back(var);
-				}
 			}
 			// frame axioms for self-loops. If no label with an actual transition was executed, enforce frame axiom
-			selfLoopAuxVar = sat->new_variable();
-			DEBUG(sat->registerVariable(selfLoopAuxVar,"selfLoopAuxVar"));
-			sat->impliesOr(-selfLoopAuxVar, labelGroupsWithActualTransitions);
+			int executedTransitionIsSelfLoop = sat->new_variable();
+			DEBUG(sat->registerVariable(executedTransitionIsSelfLoop,"executedTransitionIsSelfLoop@" + to_string(ts)));
+			sat->impliesOr(-executedTransitionIsSelfLoop, labelGroupsWithActualTransitions);
+			// if we are in sequential encoding *and*
+
+
 			// Note: these clauses are equivalent to: 
 			// s + p -> n = -s v -p v n = p & -n -> -s
 			// -s + p -> -n = s v -p v -n = p & n -> s
 			// Since one of the p's is always true, they *force* s to be true of we remain in the same state.
 			for(int states = 0 ; states < numStates ; states++){
-				sat->andImplies(selfLoopAuxVar, previousStateVars[ts][states], nextStateVars[ts][states]);
-				sat->andImplies(-selfLoopAuxVar, previousStateVars[ts][states], -nextStateVars[ts][states]);
+				sat->andImplies(executedTransitionIsSelfLoop, previousStateVars[ts][states], nextStateVars[ts][states]);
+				sat->andImplies(-executedTransitionIsSelfLoop, previousStateVars[ts][states], -nextStateVars[ts][states]);
 			}
+
+			// create a variable that is true if and only if we executed one label has is not always a self-loop
+			if (usePositiveOneForEmpty){
+				executedNonSelfLoopLabel = sat->new_variable();
+				DEBUG(sat->registerVariable(executedNonSelfLoopLabel,"executedNonSelfLoopLabel@" + to_string(ts)));
+				sat->impliesOr(executedNonSelfLoopLabel,labelGroupsWithActualTransitions);
+				sat->orImplies(labelGroupsWithActualTransitions,executedNonSelfLoopLabel);
+				// connection between vars (might help SAT solver)
+				sat->implies(-executedTransitionIsSelfLoop, executedNonSelfLoopLabel);
+			}
+		} else {
+			// if we don't optimise self-loops, we did execute a "non-self-loop" label, if we executed some label
+			// as here we treat all labels as if they were non-self-loop  labels
+			executedNonSelfLoopLabel = someLabelExecutedVar;
 		}
+
+		int executedNoActualTransition = -executedNonSelfLoopLabel;
 
 
 		// data structures to memorise which zero's were already covered.
@@ -369,7 +347,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					// self-loop: has been encoded before
 					if (useSelfloopOptimisation && tss.isAlwaysSelfLoop(label)) continue;
 
-					if (fts_matrix->get_possible_sources_for_label(lg).size() <= oneEncodingThreshold){
+					if (is_below_threshold(ts,fts_matrix->get_possible_sources_for_label(lg).size())){
 						vector<int> allOnes;
 						for (int source : fts_matrix->get_possible_sources_for_label(lg))
 							allOnes.push_back(previousStateVars[ts][source]);
@@ -385,7 +363,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 				for(int src = 0 ; src < numStates ; src++){
 					int self_loop_deduction = 0;
 					if (useSelfloopOptimisation) self_loop_deduction = fts_matrix->get_always_self_loop_labels_for_state(src).size();
-					if (size_t(fts_matrix->get_possible_labels_for_source(src).size() - self_loop_deduction) <= oneEncodingThreshold){	
+					if (is_below_threshold(ts,size_t(fts_matrix->get_possible_labels_for_source(src).size() - self_loop_deduction))){	
 					
 						// which labels can be executed in this source?
 						vector<int> allOnes;
@@ -396,19 +374,21 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 								allOnes.push_back(l);
 						}
 
-						// if there are always self-loop labels in this state, it can happen that we actually do one of these self-loops
-						// if so, the selfLoopAuxVar must be true indicating that we actually execute a self-loop
-						if (useSelfloopOptimisation && fts_matrix->get_always_self_loop_labels_for_state(src).size() >= 1)
-							allOnes.push_back(selfLoopAuxVar);
+						// allOnes now contains the labelVars for all non-always-self-loop labels that can transition from src
+						// But: it could be that
+						// (1) we want to execute only always-self-loop labels or
+						// (2) we want to execute *no* label at all (if allowed)
+						// this means the other option is that we do not execute any non-always-self-loop label
+						if (forceAtLeastOneAction == false || useSelfloopOptimisation == true)
+							allOnes.push_back(executedNoActualTransition);
 
+						if (encoding == SEQUENTIAL || encoding == SELF_LOOP_PARALLEL)
+							for (int lg : fts_matrix->get_impossible_labels_for_source(src)) label_covered_sources[lg].insert(src);
+						// if encoding == CHAINS_PARALLEL, the parallelism restriction does not force at most one non-always-self-loop label 
+						// to be executed. Thus the disjunction over the actual transitions does not
+	
 						sat->impliesOr(previousStateVars[ts][src], allOnes);
 						cnt_1_source_label++;
-						
-						// we have now encode all 0's from this source label to all impossible labels
-						// but only, if we know that forcing one of the labels actually makes executing any other labels impossible
-						if (encoding == SEQUENTIAL)
-							for (int lg : fts_matrix->get_impossible_labels_for_source(src)) label_covered_sources[lg].insert(src);
-						// TODO: can be slightly stronger: if all of the labels in allOnes have *no* self loops, then we actually forbid other non-self-loops (as two non-self-loop transitions are impossible. But this might be a product of encoding their pre/effs)
 					}
 				}
 			}
@@ -441,7 +421,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					// self-loop: has been encoded before
 					if (useSelfloopOptimisation && tss.isAlwaysSelfLoop(label)) continue;
 
-					if (fts_matrix->get_possible_targets_for_label(lg).size() <= oneEncodingThreshold){
+					if (is_below_threshold(ts,fts_matrix->get_possible_targets_for_label(lg).size())){
 						vector<int> allOnes;
 						for (int target : fts_matrix->get_possible_targets_for_label(lg))
 							allOnes.push_back(nextStateVars[ts][target]);
@@ -457,28 +437,31 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 				for(int target = 0 ; target < numStates ; target++){
 					int self_loop_deduction = 0;
 					if (useSelfloopOptimisation) self_loop_deduction = fts_matrix->get_always_self_loop_labels_for_state(target).size();
-					if (size_t(fts_matrix->get_possible_labels_for_target(target).size() - self_loop_deduction) <= oneEncodingThreshold){	
+					if (is_below_threshold(ts,size_t(fts_matrix->get_possible_labels_for_target(target).size() - self_loop_deduction))){
 						
 						// which labels can be executed in this target?
 						vector<int> allOnes;
 						for (int lg : fts_matrix->get_possible_labels_for_target(target)){
 							// ignore labels that are always self-loops if we optimised them out
 							if (useSelfloopOptimisation && fts_matrix->get_always_self_loop_labels_for_state(target).contains(lg)) continue;
-							for (const int l : labelGroupVars[ts][lg])
+							for (const int l : labelGroupVars[ts][lg]){
 								allOnes.push_back(l);
+							}
 						}
 
-						// if there are always self-loop labels in this state, it can happen that we actually do one of these self-loops
-						// if so, the selfLoopAuxVar must be true indicating that we actually execute a self-loop
-						if (useSelfloopOptimisation && fts_matrix->get_always_self_loop_labels_for_state(target).size() >= 1)
-							allOnes.push_back(selfLoopAuxVar);
-
+						// allOnes now contains the labelVars for all non-always-self-loop labels that can transition from src
+						// But: it could be that
+						// (1) we want to execute only always-self-loop labels or
+						// (2) we want to execute *no* label at all (if allowed)
+						// this means the other option is that we do not execute any non-always-self-loop label
+						if (forceAtLeastOneAction == false || useSelfloopOptimisation == true)
+							allOnes.push_back(executedNoActualTransition);
+				
+						if (encoding == SEQUENTIAL || encoding == SELF_LOOP_PARALLEL)
+							for (int lg : fts_matrix->get_impossible_labels_for_target(target)) label_covered_targets[lg].insert(target);
+					
 						sat->impliesOr(nextStateVars[ts][target], allOnes);
 						cnt_1_target_label++;
-						// we have now encode all 0's from this source label to all impossible labels
-						// but only, if we know that forcing one of the labels actually makes executing any other labels impossible
-						if (encoding == SEQUENTIAL)
-							for (int lg : fts_matrix->get_impossible_labels_for_target(target)) label_covered_targets[lg].insert(target);
 					}
 				}
 			}
@@ -508,10 +491,15 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					int self_loop_deduction = 0;
 					if (fts_matrix->get_self_loop_labels_for_state(src).size() >= 1) self_loop_deduction = 1;
 					
-					if (size_t(fts_matrix->get_possible_targets_for_source(src).size() - self_loop_deduction) <= oneEncodingThreshold){
+					if (is_below_threshold(ts,size_t(fts_matrix->get_possible_targets_for_source(src).size() - self_loop_deduction))){
 						vector<int> allOnes;
 						for (int target : fts_matrix->get_possible_targets_for_source(src))
 							allOnes.push_back(nextStateVars[ts][target]);
+
+						// If there is no self-loop we can also stay in the state by not executing any action
+						// The fact that we have to stay in the same state is encoded by other means: either frame axioms or self-loop
+						if (self_loop_deduction == 0 && forceAtLeastOneAction == false)
+							allOnes.push_back(executedNoActualTransition);
 
 						sat->impliesOr(previousStateVars[ts][src], allOnes);
 						cnt_1_source_target++;
@@ -524,10 +512,15 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 					int self_loop_deduction = 0;
 					if (fts_matrix->get_self_loop_labels_for_state(target).size() >= 1) self_loop_deduction = 1;
 					
-					if (size_t(fts_matrix->get_possible_sources_for_target(target).size() - self_loop_deduction) <= oneEncodingThreshold){
+					if (is_below_threshold(ts,size_t(fts_matrix->get_possible_sources_for_target(target).size() - self_loop_deduction))){
 						vector<int> allOnes;
 						for (int src : fts_matrix->get_possible_sources_for_target(target))
 							allOnes.push_back(previousStateVars[ts][src]);
+						
+						// If there is no self-loop we can also stay in the state by not executing any action
+						// The fact that we have to stay in the same state is encoded by other means: either frame axioms or self-loop
+						if (self_loop_deduction == 0 && forceAtLeastOneAction == false)
+							allOnes.push_back(executedNoActualTransition);
 
 						sat->impliesOr(nextStateVars[ts][target], allOnes);
 						cnt_1_target_source++;
@@ -613,166 +606,81 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 }
 
 
-void LabelBasedEncoding::encode_frame_axioms(const vector<vector<int>> & previousStateVars,
-	const vector<vector<vector<int>>> & labelGroupVars, const vector<vector<int>> & nextStateVars){
+void LabelBasedEncoding::encode_frame_axioms(const vector<vector<int>> & previousStateVars, const vector<vector<int>> & nextStateVars, int fromTime){
+	// if use self-loop optimisation frame axioms are unnecessary, as we already have the executedTransitionIsSelfLoop variable
+	if (forceAtLeastOneAction) return;
+	if (useSelfloopOptimisation) return;
+
+	int someLabelExecuted = someLabelExecutedPerTime[fromTime];
+	sat->impliesOr(someLabelExecuted, allTimesLabelVars[fromTime]);
+	sat->orImplies(allTimesLabelVars[fromTime], someLabelExecuted);
 	
+	// if we did not stay in the same state, one non-self-loop label had to be executed
 	// ensure that if the state changes *some* action is executed.
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
-		const auto &fts_matrix = fts_matrices[ts];
-		const int numLabelGroups = fts_matrix->get_num_label_groups();
 		const int numStates = fts->get_ts(ts).get_size();
-
-
-		vector<int> labelGroups;
-		for(int lg = 0 ; lg < numLabelGroups ; lg++) {
-			for(const int var : labelGroupVars[ts][lg]){
-				labelGroups.push_back(var);
-			}
-		}
 		
 		// frame axioms. If label was executed, enforce frame axiom
-		int someLabelExecuted = sat->new_variable();
-		DEBUG(sat->registerVariable(someLabelExecuted,"someLabelExecuted_ts=" + to_string(ts)));
-		sat->impliesOr(someLabelExecuted, labelGroups);
 		for(int states = 0 ; states < numStates ; states++){
-			sat->andImplies(previousStateVars[ts][states], - nextStateVars[ts][states], someLabelExecuted);
+			// write both flanks TODO: one is technically sufficient
+			sat->andImplies(previousStateVars[ts][states], -nextStateVars[ts][states], someLabelExecuted);
+			sat->andImplies(-previousStateVars[ts][states], nextStateVars[ts][states], someLabelExecuted);
 		}
 	}
-}
 
-void LabelBasedEncoding::encodeStateEquals(int fromTime, int toTime, bool retractable){
-	// generate state vars if necessary for from time
-	auto preStateVarFind = allTimesStateVars.find(fromTime);
-	const vector<vector<int>> & previousStateVars = (preStateVarFind == allTimesStateVars.end()) ? 
-		(allTimesStateVars[fromTime] = generateStateVars()):
-		preStateVarFind->second;
-
-	// generate state vars if necessary for next time
-	auto nextStateVarFind = allTimesStateVars.find(toTime);
-	const vector<vector<int>> & nextStateVars = (nextStateVarFind == allTimesStateVars.end()) ? 
-		allTimesStateVars[toTime] = generateStateVars():
-		nextStateVarFind->second;
-
-	int assumptionVariable = 0;
-	if (retractable) {
-		assumptionVariable = sat->new_variable();
-		ipasir_assume(sat->solver,assumptionVariable); // for now assumption must true as to force
-	}
-
-	// assert equality between these two states
-	for(int ts = 0 ; ts < fts->get_size() ; ts++){
-		const int numStates = fts->get_ts(ts).get_size();
-		const vector<int> & preVar = previousStateVars[ts];
-		const vector<int> & nextVar = nextStateVars[ts];
-	
-		for (int state = 0; state < numStates; state ++){
-			if (retractable){
-				sat->andImplies(assumptionVariable,preVar[state], nextVar[state]);
-				sat->andImplies(assumptionVariable,nextVar[state], preVar[state]);
-			} else {
-				sat->implies(preVar[state], nextVar[state]);
-				sat->implies(nextVar[state], preVar[state]);
-			}	
-		}
-	}
 }
 
 
-void LabelBasedEncoding::encodeInit(int fromTime, bool retractable){
-	// time-step for init might not exist yet
-	auto initVarFind = allTimesStateVars.find(fromTime);
-	const vector<vector<int>> & initStateVars = (initVarFind == allTimesStateVars.end()) ? 
-		(allTimesStateVars[fromTime] = generateStateVars()):
-		initVarFind->second;
-
-	int assumptionVariable = 0;
-	if (retractable) {
-		assumptionVariable = sat->new_variable();
-		ipasir_assume(sat->solver,assumptionVariable); // for now assumption must true as to force
-	}
-
-	for(int ts = 0 ; ts < fts->get_size() ; ts++){
-		int initVar = initStateVars[ts][fts->get_ts(ts).get_init_state()];
-		if (retractable){
-			sat->implies(assumptionVariable,initVar);
-		} else {
-			sat->assertYes(initVar);
-		}
-	}
-}
-
-
-void LabelBasedEncoding::encodeGoal(int toTime, bool retractable){
-	// time-step for goal might not exist yet
-	auto goalVarFind = allTimesStateVars.find(toTime);
-	const vector<vector<int>> & goalStateVars = (goalVarFind == allTimesStateVars.end()) ? 
-		(allTimesStateVars[toTime] = generateStateVars()):
-		goalVarFind->second;
-
-	int assumptionVariable = 0;
-	if (retractable) {
-		assumptionVariable = sat->new_variable();
-		ipasir_assume(sat->solver,-assumptionVariable); // for now assumption must be false
-	}
-
-	for(int ts = 0 ; ts < fts->get_size() ; ts++){
-		vector<int> goals = fts->get_ts(ts).get_goal_states();
-		vector<int> goalVars;
-		for(int goal : goals){
-			goalVars.push_back(goalStateVars[ts][goal]);
-		}
-		if (retractable) goalVars.push_back(assumptionVariable);
-		sat->atLeastOne(goalVars);
-	}
-}
-
-
-void LabelBasedEncoding::encode(int fromTime, int toTime){
-    //utils::Timer step_timer;  // needed later to stop the encoding if we want to schedule a different instance
-	//auto t_start = std::chrono::system_clock::now();
-
-	/// Step 1: generate variables (some might already exist)
-	// generate state vars if necessary for from time
-	auto preStateVarFind = allTimesStateVars.find(fromTime);
-	const vector<vector<int>> & previousStateVars = (preStateVarFind == allTimesStateVars.end()) ? 
-		(allTimesStateVars[fromTime] = generateStateVars()):
-		preStateVarFind->second;
-
-	// generate state vars if necessary for next time
-	auto nextStateVarFind = allTimesStateVars.find(toTime);
-	const vector<vector<int>> & nextStateVars = (nextStateVarFind == allTimesStateVars.end()) ? 
-		allTimesStateVars[toTime] = generateStateVars():
-		nextStateVarFind->second;
-
-	// generate label vars (must be generated before)
-	assert(!allTimesLabelVars.contains(fromTime));
-	const vector<int> & labelVars = generateLabelVars();
-	allTimesLabelVars[fromTime] = labelVars;
-
+void LabelBasedEncoding::generateAdditionalVariables(int fromTime/*, int toTime*/){
 	// label group vars: one variable if we useSelfloopOptimisation, otherwise all variables for all labels of each group
-	const vector<vector<vector<int>>> & labelGroupVars = generateLabelGroupVars(labelVars);
+	allTimesLabelGroupVars[fromTime] = generateLabelGroupVars(allTimesLabelVars[fromTime]);
 
-	/// 2. Step encode the state transition.
-	encode_transition(previousStateVars,labelGroupVars,nextStateVars);
-
-	// 3. Step encode at least one action constraint if necessary	
-	if (forceAtLeastOneAction) {
-		sat->atLeastOne(labelVars);
-	} else if (!useSelfloopOptimisation){
-		// if we don't force at least one action and we don't have self-loop optimisation, we need frame axioms
-		encode_frame_axioms(previousStateVars,labelGroupVars,nextStateVars);
+	if (forceAtLeastOneAction == false && useSelfloopOptimisation == false){
+		// variable is used by frame axioms and the transition semantics
+		int someLabelExecuted = sat->new_variable();
+		someLabelExecutedPerTime[fromTime] = someLabelExecuted;
+		DEBUG(sat->registerVariable(someLabelExecuted,"someLabelExecuted"));
 	}
+}
+
+
+void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousStateVars, const vector<vector<int>> & nextStateVars, int fromTime/*, int toTime*/){
+	int someLabelExecutedVar = someLabelExecutedPerTime[fromTime];
+	const vector<vector<vector<int>>> & labelGroupVars = allTimesLabelGroupVars[fromTime];
+	encode_transition_semantics(previousStateVars,labelGroupVars,someLabelExecutedVar,nextStateVars);
 
 	// 4. Step encode the restrictions on which actions are allowed in parallel as per the encoding
 	if(encoding == SEQUENTIAL)
-		encode_sequential(labelVars);
+		encode_sequential(allTimesLabelVars[fromTime]);
 	else if(encoding == SELF_LOOP_PARALLEL)
-		encode_self_loop_parallel(labelVars);
+		encode_self_loop_parallel(allTimesLabelVars[fromTime]);
 	else if(encoding == CHAINS_PARALLEL)
-		encode_chains_parallel(labelVars, nextStateVars);
+		encode_chains_parallel(allTimesLabelVars[fromTime], nextStateVars);
 
 }
 
+
+
+std::vector<std::vector<int>> LabelBasedEncoding::extractIntermediateStates(std::vector<int> & selectedLabels, std::vector<int> & currentLastState, std::vector<int> & nextState){
+	vector<vector<int>> intermediateStates;
+	for(size_t l = 0 ; l < selectedLabels.size() - 1 ; l++){
+		vector<int> intermediateState;
+		for(int ts = 0 ; ts < fts->get_size() ; ts++){
+			const TransitionSystem & tss = fts->get_ts(ts);
+			if(tss.isAlwaysSelfLoop(selectedLabels[l])){
+				if (intermediateStates.size() == 0)
+					intermediateState.push_back(currentLastState[ts]);
+				else
+					intermediateState.push_back(intermediateStates.back()[ts]);
+			}else{
+				intermediateState.push_back(nextState[ts]);
+			}
+		}
+		intermediateStates.push_back(intermediateState);
+	}
+
+	return intermediateStates;
+}
 
 // run plan extraction
 std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> LabelBasedEncoding::extractSolution(int initTime,
@@ -805,31 +713,24 @@ std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> Labe
 				selectedLabels.push_back(label);
 				timesteps_with_labels.insert(labelTimestep);
 				cout << "Label : " << label << endl;
-				for(int ts = 0 ; ts < fts->get_size() ; ts++){
-					for(size_t state = 0 ; state < allTimesStateVars[stateAfterTimestep][ts].size() ; state++){
-						if(ipasir_val(sat->solver, allTimesStateVars[stateAfterTimestep][ts][state]) > 0){
-							stateReconstructor.push_back(state);
-							break;
+				if (selectedLabels.size() == 1)
+					for(int ts = 0 ; ts < fts->get_size() ; ts++){
+						for(size_t state = 0 ; state < allTimesStateVars[stateAfterTimestep][ts].size() ; state++){
+							if(ipasir_val(sat->solver, allTimesStateVars[stateAfterTimestep][ts][state]) > 0){
+								stateReconstructor.push_back(state);
+								break;
+							}
 						}
 					}
-				}
 			}
 		}
 
 		// intermediate states
+		// code in this if is dependent on encode. Rest is common to all encodings
 		if(selectedLabels.size() > 1){
-			for(size_t l = 0 ; l < selectedLabels.size() - 1 ; l++){
-				vector<int> intermediateState;
-				for(int ts = 0 ; ts < fts->get_size() ; ts++){
-					const TransitionSystem & tss = fts->get_ts(ts);
-					if(tss.isAlwaysSelfLoop(selectedLabels[l])){
-						intermediateState.push_back(statesPerTimestep.back()[ts]);
-					}else{
-						intermediateState.push_back(stateReconstructor[ts]);
-					}
-				}
-				statesPerTimestep.push_back(intermediateState);
-			}
+			vector<vector<int>> intermediateStates = extractIntermediateStates(selectedLabels, statesPerTimestep.back(), stateReconstructor);
+			for(vector<int> & state : intermediateStates)
+				statesPerTimestep.push_back(state);
 		}
 
 		if (selectedLabels.size() > 0){

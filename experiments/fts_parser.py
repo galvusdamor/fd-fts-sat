@@ -30,7 +30,26 @@ def add_sat_vars_and_clauses(content, props):
                 (clauses,var) = all_generated_formulas[len(all_generated_formulas)-1]
                 props["sat_variables"] = int(var) 
                 props["sat_clauses"] = int(clauses) 
-            
+        
+        regex = re.compile(r"Step 0  for 5    timesteps: ([0-9]+) clauses ([0-9]+) variables")
+        match = regex.search(content)
+        if match:
+             try:
+                 clauses = match.group(1)
+                 var = match.group(2)
+                 #print(f"Found {clauses} {var}")
+                 #print(props)
+             except IndexError:
+                 tools.add_unexplained_error(
+                     props,
+                     f"Attribute {self.attribute} not found for pattern {self} in "
+                     f"file {filename}.",
+                 )
+             else:
+                 props["sat_variables_length_5"] = int(var) 
+                 props["sat_clauses_length_5"] = int(clauses) 
+        
+
 
 
 def add_number_labels(content, props):
@@ -60,6 +79,19 @@ class FTSParser(Parser):
         Parser.__init__(self)
         self.add_pattern("number_labels", r"Total labels: (.+)", type=int)
         self.add_pattern("time_steps_with_label", r"Total timesteps with label: (.+)", type=int)
+
+        self.add_pattern("0_label_target","0_label_target       : (.+)",type=int)
+        self.add_pattern("0_label_source","0_label_source       : (.+)",type=int)
+        self.add_pattern("0_source_target","0_source_target      : (.+)",type=int)
+        self.add_pattern("0_label_source_target","0_label_source_target: (.+)",type=int)
+        self.add_pattern("1_label_target","1_label_target       : (.+)",type=int)
+        self.add_pattern("1_label_source","1_label_source       : (.+)",type=int)
+        self.add_pattern("1_source_label","1_source_label       : (.+)",type=int)
+        self.add_pattern("1_source_target","1_source_target      : (.+)",type=int)
+        self.add_pattern("1_target_source","1_target_source      : (.+)",type=int)
+        self.add_pattern("1_target_label","1_target_label       : (.+)",type=int)
+        self.add_pattern("1_label_source_target","1_label_source_target: (.+)",type=int)
+
         self.add_function(add_number_labels)
         self.add_function(add_sat_vars_and_clauses)
 
