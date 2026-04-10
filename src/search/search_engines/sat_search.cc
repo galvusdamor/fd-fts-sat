@@ -47,6 +47,7 @@ void SATSearch::initialize() {
 	currentLength = length_strategy->get_first_length();
 
     cout << "SAT init time: " << sat_init_timer << endl;
+    cout << "Entire preparation time until now: " << utils::g_timer << endl;
 }
 
 struct solver_timer {
@@ -114,7 +115,8 @@ SearchStatus SATSearch::step() {
 
 	// start calling the solver	
 	int solverState;
-
+    
+	utils::Timer sat_timer;
 	if (stepTimeLimit == -1){
 		solverState = ipasir_solve(solver);
 	} else {
@@ -128,6 +130,7 @@ SearchStatus SATSearch::step() {
 	    timer.stop = true;
 		thread_for_timer.join();
 	}
+	sat_timer.stop();
  
 	cout << "SAT solver state: " << solverState << endl;
 
@@ -140,7 +143,7 @@ SearchStatus SATSearch::step() {
 		ipasir_release(solver);
 		
 		cout << "STEP " << stepNumber << " length " << currentLength
-				<< " SAT time " << step_timer
+				<< " STEP time " << step_timer << " of that SAT time " << sat_timer
 				<< " clauses " << capsule->get_number_of_clauses() << " vars " << capsule->number_of_variables
 				<< " labels " << labels.size() << " timesteps with label " << timesteps_with_labels.size()
 				<< " compression " << double(labels.size()) / timesteps_with_labels.size()
@@ -149,7 +152,7 @@ SearchStatus SATSearch::step() {
 			return SOLVED;
 	} else {
 		cout << "STEP " << stepNumber << " length " << currentLength
-				<< " UNSAT time " << step_timer
+				<< " STEP time " << step_timer << " of that UNSAT time " << sat_timer
 				<< " clauses " << capsule->get_number_of_clauses() << " vars " << capsule->number_of_variables
 				<< endl;
 		ipasir_release(solver);
