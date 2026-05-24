@@ -191,7 +191,7 @@ void LabelBasedEncoding::encode_self_loop_parallel(const vector<int> & labelVars
  	}
 }
 
-void LabelBasedEncoding::encode_chains_parallel(const vector<int> & labelVars, const vector<vector<int>> & nextStateVars){
+/* void LabelBasedEncoding::encode_chains_parallel(const vector<int> & labelVars, const vector<vector<int>> & nextStateVars){
 	map<int, map<int, vector<int>>> topHelperVars = generateHelperVars();
 	map<int, map<int, vector<int>>> bottomHelperVars = generateHelperVars();
 
@@ -218,6 +218,38 @@ void LabelBasedEncoding::encode_chains_parallel(const vector<int> & labelVars, c
 					sat->implies(bottomHelperVars[ts][states][l], bottomHelperVars[ts][states][l-1]);
 				}
 			}
+		}
+	}
+} */
+
+void LabelBasedEncoding::encode_chains_parallel(const vector<int> & labelVars, const vector<vector<int>> & nextStateVars){
+	for(int ts = 0 ; ts < fts->get_size() ; ts++){
+		const TransitionSystem & tss = fts->get_ts(ts);
+		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
+
+			const auto& labelsWithEffect = fts_matrices[ts]->get_not_always_selfloop_labels_reaching_target(states);
+            const size_t N = labelsWithEffect.size();
+            if(N < 2) continue; // chains need at least 2 labels
+
+            // Each time-step has one SAT variable: the label var
+            vector<vector<int>> eventVars(N);
+            for(size_t l = 0; l < N; l++)
+                eventVars[l] = {labelVars[labelsWithEffect[l]]};
+
+            // requirers[l]: label l can be forbidden by a prior aux var
+            // — only when it has no self-loop on this state
+            vector<set<int>> requirers(N);
+            for(size_t l = 0; l < N; l++)
+                if(!tss.hasSelfLoopOnValue(states, labelsWithEffect[l]))
+                    requirers[l].insert(0);
+
+            // opposers[l]: all labels activate the chain
+            vector<set<int>> opposers(N);
+            for(size_t l = 0; l < N; l++)
+                opposers[l].insert(0);
+
+            sat->compute_guarded_forall_chains(requirers, opposers, eventVars, nextStateVars[ts][states]);
+
 		}
 	}
 }
