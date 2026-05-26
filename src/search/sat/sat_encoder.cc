@@ -358,3 +358,66 @@ void sat_capsule::atLeastOne(const std::vector<int> & is){
 	number_of_clauses++;
 }
 
+/*
+@eventVars - outside vector represents the labels inside vectors contain the transitions of the corresponding label with that index
+@requirers, opposers, achievers - indexes to access the event vars
+*/ 
+std::vector<int> sat_capsule::compute_chains(std::vector<std::set<int>> &requirers, std::vector<std::set<int>> &opposers, std::vector<std::set<int>> &achievers, 
+					std::vector<std::vector<int>> &eventVars, int guardVariable/* , sat_capsule &capsule, void* solver */){
+	assert(requirers.size() == eventVars.size());
+	std::vector<int> auxVars (eventVars.size() - 1); // auxVar is true if there is a prior active opposer
+
+	for(size_t time = 0 ; time < eventVars.size()-1 ; time++){
+		int auxVar = new_variable();
+		auxVars[time] = auxVar;
+	}
+
+	//PROPAGATION OF AUX VARS, E.G., AUX_VAR_1 -> AUX_VAR_2 (V SUPPORT_1 V SUPPORT_2...)
+	for(size_t aux_var = 1 ; aux_var < auxVars.size() ; aux_var++){
+		//if(auxVars[ts][states][aux_var] == -1) continue;
+		std::vector<int> achievingTransitionsAndAuxVar{auxVars[aux_var]};
+		if (achievers[aux_var].size() > 0){//CHANGE TO LABELORDER[AUX_VAR]????????????????
+			for(int index : achievers[aux_var]){
+				achievingTransitionsAndAuxVar.push_back(eventVars[aux_var][index]);
+			}
+		}
+		//int previousValidAuxVar = findPreviousValidAuxVar(auxVars, aux_var);
+		//if(previousValidAuxVar != -1)
+			impliesOr(auxVars[aux_var-1], achievingTransitionsAndAuxVar);
+	}
+	//ACTIVATING AUX VARS
+	for(size_t label = 0 ; label < auxVars.size() ; label++){
+		//if(auxVars[ts][states][label] == -1) continue;
+		for(int index : opposers[label]){//CHANGE TO LABELORDER[LABEL]????????????????
+			if(guardVariable == 0)
+				implies(eventVars[label][index], auxVars[label]);
+			else
+			 	andImplies(guardVariable, eventVars[label][index], auxVars[label]);
+		}
+	}
+	//FORBIDDING TRANSITIONS THROUGH AUX VARS
+	for(size_t aux_var = 0 ; aux_var < auxVars.size() ; aux_var++){
+		//if(auxVars[ts][states][aux_var] == -1) continue;
+		for(int index : requirers[aux_var+1]){
+			implies(auxVars[aux_var], -eventVars[aux_var+1][index]);//CHANGE TO LABELORDER[AUX_VAR+1]????????????????
+		}
+	}
+	return auxVars;
+}
+
+void sat_capsule::exists_chains(std::vector<std::set<int>> &requirers, std::vector<std::set<int>> &opposers, std::vector<std::vector<int>> &eventVars, int guardVariable){
+	std::vector<std::set<int>> achievers(eventVars.size());
+	compute_chains(requirers, opposers, achievers, eventVars, guardVariable);
+}
+
+void sat_capsule::compute_guarded_forall_chains(std::vector<std::set<int>> &requirers, std::vector<std::set<int>> &opposers, std::vector<std::vector<int>> &eventVars, int guardVariable){
+	exists_chains(requirers, opposers, eventVars, guardVariable);
+	std::vector<std::vector<int>> reverseEventVars(eventVars.rbegin(), eventVars.rend());
+	std::vector<std::set<int>> reverseRequirers(requirers.rbegin(), requirers.rend());
+	std::vector<std::set<int>> reverseOpposers(opposers.rbegin(), opposers.rend());
+	exists_chains(reverseRequirers, reverseOpposers, reverseEventVars, guardVariable);
+}
+
+void sat_capsule::compute_forall_chains(std::vector<std::set<int>> &requirers, std::vector<std::set<int>> &opposers, std::vector<std::vector<int>> &eventVars){
+	compute_guarded_forall_chains(requirers, opposers, eventVars, 0);
+}
