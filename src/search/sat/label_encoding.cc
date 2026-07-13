@@ -46,7 +46,7 @@ vector<int> LabelEncoding::generateLabelVars(/* , int timestep */) const {
 vector<vector<vector<int>>> LabelEncoding::generateLabelGroupVars(const vector<int> &labelVars/* , int timestep */) const{
 	vector<vector<vector<int>>> labelGroupVars(fts->get_size());
 	for(int ts = 0 ; ts < fts->get_size(); ts++){
-		const auto & tss = fts->get_ts(ts);//TODO:CONTINUE FIXING FROM HERE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		const auto & tss = fts->get_ts(ts);
 		int num_label_groups = 0;
 		vector<vector<int>> labelGroups;
 		for (const auto &gat: tss) {
@@ -125,6 +125,53 @@ vector<vector<int>> LabelEncoding::compute_and_return_labels_reaching_target(con
 		}
 	}
 	return labelsReachingTarget;
+}
+
+bool LabelEncoding::containsSelfLoops(int ts, int label) const{
+	auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
+	for(size_t t = 0 ; t < transitions.size() ; t++){
+		if(transitions[t].src == transitions[t].target){
+			return true;
+		}
+	}
+	return false;
+}
+
+bool LabelEncoding::isAlwaysSelfLoop(int ts, int label) const{
+	auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
+	for(size_t t = 0 ; t < transitions.size() ; t++){
+		if(transitions[t].src != transitions[t].target){
+			return false;
+		}
+	}
+	return true;
+}
+
+bool LabelEncoding::isIrrelevantLabel(int ts, int label) const {
+	auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
+	if((int)transitions.size() != fts->get_ts(ts).get_size()) return false;
+	for(size_t t = 0 ; t < transitions.size() ; t++){
+		if(transitions[t].src != transitions[t].target){
+			return false;
+		}
+	}
+	return true;
+}
+
+int LabelEncoding::getLabelSATVar(int label, int time) const{
+	return allTimesLabelVars.at(time)[label];
+}
+
+int LabelEncoding::getOrderedLabel(int index) const{
+	return labelOrder[index];
+}
+
+int LabelEncoding::getRelevantLabel(int ts, int labelIndex) const{
+	return relevantLabels[ts][labelIndex];
+}
+
+int LabelEncoding::getNumRelevantLabels(int ts) const{
+	return relevantLabels[ts].size();
 }
 
 };

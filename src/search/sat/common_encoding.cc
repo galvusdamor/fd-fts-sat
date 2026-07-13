@@ -41,6 +41,8 @@ void CommonEncoding::encode(int fromTime, int toTime){
 
 	/// Step 1: generate variables (some might already exist)
 	// generate state vars if necessary for from time
+	cout << "forceAtLeastOneAction : " << forceAtLeastOneAction << endl;
+	cout << "useSelfloopOptimisation : " << useSelfloopOptimisation << endl;
 	auto preStateVarFind = allTimesStateVars.find(fromTime);
 	const vector<vector<int>> & previousStateVars = (preStateVarFind == allTimesStateVars.end()) ? 
 		(allTimesStateVars[fromTime] = generateStateVars()):
@@ -117,9 +119,10 @@ std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> Comm
 		// intermediate states
 		// code in this if is dependent on encode. Rest is common to all encodings
 		if(selectedLabels.size() > 1){
-			vector<vector<int>> intermediateStates = extractIntermediateStates(selectedLabels, statesPerTimestep.back(), stateReconstructor);
-			for(vector<int> & state : intermediateStates)
+			vector<vector<int>> intermediateStates = extractIntermediateStates(selectedLabels, statesPerTimestep.back(), stateReconstructor, labelTimestep);
+			for(vector<int> & state : intermediateStates){
 				statesPerTimestep.push_back(state);
+			}
 		}
 
 		if (selectedLabels.size() > 0){

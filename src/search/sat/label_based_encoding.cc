@@ -248,7 +248,7 @@ void LabelBasedEncoding::encode_chains_parallel(const vector<int> & labelVars, c
             for(size_t l = 0; l < N; l++)
                 opposers[l].insert(0);
 
-            sat->compute_guarded_forall_chains(requirers, opposers, eventVars, nextStateVars[ts][states]);
+            sat->compute_guarded_forall_chains(opposers, requirers, eventVars, nextStateVars[ts][states]);
 
 		}
 	}
@@ -693,7 +693,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 
 
 
-std::vector<std::vector<int>> LabelBasedEncoding::extractIntermediateStates(std::vector<int> & selectedLabels, std::vector<int> & currentLastState, std::vector<int> & nextState){
+std::vector<std::vector<int>> LabelBasedEncoding::extractIntermediateStates(std::vector<int> & selectedLabels, std::vector<int> & currentLastState, std::vector<int> & nextState, int /*labelTimestep*/){
 	vector<vector<int>> intermediateStates;
 	for(size_t l = 0 ; l < selectedLabels.size() - 1 ; l++){
 		vector<int> intermediateState;
@@ -760,7 +760,7 @@ std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> Labe
 		// intermediate states
 		// code in this if is dependent on encode. Rest is common to all encodings
 		if(selectedLabels.size() > 1){
-			vector<vector<int>> intermediateStates = extractIntermediateStates(selectedLabels, statesPerTimestep.back(), stateReconstructor);
+			vector<vector<int>> intermediateStates = extractIntermediateStates(selectedLabels, statesPerTimestep.back(), stateReconstructor, labelTimestep);
 			for(vector<int> & state : intermediateStates)
 				statesPerTimestep.push_back(state);
 		}

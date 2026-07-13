@@ -51,7 +51,7 @@ protected:
 
 	bool is_below_threshold(int ts, size_t ones_to_consider);
 
-	std::vector<std::vector<int>> extractIntermediateStates(std::vector<int> & selectedLabels, std::vector<int> & currentLastState, std::vector<int> & nextState);
+	std::vector<std::vector<int>> extractIntermediateStates(std::vector<int> & selectedLabels, std::vector<int> & currentLastState, std::vector<int> & nextState, int labelTimestep);
 
 
 public:
