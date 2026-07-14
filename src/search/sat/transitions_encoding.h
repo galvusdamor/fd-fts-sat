@@ -90,7 +90,7 @@ public:
 
     std::vector<int> get_all_later_vars_moving_to_different_state(int target, int ts, int relevantLabel, int fromTime);
 
-    virtual void appendEffects(std::vector<int>& impliesOrEff, int ts, int relevantLabelEff, int target) = 0;
+    virtual void appendEffects(std::vector<int>& impliesOrEff, int ts, int relevantLabelEff, int target, int time) = 0;
 
     virtual std::vector<int> get_all_sat_vars_moving_to_state(int ts, int label, int state, int fromTime) = 0;
 

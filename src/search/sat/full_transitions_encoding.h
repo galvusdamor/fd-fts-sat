@@ -64,7 +64,7 @@ public:
 
     void appendPreconditions(std::vector<int>& impliesOrPrec, int ts, int relevantLabelPrec, int src) override;
 
-    void appendEffects(std::vector<int>& impliesOrEff, int ts, int relevantLabelEff, int target) override;
+    void appendEffects(std::vector<int>& impliesOrEff, int ts, int relevantLabelEff, int target, int time) override;
 
     std::vector<int> get_all_sat_vars_moving_to_state(int ts, int label, int state, int fromTime) override;
 

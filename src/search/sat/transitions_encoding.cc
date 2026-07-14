@@ -103,7 +103,7 @@ vector<int> TransitionsEncoding::get_all_later_vars_moving_to_different_state(in
     if (it == moving_to_different_state_vars.end()) {
         vector<int> impliesOrEff;
         for (int eff = relevantLabel + 1; eff < getNumRelevantLabels(ts); eff++)
-            appendEffects(impliesOrEff, ts, eff, target);
+            appendEffects(impliesOrEff, ts, eff, target, fromTime);
         return moving_to_different_state_vars[access] = impliesOrEff;
     }
     return it->second;
