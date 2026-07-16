@@ -30,7 +30,7 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
 BENCHMARKS_DIR = os.environ["DOWNWARD_BENCHMARKS"]
 #BENCHMARKS_FTS_DIR = os.environ["FTS_BENCHMARKS"]
-REVISION = "b9d8cd1ba434396d408cab7f3a85261c314f5e17"
+REVISION = "1158524ca4b1df7f145d79bebbbd693318ce3eb7"
 REVISIONS = [REVISION]
 
 
