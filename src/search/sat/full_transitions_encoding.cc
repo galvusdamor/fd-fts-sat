@@ -294,6 +294,8 @@ vector<vector<int>> FullTransitionsEncoding::extractIntermediateStates(vector<in
 		for(int ts = 0 ; ts < fts->get_size() ; ts++){
             bool found_selected_transition = false;
 			for(auto& [transition, var] : allTimesTransitionVars[labelTimestep-1][ts][selectedLabels[l]]){
+                if(useSelfloopOptimisation && var == -1)
+                    continue;
                 if(ipasir_val(sat->solver, var) > 0){
                     intermediateState.push_back(transition.target);
                     found_selected_transition = true;
