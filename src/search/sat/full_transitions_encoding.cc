@@ -160,7 +160,7 @@ void FullTransitionsEncoding::appendPreconditions(vector<int>& impliesOrPrec, in
 void FullTransitionsEncoding::appendEffects(vector<int>& impliesOrEff, int ts, int relevantLabelEff, int target, int time){
     for (auto& [transition, var] : allTimesTransitionVars.back()[ts][getRelevantLabel(ts, relevantLabelEff)]){
         if (transition.target != target && transition.src == target && !isSelfLoop(transition)){
-            if(!useLabelsInEffectsConstraints){
+            if(!useLabelsInEffectsConstraints || (useSelfloopOptimisation && containsSelfLoops(ts, getRelevantLabel(ts, relevantLabelEff)))){
                 impliesOrEff.push_back(var);
             }else{
                 impliesOrEff.push_back(getLabelSATVar(getRelevantLabel(ts, relevantLabelEff), time));
