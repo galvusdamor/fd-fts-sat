@@ -60,7 +60,7 @@ void FullTransitionsEncodingFactory::initialize() {
 unique_ptr<sat_search::SATEncoding> FullTransitionsEncodingFactory::createEncodingInstance(std::shared_ptr<sat_capsule> capsule){
 	//bool oldStatisticsPrinted = statisticsPrinted;
 	statisticsPrinted = true;
-	return make_unique<FullTransitionsEncoding>(capsule, fts, forceAtLeastOneAction, useSelfloopOptimisation);
+	return make_unique<FullTransitionsEncoding>(capsule, fts, forceAtLeastOneAction, useSelfloopOptimisation, useLabelsInEffectsConstraints);
 }
 
 
@@ -72,9 +72,10 @@ FullTransitionsEncoding::FullTransitionsEncoding(
     shared_ptr<sat_capsule>                         capsule,
     const shared_ptr<FTSTask>&                      fts,
     bool                                            forceAtLeastOneAction,
-    bool                                            useSelfloopOptimisation)
+    bool                                            useSelfloopOptimisation,
+    bool                                            useLabelsInEffectsConstraints)
     : TransitionsEncoding(capsule, fts, forceAtLeastOneAction,
-                           useSelfloopOptimisation)
+                           useSelfloopOptimisation, useLabelsInEffectsConstraints)
 {
     // Populate relevantLabels (inherited from LabelEncoding) here because we
     // are the only class that knows useSelfloopOptimisation, and fts is already
@@ -162,7 +163,7 @@ void FullTransitionsEncoding::appendEffects(vector<int>& impliesOrEff, int ts, i
             if(!useLabelsInEffectsConstraints){
                 impliesOrEff.push_back(var);
             }else{
-                impliesOrEff.push_back(getLabelSATVar(relevantLabelEff, time));
+                impliesOrEff.push_back(getLabelSATVar(getRelevantLabel(ts, relevantLabelEff), time));
                 break;
             }
         }
@@ -240,7 +241,6 @@ void FullTransitionsEncoding::encode_label_consistency(int ts, int relevantLabel
 // ---------------------------------------------------------------------------
 
 void FullTransitionsEncoding::encode_transition(const vector<vector<int>>& previousStateVars, const vector<vector<int>>& nextStateVars, int fromTime){
-    cout << "allTimeTransitionsVars.size() = " << allTimesTransitionVars.size() << endl;
     for (int ts = 0; ts < fts->get_size(); ts++) {
         for (size_t relevantLabel = 0; relevantLabel < relevantLabels[ts].size(); relevantLabel++){
             encodeRegularPreconditionsAndEffects(ts, relevantLabel, previousStateVars, nextStateVars, fromTime);
@@ -332,6 +332,8 @@ void FullTransitionsEncoding::encode_r2_chains(int ts, int time){
         for (int relevantLabel = 0; relevantLabel < numRelevantLabels; relevantLabel++) {
             int index = 0;
             for (auto& [transition, var] : allTimesTransitionVars.back()[ts][getRelevantLabel(ts, relevantLabel)]){
+                if(useSelfloopOptimisation && transition.src == transition.target)
+                    continue;
                 eventVars[relevantLabel].push_back(var);
                 if(transition.target != states && transition.src != transition.target)
                     opposers[relevantLabel].insert(index);

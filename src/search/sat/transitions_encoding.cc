@@ -17,9 +17,10 @@ TransitionsEncoding::TransitionsEncoding(
     shared_ptr<sat_capsule>                         capsule,
     const shared_ptr<FTSTask>&                      fts,
     bool                                            forceAtLeastOneAction,
-    bool                                            useSelfloopOptimisation)
+    bool                                            useSelfloopOptimisation,
+    bool                                            useLabelsInEffectsConstraints)
     : CommonEncoding(capsule, fts, forceAtLeastOneAction,
-                    false, useSelfloopOptimisation)// These encodings do not support label groups
+                    false, useSelfloopOptimisation), useLabelsInEffectsConstraints(useLabelsInEffectsConstraints)// These encodings do not support label groups
 {}
 
 // ---------------------------------------------------------------------------

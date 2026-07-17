@@ -32,6 +32,8 @@ protected:
     // Cache: {target,ts,label} -> transition vars moving to a *different* state (later labels)
     std::map<std::tuple<int,int,int,int>, std::vector<int>> moving_to_different_state_vars;
 
+    bool useLabelsInEffectsConstraints;
+
     // -----------------------------------------------------------------------
     // CommonEncoding abstract interface
     // -----------------------------------------------------------------------
@@ -63,7 +65,8 @@ public:
         std::shared_ptr<sat_capsule>                         capsule,
         const std::shared_ptr<task_representation::FTSTask>& fts,
         bool                                                 forceAtLeastOneAction,
-        bool                                                 useSelfloopOptimisation
+        bool                                                 useSelfloopOptimisation,
+        bool                                                 useLabelsInEffectsConstraints
     );
     ~TransitionsEncoding() override = default;
 

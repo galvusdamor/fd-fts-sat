@@ -41,8 +41,6 @@ void CommonEncoding::encode(int fromTime, int toTime){
 
 	/// Step 1: generate variables (some might already exist)
 	// generate state vars if necessary for from time
-	cout << "forceAtLeastOneAction : " << forceAtLeastOneAction << endl;
-	cout << "useSelfloopOptimisation : " << useSelfloopOptimisation << endl;
 	auto preStateVarFind = allTimesStateVars.find(fromTime);
 	const vector<vector<int>> & previousStateVars = (preStateVarFind == allTimesStateVars.end()) ? 
 		(allTimesStateVars[fromTime] = generateStateVars()):
@@ -104,7 +102,7 @@ std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> Comm
 				selectedLabels.push_back(label);
 				timesteps_with_labels.insert(labelTimestep);
 				cout << "Label : " << label << endl;
-				if (selectedLabels.size() == 1)
+				if (selectedLabels.size() == 1){
 					for(int ts = 0 ; ts < fts->get_size() ; ts++){
 						for(size_t state = 0 ; state < allTimesStateVars[stateAfterTimestep][ts].size() ; state++){
 							if(ipasir_val(sat->solver, allTimesStateVars[stateAfterTimestep][ts][state]) > 0){
@@ -113,6 +111,7 @@ std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> Comm
 							}
 						}
 					}
+				}
 			}
 		}
 

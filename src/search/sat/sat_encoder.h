@@ -22,6 +22,7 @@ struct sat_capsule{
 	std::map<int,std::string> variableNames;
 	void registerVariable(int v, std::string name);
 	void printVariables() const;
+	void printVariablesTruth() const;
 #endif
 
 	sat_capsule(void* _solver);

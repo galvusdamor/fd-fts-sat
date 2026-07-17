@@ -32,7 +32,6 @@ private:
     // Non-encoded (implicit self-loop) states per {ts, label}.
     std::map<std::tuple<int,int>, std::vector<int>> states_with_non_encoded_transitions;
 
-    bool useLabelsInEffectsConstraints;
 
 protected:
     void generateTransitionVars(int fromTime) override;
@@ -52,7 +51,8 @@ public:
         std::shared_ptr<sat_capsule>                          capsule,
         const std::shared_ptr<task_representation::FTSTask>&  fts,
         bool                                                  forceAtLeastOneAction,
-        bool                                                  useSelfloopOptimisation
+        bool                                                  useSelfloopOptimisation,
+        bool                                                  useLabelsInEffectsConstraints
     );
     ~FullTransitionsEncoding() override = default;
 

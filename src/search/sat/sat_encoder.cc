@@ -33,6 +33,15 @@ void sat_capsule::printVariables() const {
 		std::cout << s << " -> " << p.second << std::endl;
 	}
 }
+
+void sat_capsule::printVariablesTruth() const {
+	for (auto & p : variableNames){
+		std::string s = std::to_string(p.first);
+		int x = 4 - s.size();
+		while (x-- && x > 0) std::cout << " ";
+		std::cout << s << " -> " << p.second << "	Value : " << ipasir_val(solver, p.first) << std::endl;
+	}
+}
 #endif
 
 
@@ -366,7 +375,6 @@ std::vector<int> sat_capsule::compute_chains(std::vector<std::set<int>> &opposer
 					std::vector<std::vector<int>> &eventVars, int guardVariable/* , sat_capsule &capsule, void* solver */){
 	assert(requirers.size() == eventVars.size());
 	std::vector<int> auxVars (eventVars.size() - 1); // auxVar is true if there is a prior active opposer
-
 	for(size_t time = 0 ; time < eventVars.size()-1 ; time++){
 		int auxVar = new_variable();
 		auxVars[time] = auxVar;
