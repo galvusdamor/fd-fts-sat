@@ -568,6 +568,7 @@ fast_downward_plugin(
         sat/label_based_encoding
         sat/transitions_encoding
         sat/full_transitions_encoding
+        sat/split_transitions_encoding
         #sat/bdd_encoding
 		sat/length_strategy
 		sat/fts_matrix
