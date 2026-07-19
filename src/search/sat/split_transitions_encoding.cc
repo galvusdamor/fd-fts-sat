@@ -435,9 +435,9 @@ void SplitTransitionsEncoding::encode_r2_chains(int ts, int time){
                 if(useSelfloopOptimisation && var == -1)
                     continue;
                 eventVars[relevantLabel].push_back(var);
-                if(target != states && can_reach_via_not_selfloop(ts, relevantLabel, states))
+                if(target != states && can_reach_via_not_selfloop(ts, relevantLabel, target))
                     opposers[relevantLabel].insert(index);
-                if(target == states && can_reach_via_not_selfloop(ts, relevantLabel, states))
+                if(target == states && can_reach_via_not_selfloop(ts, relevantLabel, target))
                     achievers[relevantLabel].insert(index);
                 index++;
             }
