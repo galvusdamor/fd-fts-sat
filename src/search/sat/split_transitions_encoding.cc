@@ -165,12 +165,14 @@ void SplitTransitionsEncoding::generateTransitionVars(int /*fromTime*/) {
                 vector<int> targetDisjunction;
                 bool nonEncodedSelfloop = false;
                 for(int target : sourcesToTargets[ts][label][src]){
-                    if (useSelfloopOptimisation && (int)src == target && 
-                            sourcesToTargets[ts][label][src].size() == 1 && targetsToSources[ts][label][target].size() == 1) {
+                    if (useSelfloopOptimisation && (int)src == target && sourcesToTargets[ts][label][src].size() == 1) {
                         newSourceVars[ts][label].push_back({src, -1});
-                        newTargetVars[ts][label].push_back({target, -1});
-                        generatedTargets.insert(target);
-                        nonEncodedSelfloop = true;
+                        generatedSources.insert(src);
+                        if(targetsToSources[ts][label][target].size() == 1){
+                            newTargetVars[ts][label].push_back({target, -1});
+                            generatedTargets.insert(target);
+                            nonEncodedSelfloop = true;
+                        }
                     }else{
                         int targetVar = 0;
                         if(generatedTargets.contains(target)){
@@ -194,7 +196,7 @@ void SplitTransitionsEncoding::generateTransitionVars(int /*fromTime*/) {
                 if(nonEncodedSelfloop){
                     continue;
                 }
-                if(sourcesToTargets[ts][label][src].size() > 0){
+                if(sourcesToTargets[ts][label][src].size() > 0 && !generatedSources.contains(src)){
                     int sourceVar = sat->new_variable();
                     newSourceVars[ts][label].push_back({src, sourceVar});
                     AMOSources.push_back(sourceVar);
@@ -363,7 +365,7 @@ void SplitTransitionsEncoding::encode_frame_axioms(const vector<vector<int>>& pr
                     negatedLabelsOrTransitions.insert(-getLabelSATVar(globalLabel, fromTime));
                 } else {
                     for (auto& [source, var] : allTimesTransitionSourcesVars.back()[ts][globalLabel])
-                        if (source != -1)
+                        if (var != -1)
                             negatedLabelsOrTransitions.insert(-var);
                 }
             }
