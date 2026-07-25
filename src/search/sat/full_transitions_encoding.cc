@@ -109,6 +109,10 @@ bool FullTransitionsEncoding::has_to_encode_transition(Transition transition) {
     return !isSelfLoop(transition);
 }
 
+bool FullTransitionsEncoding::has_to_encode_transition_target(int /* ts */, int /* label */, int /* target */){
+    return false;//This is only relevant for the split encoding
+}
+
 // ---------------------------------------------------------------------------
 // Variable generation
 // ---------------------------------------------------------------------------

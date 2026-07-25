@@ -62,6 +62,7 @@ public:
     ~SplitTransitionsEncoding() override = default;
 
     bool has_to_encode_transition(task_representation::Transition transition) override;
+    bool has_to_encode_transition_target(int ts, int label, int target) override;
 
     bool can_reach_via_not_selfloop(int ts, int labelIndex, int src) const;
 

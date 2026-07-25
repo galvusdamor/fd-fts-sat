@@ -103,6 +103,15 @@ bool SplitTransitionsEncoding::has_to_encode_transition(Transition transition) {
     return !isSelfLoop(transition);
 }
 
+bool SplitTransitionsEncoding::has_to_encode_transition_target(int ts, int labelIndex, int target){
+    set<int> sources;
+    for (Transition transition : fts->get_ts(ts).get_transitions_with_label(getRelevantLabel(ts, labelIndex))){
+        if(transition.src == target)
+            sources.insert(transition.target);
+    }
+    return sources.size() > 1;
+}
+
 bool SplitTransitionsEncoding::can_reach_via_not_selfloop(int ts, int labelIndex, int src) const{
     for (Transition transition : fts->get_ts(ts).get_transitions_with_label(getRelevantLabel(ts, labelIndex))){
         if(transition.src != src && transition.target == src){
