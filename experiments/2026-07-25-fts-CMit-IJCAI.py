@@ -79,7 +79,7 @@ searches = sum([
         ##("ff",'lazy_greedy([ff(cost_type=one)], cost_type=one)')]
 
 
-DRIVER_OPTS = ["--overall-time-limit", "30m", "--overall-memory-limit", "3500m"]
+DRIVER_OPTS = ["--transform-task", "./builds/release64/bin/preprocess-h2", "--overall-time-limit", "30m", "--overall-memory-limit", "3500m"]
 TRANSFORM_OPTS = {
         #"-ntr" : ["--transform", "cost(cost_type=one)"],
         "-shr" : ["--transform-task", "./builds/release64/bin/preprocess-h2", "--transform", "transform_merge_and_shrink(shrink_strategy=shrink_weak_bisimulation(ignore_irrelevant_tau_groups=false),label_reduction=exact(max_time=300,atomic_fts=true,before_shrinking=true,before_merging=false),shrink_atomic_fts=true,run_main_loop=false,max_time=900,cost_type=one,prune_transitions_from_goal=true,prune_transitions_from_goal=true)"],
