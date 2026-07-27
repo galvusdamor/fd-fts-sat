@@ -30,7 +30,7 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
 BENCHMARKS_DIR = os.environ["DOWNWARD_BENCHMARKS"]
 #BENCHMARKS_FTS_DIR = os.environ["FTS_BENCHMARKS"]
-REVISION = "acf7f1d006f889153a7d38e17a70f6bb7b484a7d"
+REVISION = "5a714924cb50bcc494d05e9e1b6db2d14addfbfd"
 REVISIONS = [REVISION]
 
 
@@ -59,7 +59,7 @@ searches = sum([
         ##("ff",'lazy_greedy([ff(cost_type=one)], cost_type=one)')]
 
 
-DRIVER_OPTS = ["--transform-task", "./builds/release64/bin/preprocess-h2", "--overall-time-limit", "30m", "--overall-memory-limit", "3500m"]
+DRIVER_OPTS = ["--overall-time-limit", "30m", "--overall-memory-limit", "3500m"]
 TRANSFORM_OPTS = {
         #"-ntr" : ["--transform", "cost(cost_type=one)"],
         "-shr" : ["--transform", "transform_merge_and_shrink(shrink_strategy=shrink_weak_bisimulation(ignore_irrelevant_tau_groups=false),label_reduction=exact(max_time=300,atomic_fts=true,before_shrinking=true,before_merging=false),shrink_atomic_fts=true,run_main_loop=false,max_time=900,cost_type=one,prune_transitions_from_goal=true,prune_transitions_from_goal=true)"],
@@ -68,7 +68,7 @@ TRANSFORM_OPTS = {
         #'-lr' : ['--transform', 'transform_merge_and_shrink(label_reduction=exact(max_time=300,atomic_fts=true,before_shrinking=true,before_merging=false),shrink_atomic_fts=false,run_main_loop=false,max_time=900,cost_type=one,prune_transitions_from_goal=false)'],
         #'-fwb-lr' : ['--transform', 'transform_merge_and_shrink(shrink_strategy=shrink_weak_bisimulation(ignore_irrelevant_tau_groups=true, apply_haslum_rule=true),label_reduction=exact(max_time=300,atomic_fts=true,before_shrinking=true,before_merging=false),shrink_atomic_fts=true,run_main_loop=false,max_time=900,cost_type=one,prune_transitions_from_goal=true)'],
         #'-fwb-lr-d100' :["--transform", 'transform_merge_and_shrink(shrink_strategy=shrink_weak_bisimulation(ignore_irrelevant_tau_groups=true, apply_haslum_rule=true),merge_strategy=merge_stateless(merge_selector=score_based_filtering(scoring_functions=[product_size(100),goal_relevance,dfp,total_order(atomic_ts_order=reverse_level,product_ts_order=new_to_old,atomic_before_product=false)])),label_reduction=exact(max_time=300,atomic_fts=true,before_shrinking=true,before_merging=false),shrink_atomic_fts=true,run_main_loop=true,max_time=900,cost_type=one,prune_transitions_from_goal=true)'],
-        #'-fwb-lr-m100': ["--transform", 'transform_merge_and_shrink(shrink_strategy=shrink_weak_bisimulation(ignore_irrelevant_tau_groups=true, apply_haslum_rule=true),merge_strategy=merge_stateless(merge_selector=score_based_filtering(scoring_functions=[product_size(100),sf_miasm(shrink_strategy=shrink_own_bisimulation,threshold_before_merge=1,max_states=100),total_order(atomic_ts_order=reverse_level,product_ts_order=new_to_old,atomic_before_product=false)])),label_reduction=exact(max_time=300,atomic_fts=true,before_shrinking=true,before_merging=false),shrink_atomic_fts=true,run_main_loop=true,max_time=900,cost_type=one,prune_transitions_from_goal=true)'],
+        '-fwb-Blr-m100': ["--transform", 'transform_merge_and_shrink(shrink_strategy=shrink_weak_bisimulation(ignore_irrelevant_tau_groups=true, apply_haslum_rule=true),merge_strategy=merge_stateless(merge_selector=score_based_filtering(scoring_functions=[product_size(100),sf_miasm(shrink_strategy=shrink_own_bisimulation,threshold_before_merge=1,max_states=100),total_order(atomic_ts_order=reverse_level,product_ts_order=new_to_old,atomic_before_product=false)])),label_reduction=exact(max_time=300,atomic_fts=true,before_shrinking=true,before_merging=false,method=ONLY_EQUIVALENT_LABELS),shrink_atomic_fts=true,run_main_loop=true,max_time=900,cost_type=one,prune_transitions_from_goal=true)'],
     }
 
 for s_name, s_opt in searches:
