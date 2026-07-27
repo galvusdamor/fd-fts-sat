@@ -381,6 +381,23 @@ void SplitTransitionsEncoding::encode_frame_axioms(const vector<vector<int>>& pr
             sat->andImplies(negatedLabelsOrTransitions, nextStateVars[ts][state]);
         }
     }
+
+    for (int ts = 0; ts < fts->get_size(); ts++) {
+        for (size_t relevantLabel = 0; relevantLabel < relevantLabels[ts].size(); relevantLabel++){
+            int globalLabel = relevantLabels[ts][relevantLabel];
+            if (isAlwaysSelfLoop(ts, globalLabel) || !containsSelfLoops(ts, globalLabel))//Otherwise it is a label with mixed transitions which we need to handle
+                    continue;
+            set<int> negatedSources;
+            for (auto& [source, var] : allTimesTransitionSourcesVars.back()[ts][globalLabel]){
+                if(var != -1)
+                    negatedSources.insert(-var);
+            }
+            for (auto& [target, var] : allTimesTransitionTargetsVars.back()[ts][globalLabel]){
+                if(var != -1)
+                    sat->andImplies(negatedSources, -var);
+            }
+        }
+    }
 }
 
 vector<vector<int>> SplitTransitionsEncoding::extractIntermediateStates(vector<int>& selectedLabels, vector<int>& currentLastState, vector<int>& /*nextState*/, int labelTimestep){
