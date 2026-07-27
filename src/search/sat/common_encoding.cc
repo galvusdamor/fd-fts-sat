@@ -102,7 +102,7 @@ std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> Comm
 				selectedLabels.push_back(label);
 				timesteps_with_labels.insert(labelTimestep);
 				cout << "Label : " << label << endl;
-				if (selectedLabels.size() == 1)
+				if (selectedLabels.size() == 1){
 					for(int ts = 0 ; ts < fts->get_size() ; ts++){
 						for(size_t state = 0 ; state < allTimesStateVars[stateAfterTimestep][ts].size() ; state++){
 							if(ipasir_val(sat->solver, allTimesStateVars[stateAfterTimestep][ts][state]) > 0){
@@ -111,15 +111,17 @@ std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> Comm
 							}
 						}
 					}
+				}
 			}
 		}
 
 		// intermediate states
 		// code in this if is dependent on encode. Rest is common to all encodings
 		if(selectedLabels.size() > 1){
-			vector<vector<int>> intermediateStates = extractIntermediateStates(selectedLabels, statesPerTimestep.back(), stateReconstructor);
-			for(vector<int> & state : intermediateStates)
+			vector<vector<int>> intermediateStates = extractIntermediateStates(selectedLabels, statesPerTimestep.back(), stateReconstructor, labelTimestep);
+			for(vector<int> & state : intermediateStates){
 				statesPerTimestep.push_back(state);
+			}
 		}
 
 		if (selectedLabels.size() > 0){

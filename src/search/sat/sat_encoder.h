@@ -22,6 +22,7 @@ struct sat_capsule{
 	std::map<int,std::string> variableNames;
 	void registerVariable(int v, std::string name);
 	void printVariables() const;
+	void printVariablesTruth() const;
 #endif
 
 	sat_capsule(void* _solver);
@@ -56,11 +57,11 @@ struct sat_capsule{
 	void notAll(const std::set<int> & i);
 	void notAll(const std::vector<int> & i);
 	void allNotImpliesNot(const std::vector<int> & i, int j);
-	std::vector<int> compute_chains(std::vector<std::set<int>> &requirers, std::vector<std::set<int>> &opposers, std::vector<std::set<int>> &achievers, 
+	std::vector<int> compute_chains(std::vector<std::set<int>> &opposers, std::vector<std::set<int>> &requirers, std::vector<std::set<int>> &achievers, 
 					std::vector<std::vector<int>> &eventVars, int guardVariable);
-	void exists_chains(std::vector<std::set<int>> &requirers, std::vector<std::set<int>> &opposers, std::vector<std::vector<int>> &eventVars, int guardVariable);
-	void compute_guarded_forall_chains(std::vector<std::set<int>> &requirers, std::vector<std::set<int>> &opposers, std::vector<std::vector<int>> &eventVars, int guardVariable);
-	void compute_forall_chains(std::vector<std::set<int>> &requirers, std::vector<std::set<int>> &opposers, std::vector<std::vector<int>> &eventVars);
+	void exists_chains(std::vector<std::set<int>> &opposers, std::vector<std::set<int>> &requirers, std::vector<std::vector<int>> &eventVars, int guardVariable);
+	void compute_guarded_forall_chains(std::vector<std::set<int>> &opposers, std::vector<std::set<int>> &requirers, std::vector<std::vector<int>> &eventVars, int guardVariable);
+	void compute_forall_chains(std::vector<std::set<int>> &opposers, std::vector<std::set<int>> &requirers, std::vector<std::vector<int>> &eventVars);
 };
 
 

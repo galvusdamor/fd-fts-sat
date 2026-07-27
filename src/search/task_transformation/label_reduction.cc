@@ -193,6 +193,24 @@ bool LabelReduction::reduce(
         return reduced;
     }
 
+    if (lr_method == ONLY_EQUIVALENT_LABELS) {
+        /*
+           Compute the combinable relation considering all transition systems
+           (passing -1 as the index).
+         */
+        bool reduced = false;
+        equivalence_relation::EquivalenceRelation *relation =
+            compute_combinable_equivalence_relation(-1, fts);
+        vector<pair<int, vector<int>>> label_mapping;
+        compute_label_mapping(relation, fts, label_mapping, verbosity);
+        if (!label_mapping.empty()) {
+            fts.apply_label_mapping(label_mapping, -1);
+            reduced = true;
+        }
+        delete relation;
+        return reduced;
+    }
+
     /* Make sure that we start with an index not ouf of range for
        all_transition_systems. */
     size_t tso_index = 0;
@@ -292,6 +310,9 @@ void LabelReduction::dump_options() const {
     case ALL_TRANSITION_SYSTEMS_WITH_FIXPOINT:
         cout << "all transition systems with fixpoint computation";
         break;
+    case ONLY_EQUIVALENT_LABELS:
+        cout << "only equivalent labels (all transition systems considered)";
+        break;
     }
     cout << endl;
     if (lr_method == ALL_TRANSITION_SYSTEMS ||
@@ -352,6 +373,9 @@ static shared_ptr<LabelReduction>_parse(OptionParser &parser) {
     label_reduction_method_doc.push_back(
         "keep computing the 'combinable relation' for labels iteratively "
         "for all transition systems until no more labels can be reduced");
+    label_reduction_method.push_back("ONLY_EQUIVALENT_LABELS");
+    label_reduction_method_doc.push_back(
+        "compute the 'combinable relation' considering all transition systems");
     parser.add_enum_option("method",
                            label_reduction_method,
                            "Label reduction method. See the AAAI14 paper by "
