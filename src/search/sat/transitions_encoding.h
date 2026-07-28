@@ -75,6 +75,7 @@ public:
     // -----------------------------------------------------------------------
     bool isSelfLoop(task_representation::Transition t) const;
     virtual bool has_to_encode_transition(task_representation::Transition transition) = 0;
+    virtual bool has_to_encode_transition_target(int ts, int label, int target) = 0;
 
     // -----------------------------------------------------------------------
     // Movement queries (results cached after first call per {ts,label})

@@ -53,6 +53,9 @@ vector<vector<int>> TransitionsEncoding::compute_possible_label_movements(
         if (has_to_encode_transition(transition)) {
             to.insert(transition.target);
             from.insert(transition.src);
+        } else if(has_to_encode_transition_target(ts, label, transition.target)){
+            to.insert(transition.target);
+            non.insert(transition.src);
         } else {
             non.insert(transition.src);
         }

@@ -57,6 +57,7 @@ public:
     ~FullTransitionsEncoding() override = default;
 
     bool has_to_encode_transition(task_representation::Transition transition) override;
+    bool has_to_encode_transition_target(int ts, int label, int target) override;
 
     void appendNewTransitionVars(
         std::map<int, std::map<int,
