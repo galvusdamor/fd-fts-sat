@@ -52,4 +52,7 @@ def ignore_unexplained_errors2(run):
 for directory in [d for d in Path(DATA_DIR).iterdir() if d.is_dir() and d != TARGET_DIR]:
         exp.add_fetcher(str(directory), merge=True, filter=[joint_domains, ignore_unexplained_errors2]) # filter=[ignore_unexplained_errors2, joint_domains, invert_min_negative_dominance, unsolvable_wo_mystery,rename_time_steps])
 
+exp.add_fetcher('2025-12-08-classical-report-eval', merge=True, filter_algorithm=['A_1__chains_slf____rcpol-shr', 'A_1__seq____slf____rcpol-shr', 'CMit_chains_slf____rcpol-shr', 'CMit_seq____slf____rcpol-shr'])
+
+
 exp.run_steps()

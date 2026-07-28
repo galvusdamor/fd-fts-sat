@@ -160,6 +160,30 @@ scatter_plots += [scatter_alg(f"optimizations-{atr}-{cname}", config1, config2, 
                                                    '5a714924cb50bcc494d05e9e1b6db2d14addfbfd-A_1__splittransitions_slf_transeff-shr'),
                                                   ]]
 
+
+
+scatter_plots += [scatter_alg(f"baseline-{atr}-{cname}", config1, config2, atr, "domain", {'5a714924cb50bcc494d05e9e1b6db2d14addfbfd-A_1__fulltransitions_slf_transeff-shr' : 'Exist parallelism',
+                                                                                           'A_1__chains_slf____rcpol-shr' : 'Forall parallelism',
+                                                                                           'A_1__seq____slf____rcpol-shr' : 'Sequential'
+                                                                                           ''
+                                                                                           })
+                 for atr in ['planner_time', 'sat_clauses', 'sat_variables', 'time_steps_with_label']
+                 for (cname, config1,config2) in [('A1-fulltransitions-vs-chains',
+                                                   '5a714924cb50bcc494d05e9e1b6db2d14addfbfd-A_1__fulltransitions_slf_transeff-shr',
+                                                   'A_1__chains_slf____rcpol-shr'),
+                                                  ('A1-fulltransitions-vs-seq',
+                                                   '5a714924cb50bcc494d05e9e1b6db2d14addfbfd-A_1__fulltransitions_slf_transeff-shr',
+                                                   'A_1__seq____slf____rcpol-shr'),
+                                                  ('Cmit-fulltransitions-vs-chains',
+                                                   '5a714924cb50bcc494d05e9e1b6db2d14addfbfd-CMit_fulltransitions_slf_transeff-shr',
+                                                   'CMit_chains_slf____rcpol-shr'),
+                                                  ('Cmit-fulltransitions-vs-seq',
+                                                   '5a714924cb50bcc494d05e9e1b6db2d14addfbfd-CMit_fulltransitions_slf_transeff-shr',
+                                                   'CMit_seq____slf____rcpol-shr'),
+                                                  ]]
+
+
+
 # algo_to_latex_parallelism = {
 #     'A_1__chains_slf____rcpol-shr' : 'Chains',
 #     'A_1__seq____slf____rcpol-shr' : 'Sequential',
