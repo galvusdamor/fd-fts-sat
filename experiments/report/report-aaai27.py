@@ -146,20 +146,18 @@ scatter_plots = []
 # Plots to show differences of optimizations versus not optimizations
 scatter_plots += [scatter_alg(f"optimizations-{atr}-{cname}", config1, config2, atr, "domain", algo_to_latex_optimizations)
                  for atr in ['planner_time', 'sat_clauses', 'sat_variables', 'time_steps_with_label']
-                 for (cname, config1,config2) in [('A1shrfull-trans-vs-label',
+                 for (cname, config1,config2) in [('A1shrfull-transeff-vs-labeleff',
                                                    '5a714924cb50bcc494d05e9e1b6db2d14addfbfd-A_1__fulltransitions_____transeff-shr',
                                                    '5a714924cb50bcc494d05e9e1b6db2d14addfbfd-A_1__fulltransitions_____labeleff-shr'),
                                                   ('A1-shr-split-transeff-vs-labeleff',
                                                    '5a714924cb50bcc494d05e9e1b6db2d14addfbfd-A_1__splittransitions_slf_labeleff-shr',
                                                    '5a714924cb50bcc494d05e9e1b6db2d14addfbfd-A_1__splittransitions_slf_transeff-shr'),
                                                   ('A1-shr-full-vs-split',
-                                                   '5a714924cb50bcc494d05e9e1b6db2d14addfbfd-A_1__fulltransitions_slf_labeleff-shr',
+                                                   '5a714924cb50bcc494d05e9e1b6db2d14addfbfd-A_1__fulltransitions_slf_transeff-shr',
                                                    '5a714924cb50bcc494d05e9e1b6db2d14addfbfd-A_1__splittransitions_slf_transeff-shr'),
                                                   ('A1-shr-split-slf',
-                                                   '5a714924cb50bcc494d05e9e1b6db2d14addfbfd-A_1__splittransitions_____labeleff-shr',
+                                                   '5a714924cb50bcc494d05e9e1b6db2d14addfbfd-A_1__splittransitions_____transeff-shr',
                                                    '5a714924cb50bcc494d05e9e1b6db2d14addfbfd-A_1__splittransitions_slf_transeff-shr'),
-                                                  
-
                                                   ]]
 
 # algo_to_latex_parallelism = {
