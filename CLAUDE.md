@@ -73,27 +73,49 @@ Things to know before building:
 * **kissat is required and is NOT vendored.** `build_configs.py` passes
   `-DUSE_KISSAT=ON -DUSE_CUSTOM_KISSAT=ON -DSAT_DIR=<path> -DSAT_LIB=kissat`.
   The default `SAT_DIR` is a hard-coded developer path
-  (`/home/alvaro/projects/joao/kissat-p/build`). Point it at a local build of
-  the *patched* kissat: `rintanen_search.cc` calls
-  `kissat_set_external_scheduler(...)`, which only exists in that fork. Without
-  `USE_CUSTOM_KISSAT`, `sat/kissat_dummy.cc` provides no-op stubs so the code
-  links, but Rintanen's scheduler will not actually interrupt solvers.
+  (`/home/alvaro/projects/joao/kissat-p/build`), so on any other machine you
+  must override it. `build.py` already takes flags for this — do not edit
+  `build_configs.py`:
+
+  ```bash
+  # the patched solver, needed for rintanen
+  git clone -b p https://github.com/galvusdamor/kissat-p   # NOTE: branch 'p',
+  cd kissat-p && ./configure && make                       # master has no patch
+  ./build.py release64 -s/abs/path/to/kissat-p/build --custom-kissat -j8
+
+  # stock kissat is enough for sat() and incremental_sat()
+  ./build.py release64 -s/abs/path/to/kissat/build --kissat -j8
+  ```
+
+  `-s<dir>` sets `SAT_DIR`, `--custom-kissat` / `--kissat` set
+  `USE_CUSTOM_KISSAT` on/off. Note the repo provides its own IPASIR shim in
+  `sat/kissat.cpp` over kissat's native API, so the solver does not need to
+  export `ipasir_*` itself.
+
+  `rintanen_search.cc` calls `kissat_set_external_scheduler(...)`, which only
+  exists on the `p` branch of the fork. With `--kissat`, `sat/kissat_dummy.cc`
+  provides a stub that prints an explanation and exits, so `sat()` still works
+  but `rintanen(...)` does not. Rintanen's threads are **cooperatively**
+  scheduled (`run_mutex` in `SAT_Call_Data`): at most one runs at a time, so
+  "parallel calls" means interleaved, not concurrent.
 * The SAT plugin is `PLUGIN_SAT_SEARCH` (engines) and `SAT_SEARCH`
   (dependency-only library) in `src/search/DownwardFiles.cmake`. Add new
   encoding source files to the `SAT_SEARCH` `SOURCES` list; the extension `.cc`
   is implied.
-* **CUDD is only compiled when `PLUGIN_SYMBOLIC_ENABLED` is true**
-  (`src/search/CMakeLists.txt`, `if(PLUGIN_SYMBOLIC_ENABLED)` block). The
-  default config sets `-DPLUGIN_SYMBOLIC_SEARCH_ENGINE_ENABLED=FALSE`, so in a
-  stock `release64` build the CUDD headers are not on the include path and
-  `libcudd.a` is not linked. Anything in `sat/` that includes `cuddObj.hh`
-  therefore needs the CUDD block made available to `SAT_SEARCH` too (see
-  "BDD encoding" below).
+* **CUDD is built whenever `PLUGIN_SYMBOLIC_ENABLED` *or*
+  `PLUGIN_SAT_SEARCH_ENABLED` is set** (`src/search/CMakeLists.txt`, the
+  `USE_CUDD` block). `bdd_sat` needs `cuddObj.hh`, and `SAT_SEARCH` does not
+  depend on `SYMBOLIC`, so the stock `release64` config — which sets
+  `-DPLUGIN_SYMBOLIC_SEARCH_ENGINE_ENABLED=FALSE` — used to leave the headers
+  off the include path. The `ExternalProject` builds in-source under
+  `src/search/cudd-3.0.0/` (gitignored) and needs `automake`/`autoconf`
+  (`aclocal && autoheader && automake --add-missing && autoconf`). It adds
+  roughly a minute to a clean build.
 * Header include guards are hand-written and **collide**:
-  `SEARCH_ALGORITHMS_SAT_SEARCH` is used by `sat/label_based_encoding.h`,
-  `sat/bdd_encoding.h` and `search_engines/sat_search.h`. Including two of them
-  in one TU silently drops the second. Use unique guards (or `#pragma once`) in
-  anything you touch.
+  `SEARCH_ALGORITHMS_SAT_SEARCH` is still used by both
+  `sat/label_based_encoding.h` and `search_engines/sat_search.h`. Including
+  both in one TU silently drops the second. (`sat/bdd_encoding.h` was moved off
+  it to `SAT_BDD_ENCODING_H`.) Use unique guards in anything you touch.
 * `enum encoding_type {SEQUENTIAL, SELF_LOOP_PARALLEL, CHAINS_PARALLEL}` is
   defined in both `sat/label_based_encoding.h` and
   `search_engines/rintanen_search.h`, inside `namespace sat_search`. Do not
@@ -129,6 +151,32 @@ Notes:
   encoding.
 * Quick sanity check of the SAT stack without Rintanen's threads:
   `--search "sat(encoder=label_sat(...),length_strategy=one_by_one())"`.
+* The same run with the BDD encoding — `bdd_sat()` defaults are usable as-is:
+
+  ```bash
+  --search "sat(encoder=bdd_sat(),length_strategy=one_by_one(),solver_quiet=true)"
+  --search "sat(encoder=bdd_sat(one_step_only=false),length_strategy=one_by_one(),solver_quiet=true)"
+  ```
+
+* **Validate plans with VAL**, not just by reading "Solution found." The
+  encodings each contain a manual FTS plan check in `extractSolution`, but
+  that only checks the plan on the *transformed* task:
+
+  ```bash
+  ./fast-downward.py --plan-file /tmp/plan --sas-file /tmp/out.sas <problem> ...
+  Validate <domain.pddl> <problem.pddl> /tmp/plan     # must print "Plan valid"
+  ```
+
+Known rough edges, both **pre-existing and not specific to any encoding**
+(`label_sat` reproduces them identically), so don't chase them when a new
+encoding seems to misbehave:
+
+* `debug64` aborts on some tasks in the `FTSTask` constructor —
+  `assert(distances.get_goal_distance(s) < numeric_limits<int>::max())`
+  (`task_representation/fts_task.cc:87`), e.g. on parcprinter p01. Assertion
+  coverage has to come from tasks that get past it.
+* On some tasks (e.g. `miconic/s1-0`) the plan is printed and "Solution found."
+  is reported but no plan file is written, so VAL has nothing to check.
 
 ### Search engines and plugin names
 
@@ -147,7 +195,7 @@ Both `sat` and `rintanen` take `encoder=<SATEncodingFactory>` and
 | `label_sat(...)` | `sat/label_based_encoding.cc` | Main encoding (labels + states, matrix-based "row/col/pillar" optimisations via `FTSMatrix`). |
 | `full_transitions_sat(...)` | `sat/full_transitions_encoding.cc` | One SAT var per (non-self-loop) transition. |
 | `split_transitions_sat(...)` | `sat/split_transitions_encoding.cc` | Split transition variables. |
-| *(none yet)* | `sat/bdd_encoding.cc` | **Disabled**, see below. |
+| `bdd_sat(...)` | `sat/bdd_encoding.cc` | BDDs per factor over the label variables, Tseitin-translated. See below. |
 
 ## Architecture of the SAT stack (post-refactor, Oct 2025)
 
@@ -229,117 +277,101 @@ intermediate factor states are not encoded, `extractSolution` must
 **reconstruct** intermediate states per factor by DFS over the transition
 system (`bdd_state_reconstruction_dfs`).
 
-Modes and options (from the pre-refactor `plugin_sat.cc`, commit `7199ca871`):
+See **Options** below for the modes this exposes.
+
+### Status
+
+Re-integrated and building (commits `270a9fc94`, `ac461fec3`). Registered as
+the encoder plugin **`bdd_sat(...)`**. `label_sat` is untouched.
+
+The file had been excluded from the build in `6f20300de` right after the
+`SATEncodingFactory` refactor. It was not simply stale: it had never been
+finished. Its `encode()` built a formula, called `ipasir_val()` on a solver
+that had never been passed to `ipasir_solve()`, and discarded the extracted
+plan (`// likely check_goal_and_set_plan with four arguments`). The port had
+to supply the solution path, not just translate the old one.
+
+Structure now mirrors `label_sat`:
+
+```
+BDDSATEncodingFactory  options, LabelOrderFinder, the Cudd manager, all BDD
+                       construction and the node in-degrees. Once per --search.
+BDDEncodingData        the result of that, shared read-only (shared_ptr<const>)
+                       with every encoding instance.
+BDDSATEncoding         one SAT call: label vars, Tseitin translation of the
+                       factor BDDs, plan extraction with DFS state
+                       reconstruction. Derives from LabelEncoding, so state
+                       vars, exactly-one, encodeInit/encodeGoal come for free.
+```
+
+No frame axioms are emitted, and none are needed: constraining *every*
+`(source,target)` pair — including impossible ones, whose BDD is `bddZero`
+and which therefore emit `¬prev_s ∨ ¬next_ss` — already is the frame
+constraint. `encodeStateEquals` is inherited from `StateEncoding` and is
+correct, so `incremental_sat` is not specifically blocked (it cannot run
+against kissat regardless, which has no `ipasir_assume`).
+
+`tseitsinVars` is per encoding instance and is cleared per factor per time
+step — it **must** be, since the Tseitin variable of a BDD node stands for
+that node evaluated against *this* time step's label variables.
+
+### Options (`bdd_sat(...)`)
 
 | option | default | meaning |
 |---|---|---|
-| `combinebdds` | false | one BDD per factor over (state, next-state, labels) vs. one BDD per (factor, s, ss) pair conditioned on state vars |
-| `considerOnlyOneStepTransitions` | `true` (hard-coded) | only "one real transition + self-loops before/after" per step, vs. full all-pairs reachability DP over the label order |
-| `bdd_size_limit` | -1 | per-factor node budget; oversize (s,ss) BDDs fall back to the one-step BDD |
-| `impltseitsin` | true | implicational (one-directional) Tseitin instead of bi-implicational |
-| `omitforcedvariables` / `forcedvariablesthreshold` | true / 100 | skip Tseitin vars for BDD nodes with in-degree ≤ threshold |
-| `cutbdds` | false | fixpoint "cutting" of BDDs across factors for stronger constraints |
-| `coverbdds` | false | search for always-true/false `state -> ±label` implications to shrink BDDs |
-| `label_order` | `label_order_linear()` | `LabelOrderFinder` plugin; the BDD variable order == label order |
+| `one_step_only` | `true` | one real transition per factor per step (plus self loops) vs. the full all-pairs reachability DP over the label order |
+| `combinebdds` | `false` | one BDD per factor over (state, next state, labels) vs. one BDD per (factor, s, ss) conditioned on the state vars |
+| `bdd_size_limit` | `-1` | per-factor node budget; oversize `(s,ss)` BDDs fall back to the one-step BDD. Rejected with `one_step_only=true`, where it means nothing |
+| `impltseitsin` | `true` | implicational instead of bi-implicational Tseitin |
+| `omitforcedvariables` / `forcedvariablesthreshold` | `true` / `100` | skip Tseitin vars for nodes with in-degree ≤ threshold |
+| `cutbdds` | `false` | fixpoint "cutting" of BDDs across factors |
+| `coverbdds` | `false` | **diagnostic only**: reports always-true/false `state -> ±label` implications and does not change the formula |
+| `label_order` | `label_order_linear()` | `LabelOrderFinder`; this *is* the BDD variable order |
+| `force_at_least_one_action` | `false` | as elsewhere |
 
-CUDD manager parameters (`cudd_init_nodes`, cache size, memory) are constants
-in the header marked `// TODO: read from command line arguments`.
+CUDD manager parameters (`cudd_init_nodes`, cache size, memory) are still
+constants in the header marked `// TODO: read from command line arguments`.
 
-### Why it does not build today
+### Bugs fixed during the port
 
-It was excluded from `DownwardFiles.cmake` (`#sat/bdd_encoding`) in commit
-`6f20300de "Disabled BDD"` immediately after the `SATEncodingFactory`
-refactor (`a29285cd0`). Concretely it is stale in these ways:
+Worth knowing about, because several of them would have silently produced
+wrong measurements rather than crashes:
 
-1. **Wrong base class / interface.** It derives from a non-existent
-   `SAT_encoding` and implements `initialize()` + `encode(int currentLength,
-   int stepTimeLimit)`. The current interface is
-   `SATEncodingFactory` (with `initialize`, `createEncodingInstance`) +
-   `SATEncoding` (with `encode(from,to)`, `encodeInit`, `encodeGoal`,
-   `encodeStateEquals`, `extractSolution`).
-2. **Owns its own solver.** `encode()` calls `ipasir_init()`, builds
-   `sat_capsule capsule;` (default ctor gone), emits init and goal itself, and
-   reads the model with `ipasir_val`. All of that now belongs to the engine.
-3. **Free clause helpers.** Uses `atMostOne(solver, capsule, v)`,
-   `atLeastOne(solver, capsule, v)`, `assertYes(solver, v)`,
-   `notAll(solver, v)`, `andImplies(solver, ...)`, `reset_number_of_clauses()`,
-   `get_number_of_clauses()`. These are now methods on `sat_capsule`.
-4. **Options plumbing.** Ctor takes `(const Options&, shared_ptr<FTSTask>)`
-   and expects the option names above to exist on the *search engine*; they
-   were removed from `plugin_sat.cc`. The `label_order` option and
-   `labelOrder = label_order_finder->find_order(*fts)` call are commented out,
-   so `labelOrder` is empty and every `labelOrder[l]` access is UB.
-5. **Build wiring.** CUDD include dirs / `libcudd.a` are only added under
-   `if(PLUGIN_SYMBOLIC_ENABLED)`; `SAT_SEARCH` does not depend on `SYMBOLIC`.
-6. **Header guard collision** with `label_based_encoding.h` / `sat_search.h`.
-7. Global state: `map<DdNode*,int> tseitsinVars, node_indegree` are
-   file-scope globals (marked `TODO Get rid of global variables!`). With
-   `rintanen` running several encodings concurrently in threads this is a
-   data race; they must become members of the per-call encoding object.
-   Similarly `exceptionError`/`exitOutOfMemory` handlers and the CUDD manager
-   are per-factory state that multiple threads will share — CUDD managers are
-   not thread-safe.
+1. **`one_step_only` could not express an empty time step.** Every disjunct
+   of the one-step BDDs forces its own label true — including the self-loop
+   disjuncts — so a factor could never stay put unless some label fired. The
+   formula was therefore UNSAT for *every horizon longer than the shortest
+   one*. That silently breaks `by_iteration()`, `constant()` and rintanen's
+   length scheduling, all of which probe non-consecutive lengths. A "no real
+   transition" disjunct was added. Regression check: with
+   `length_strategy=constant(plan_length=N)` on parcprinter p01, both
+   `one_step_only` settings must be SAT for every `N >= 8`.
+2. **The BDD variable order was not the label order.** The DP ran in
+   `labelOrder` but indexed CUDD variables by label *id*
+   (`bddVar(label + num_factor_vars)`), while `bdd_to_dot` labelled variable
+   `i` as `labelOrder[i]`. Comparing label orders was thus measuring nothing
+   about the variable order. There is now an explicit `labelToBDDVar`, and
+   label order == BDD variable order as documented.
+3. **`one_step_only` + `combinebdds=false` read the wrong structure.**
+   `initialize()` filled only the one-step BDDs, `encode()` read the
+   full-reachability ones, which were empty. Both now feed one structure.
+4. **`tseitsinVars` / `node_indegree` were file-scope globals.** Tseitin ids
+   are per capsule, so under `rintanen` — which interleaves encodings — they
+   leaked between SAT calls. Note the threads are *cooperative*: only one
+   runs at a time, so this was cross-contamination, not a data race, and it
+   would have produced wrong formulas rather than a crash. `node_indegree`
+   also accumulated across calls, drifting the `omitforcedvariables`
+   decisions.
+5. **`cutbdds` ran inside the per-factor loop**, recomputing its fixpoint
+   once per factor and, on the first pass, over factors not yet built.
+6. **`coverbdds` ended in `exit(0)`** and its result was never read.
+7. **`bdd_size_limit`** is now rejected with `one_step_only`.
 
-### Re-integration plan (branch `bdd`)
 
-Do this incrementally; keep `label_sat` behaviour untouched and verify it
-still produces identical plans before and after each step.
+### Investigating the encoding
 
-1. **Build wiring.** In `src/search/CMakeLists.txt`, make the CUDD
-   `ExternalProject` / include / link block fire when
-   `PLUGIN_SYMBOLIC_ENABLED OR PLUGIN_SAT_SEARCH_ENABLED` (or introduce a
-   `USE_CUDD` option set by both). Re-add `sat/bdd_encoding` to the
-   `SAT_SEARCH` sources in `DownwardFiles.cmake`. Note the CUDD configure
-   step requires `automake`/`autoconf` (`aclocal && autoheader && automake
-   --add-missing && autoconf`).
-2. **Fix the header.** Unique include guard; forward-declare what you can;
-   include `cuddObj.hh` only in the header that needs it.
-3. **Split into factory + per-call encoding**, mirroring `label_sat`:
-   * `BDDSATEncodingFactory : SATEncodingFactory` — holds options, the
-     `LabelOrderFinder`, `labelOrder`, the `Cudd` manager and the
-     precomputed `transition_BDDs_*` (everything now in
-     `BDDSATEncoding::initialize()`), plus the one-off in-degree computation.
-     Register as plugin `bdd_sat(...)` with the options in the table above
-     (`bdd_size_limit`, `impltseitsin`, `omitforcedvariables`,
-     `forcedvariablesthreshold`, `combinebdds`, `cutbdds`, `coverbdds`,
-     `label_order`, `force_at_least_one_action`, and expose
-     `one_step_only` for `considerOnlyOneStepTransitions`).
-   * `BDDSATEncoding : StateEncoding` (or `LabelEncoding`) — per SAT call.
-     Reuse `StateEncoding` for state variables, exactly-one constraints and
-     `encodeInit`/`encodeGoal`; keep only label vars, `bdd_to_cnf`, the
-     Tseitin maps (as members) and `extractSolution` here.
-     `encode(fromTime,toTime)` = for each step: generate label vars, next
-     state vars, then `bdd_to_cnf` per factor with the current step's SAT
-     vars. Replace all `xxx(solver, capsule, ...)` calls with `sat->xxx(...)`.
-   * `extractSolution` reads the model via `ipasir_val(sat->solver, var)` and
-     returns the `tuple<PlanState, vector<PlanState>, vector<int>, set<int>>`
-     expected by the engines; port the DFS state reconstruction and the
-     label re-ordering by `labelOrder` (labels within a step must be listed in
-     BDD-order for the plan to be valid).
-   * `encodeStateEquals` can `assert(false)`/throw "not supported by BDD
-     encoding" initially (needed only by `incremental_sat`).
-4. **Thread safety for `rintanen`.** CUDD objects live in the factory and are
-   read-only after `initialize()`. `bdd_to_cnf` only reads `DdNode*`
-   structure via `Cudd_T/Cudd_E/Cudd_IsConstant`, which is safe if no other
-   thread mutates the manager — so: never create BDDs after `initialize()`
-   returns, and make `tseitsinVars`/`node_indegree` per-encoding (or
-   precompute the in-degree map once in the factory and copy it).
-   Alternatively start by only supporting `sat(...)` and add `rintanen`
-   support once the single-threaded path is validated.
-5. **Validate.** Compare against `label_sat` on small instances
-   (parcprinter p01, a few FTS benchmark instances): same plan length per
-   `length_strategy` step, plans validated with VAL, no assertion failures in
-   `debug64`. Check clause/variable counts print as
-   `Formula has N clauses and M variables.` — `experiments/sat_parser.py`
-   greps for that exact string.
-6. **Experiments.** Add a dated script in `experiments/` following the
-   existing pattern (`common_setup.IssueConfig`, `fts_parser`, `sat_parser`,
-   `REVISION = <sha>`), pinned to a commit on `bdd`.
-
-### After re-integration: investigating the encoding
-
-Once `bdd_sat` builds and validates, the goal is to *understand* the encoding,
-not just run it. Useful directions and where the hooks already are:
+`bdd_sat` builds and validates, so the goal now is to *understand* the
+encoding, not just run it. Useful directions and where the hooks already are:
 
 * **Size and structure.** `initialize()` already prints per-factor BDD node
   counts, `possibleSingleTrans` vs `allTrans`, and sizes before/after
@@ -350,21 +382,27 @@ not just run it. Useful directions and where the hooks already are:
   (see `experiments/2025-07-09-bdd-other-orders.py`) and consider a
   causal-graph / `FTSMatrix`-informed order. CUDD dynamic reordering
   (`Cudd_AutodynEnable`) is not used — try it and record the resulting order.
-* **One-step vs. full reachability.** `considerOnlyOneStepTransitions=true`
-  gives ∃-step-like parallelism restricted to one "real" move per factor per
-  step; `false` allows arbitrary label sequences within a factor per step
-  (much stronger, much bigger). Measure plan-length (number of steps) vs.
-  formula size vs. solving time. `bdd_size_limit` interpolates between them.
+* **One-step vs. full reachability.** `one_step_only=true` gives ∃-step-like
+  parallelism restricted to one "real" move per factor per step; `false`
+  allows arbitrary label sequences within a factor per step (much stronger,
+  much bigger). Measure plan-length (number of steps) vs. formula size vs.
+  solving time. `bdd_size_limit` interpolates between them. First data point,
+  parcprinter p01 at the length where it first becomes SAT: one-step 11827
+  clauses / 1844 vars, compression 1.0; full reachability 6180 / 427,
+  compression 1.6 — i.e. the *bigger* semantics gave the *smaller* formula
+  here, because the one-step BDDs enumerate one disjunct per transition.
 * **Tseitin variants.** `impltseitsin` + `omitforcedvariables` +
   threshold: quantify clause/var savings and impact on kissat.
-* **`cutbdds` / `coverbdds`.** Both are experimental and were never
-  systematically evaluated; establish whether they produce correct, smaller
-  encodings before drawing conclusions.
+* **`cutbdds` / `coverbdds`.** Still never systematically evaluated. Both now
+  run and `cutbdds` produces VAL-valid plans, but on the small instances tried
+  so far it barely moves formula size (parcprinter p01: 6180 -> 6300 clauses,
+  i.e. slightly *worse*). `coverbdds` is diagnostic-only and changes nothing.
 * **Comparison baseline.** `label_sat(encoding=CHAINS_PARALLEL,...)` with the
   "good configurations" from `experiments/2025-11-0x-good-configurations*.py`
   and the `rintanen` settings above.
-* `bdd_to_dot` exists (writes `.dot` of a BDD with named variables) — handy for
-  eyeballing small factors; calls are commented out in `initialize()`.
+* `bdd_to_dot` exists on the factory (writes `.dot` of a BDD with named
+  variables) — handy for eyeballing small factors. Nothing calls it; add a call
+  in `initialize()` while debugging.
 
 ## Conventions and gotchas
 
