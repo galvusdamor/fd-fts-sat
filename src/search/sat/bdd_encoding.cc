@@ -1,94 +1,176 @@
+#include <algorithm>
 #include <chrono>
-#include <thread>
-#include <ctime>
-#include <atomic>
+#include <cstdio>
+#include <cstdlib>
 
 #include "bdd_encoding.h"
 
-// #include "../plugins/options.h"
-#include "../utils/logging.h"
-#include "../utils/timer.h"
 #include "ipasir.h"
+#include "sat_encoder.h"
+#include "../task_representation/label_equivalence_relation.h"
 #include "../task_utils/label_order_finder.h"
+#include "../utils/logging.h"
+#include "../utils/system.h"
+#include "../utils/timer.h"
+
+#include "../options/option_parser.h"
+#include "../options/options.h"
+#include "../options/plugin.h"
 
 using namespace std;
 using namespace task_representation;
 
 
 namespace sat_search {
-BDDSATEncoding::BDDSATEncoding(const Options &opts,std::shared_ptr<task_representation::FTSTask> main_task): //SearchEngine(opts),
+
+namespace {
+struct BDDError {};
+
+// promise from symbolic
+void exceptionError(string /*message*/) {
+	throw BDDError();
+}
+
+void exitOutOfMemory(size_t) {
+	cerr << "Memory exceeded within BDD operation" << endl;
+	utils::exit_with(utils::ExitCode::OUT_OF_MEMORY);
+}
+}
+
+
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
+
+BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
+	SATEncodingFactory(opts.get<bool>("force_at_least_one_action")),
+	oneStepOnly(opts.get<bool>("one_step_only")),
+	combineAllBDDsIntoOne(opts.get<bool>("combinebdds")),
 	bddEncodingSizeLimit(opts.get<int>("bdd_size_limit")),
 	implicationalTseitsin(opts.get<bool>("impltseitsin")),
 	omitForcedVariables(opts.get<bool>("omitforcedvariables")),
 	forcedVariablesThreshold(opts.get<int>("forcedvariablesthreshold")),
-	combineAllBDDsIntoOne(opts.get<bool>("combinebdds")),
 	bddCutting(opts.get<bool>("cutbdds")),
 	bddCovering(opts.get<bool>("coverbdds")),
-	fts(main_task) {
-}
-
-
-struct BDDError {};
-
-
-// promise from symbolic
-void
-exceptionError(string /*message*/) {
-    //cout << message << endl;
-    throw BDDError();
-}
-
-
-void BDDSATEncoding::bdd_to_dot(const BDD &bdd, const std::string &file_name) const {
-  std::vector<string> var_names(bdd_num_vars);
-  for(int f = 0; f < num_factor_vars; f++){
-	  if (f < num_factor_vars / 2)
-		  var_names[f] = "factor_state_" + to_string(f);
-	  else
-		  var_names[f] = "factor_next_state_" + to_string(f - (num_factor_vars/2));
-	  cout << "F" << f << " " << var_names[f] << endl;
-  }
-  for(int l = 0; l < fts->get_num_labels(); l++)
-	  var_names[num_factor_vars + l] = "label_" + to_string(labelOrder[l]);
-
-  std::vector<char *> names(var_names.size());
-  for (size_t i = 0; i < var_names.size(); ++i) {
-    names[i] = &var_names[i].front();
-  }
-  FILE *outfile = fopen(file_name.c_str(), "w");
-  DdNode **ddnodearray = (DdNode **)malloc(sizeof(bdd.Add().getNode()));
-  ddnodearray[0] = bdd.Add().getNode();
-  Cudd_DumpDot(_manager->getManager(), 1, ddnodearray, names.data(), NULL,
-               outfile); // dump the function to .dot file
-  free(ddnodearray);
-  fclose(outfile);
-}
-
-
-// TODO Get rid of global variables!
-map<DdNode *, int> tseitsinVars;
-map<DdNode *, int> node_indegree;
-
-
-int BDDSATEncoding::givevar(int bddvar, vector<int> & factorVars, std::vector<int> & labelVars, vector<int> & nextFactorVars){
-	if (bddvar >= num_factor_vars) return labelVars[bddvar - num_factor_vars];
-	if (bddvar < num_factor_vars / 2) {
-		assert(factorVars.size() > size_t(bddvar));
-		return factorVars[bddvar];
+	label_order_finder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order"))
+{
+	if (oneStepOnly && bddEncodingSizeLimit != -1){
+		cerr << "bdd_size_limit only has an effect if one_step_only=false: it interpolates "
+			 << "between the full reachability BDDs and the one-step BDDs." << endl;
+		utils::exit_with(utils::ExitCode::INPUT_ERROR);
 	}
-	assert(int(factorVars.size()) > bddvar - num_factor_vars / 2);
-	return nextFactorVars[bddvar - num_factor_vars / 2];
+	if (bddCovering && (oneStepOnly || combineAllBDDsIntoOne)){
+		cerr << "coverbdds requires one_step_only=false and combinebdds=false." << endl;
+		utils::exit_with(utils::ExitCode::INPUT_ERROR);
+	}
 }
 
 
-void BDDSATEncoding::bdd_in_degree(DdNode * node){
+static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionParser &parser) {
+	parser.document_synopsis("BDD-based SAT encoding",
+		"For every factor, BDDs over the label variables (in the order given by "
+		"label_order) describe which sets of labels move the factor from one state "
+		"to another within a single plan step. The BDDs are Tseitin-translated into "
+		"CNF once and reused for every time step.");
 
+	parser.add_option<bool>(
+		"one_step_only",
+		"only allow one real transition per factor and time step (plus self loops "
+		"before and after it) instead of arbitrary label sequences",
+		"true");
+
+	parser.add_option<bool>(
+		"combinebdds",
+		"use one BDD per factor over (state, next state, labels) instead of one BDD "
+		"per (factor, source, target) triple conditioned on the state variables",
+		"false");
+
+	parser.add_option<int>(
+		"bdd_size_limit",
+		"per-factor budget of BDD nodes. Oversized (source,target) BDDs fall back to "
+		"the one-step BDD. -1 means no limit. Requires one_step_only=false",
+		"-1");
+
+	parser.add_option<bool>(
+		"impltseitsin",
+		"use implicational (one-directional) Tseitin encoding instead of a "
+		"bi-implicational one",
+		"true");
+
+	parser.add_option<bool>(
+		"omitforcedvariables",
+		"do not create Tseitin variables for BDD nodes whose in-degree is at most "
+		"forcedvariablesthreshold",
+		"true");
+
+	parser.add_option<int>(
+		"forcedvariablesthreshold",
+		"in-degree up to which omitforcedvariables applies",
+		"100");
+
+	parser.add_option<bool>(
+		"cutbdds",
+		"fixpoint 'cutting' of the BDDs across factors for stronger constraints",
+		"false");
+
+	parser.add_option<bool>(
+		"coverbdds",
+		"search for always-true/false state -> +-label implications and report them. "
+		"Diagnostic only: this does not change the generated formula",
+		"false");
+
+	parser.add_option<bool>(
+		"force_at_least_one_action",
+		"force that every time step contains at least one action",
+		"false");
+
+	parser.add_option<shared_ptr<label_order_finder::LabelOrderFinder>>(
+		"label_order",
+		"order in which labels may be applied within one time step. This is also the "
+		"BDD variable order",
+		"label_order_linear()");
+
+	options::Options opts = parser.parse();
+	if (parser.dry_run())
+		return nullptr;
+	else
+		return make_shared<BDDSATEncodingFactory>(opts);
+}
+
+static options::PluginShared<SATEncodingFactory> _plugin_bdd_sat_factory("bdd_sat", _parse_bdd_sat_factory);
+
+
+void BDDSATEncodingFactory::bdd_to_dot(const BDD &bdd, const std::string &file_name) const {
+	std::vector<string> var_names(data->bdd_num_vars);
+	for(int f = 0; f < data->num_factor_vars; f++){
+		if (f < data->num_factor_vars / 2)
+			var_names[f] = "factor_state_" + to_string(f);
+		else
+			var_names[f] = "factor_next_state_" + to_string(f - (data->num_factor_vars/2));
+	}
+	for(int i = 0; i < fts->get_num_labels(); i++)
+		var_names[data->num_factor_vars + i] = "label_" + to_string(data->labelOrder[i]);
+
+	std::vector<char *> names(var_names.size());
+	for (size_t i = 0; i < var_names.size(); ++i)
+		names[i] = &var_names[i].front();
+
+	FILE *outfile = fopen(file_name.c_str(), "w");
+	DdNode **ddnodearray = (DdNode **)malloc(sizeof(bdd.Add().getNode()));
+	ddnodearray[0] = bdd.Add().getNode();
+	Cudd_DumpDot(_manager->getManager(), 1, ddnodearray, names.data(), NULL, outfile);
+	free(ddnodearray);
+	fclose(outfile);
+}
+
+
+void BDDSATEncodingFactory::bdd_in_degree(DdNode * node){
 	// first handle edge cases
 	if (Cudd_IsConstant(node)) return;
 
 	// this node is branching
-    DdNode* true_branch = Cudd_T(node);
-    DdNode* false_branch = Cudd_E(node);
+	DdNode* true_branch = Cudd_T(node);
+	DdNode* false_branch = Cudd_E(node);
 	if (implicationalTseitsin && Cudd_IsComplement(node)) {
 		true_branch = Cudd_Not(true_branch);
 		false_branch = Cudd_Not(false_branch);
@@ -99,860 +181,636 @@ void BDDSATEncoding::bdd_in_degree(DdNode * node){
 	DdNode * lookup;
 	if (implicationalTseitsin) lookup = node; else lookup = Cudd_Regular(node);
 
-	if (node_indegree.count(lookup)){
-		node_indegree[lookup]++;
+	if (data->node_indegree.count(lookup)){
+		data->node_indegree[lookup]++;
 		return;
 	}
 
-	node_indegree[lookup]++;
+	data->node_indegree[lookup]++;
 	bdd_in_degree(true_branch);
 	bdd_in_degree(false_branch);
 }
 
-void BDDSATEncoding::bdd_to_cnf(DdNode * node, std::vector<int> & currentConditions, vector<int> & factorVars, std::vector<int> & labelVars, vector<int> & nextFactorVars, void* solver, sat_capsule & capsule){
 
-	// first handle edge cases
-	if (Cudd_IsConstant(node)){
-		bool isTrue = !Cudd_IsComplement(node);
+/**
+ * Propagate constraints between factors until a fixpoint is reached.
+ *
+ * For a pair of factors (source, target) the labels that are irrelevant for the
+ * target are projected away from "any transition of source". What remains is a
+ * constraint over the labels both factors share, and it can be conjoined onto
+ * every transition BDD of the target.
+ */
+void BDDSATEncodingFactory::cut_bdds_to_fixpoint(){
+	BDD stateCube = _manager->bddOne();
+	for (int i = 0; i < data->num_factor_vars; i++) stateCube *= _manager->bddVar(i);
 
-		if (!isTrue){
-			// if conditions are true, we would end up at the false node, thus the conditions must be false
-			notAll(solver, currentConditions);
-		}
-		// in the true case, we have nothing to do as the BDD is automatically satisfied
+	int round = 0;
+	bool anyUpdate = true;
+	while (anyUpdate) {
+		cout << "Propagation Round " << round << flush;
+		anyUpdate = false;
+		round++;
 
-		return;
-	}
-
-	// this node is branching
-    DdNode* true_branch = Cudd_T(node);
-    DdNode* false_branch = Cudd_E(node);
-	//cout << "Rec: " << node << " " << var_to_branch << "T " << true_branch << " F " << false_branch << endl;
-	if (implicationalTseitsin && Cudd_IsComplement(node)) {
-		true_branch = Cudd_Not(true_branch);
-		false_branch = Cudd_Not(false_branch);
-	}
-	int var_to_branch = givevar(Cudd_NodeReadIndex(node), factorVars, labelVars, nextFactorVars);
-	vector<tuple<int,DdNode*,DdNode*>> successors {{var_to_branch, true_branch, false_branch}, {-var_to_branch, false_branch, true_branch}};
-
-	// compute lookup node. For the biimplicational encoding we only keep one copy,
-	// for tseitsin we need both positive and negative versions
-	DdNode * lookup;
-	if (implicationalTseitsin) lookup = node; else lookup = Cudd_Regular(node);
-
-
-	// forcing takes precedence over lookup.
-	if (implicationalTseitsin && omitForcedVariables && node_indegree[lookup] <= forcedVariablesThreshold){
-		// check if one of the branches leads to the false node
-		for (const auto & [branch_var, branch, otherbranch] : successors){
-			if (Cudd_IsConstant(branch) && Cudd_IsComplement(branch)){
-				// this branch leads immediately to false. Thus we *must* take the other branch.
-				// Thus: if conditions are true, the branch var must direct us in the other direction.
-				andImplies(solver,currentConditions,-branch_var);
-
-				// and the conditions are then propagated further down the tree
-				bdd_to_cnf(otherbranch, currentConditions, factorVars, labelVars, nextFactorVars, solver, capsule);
-				// this can happen for only one branch (otherwise BDD is not reduced)
-				return;
-			}
-			if (Cudd_IsConstant(branch) && !Cudd_IsComplement(branch)){
-				// this branch immediately leads to true. The other branch is only relevant if condition is false.
-				// This means that the negation of the branch variable essentially becomes a new condition.
-				vector<int> newConditions = currentConditions;
-				newConditions.push_back(-branch_var);
-				
-				bdd_to_cnf(otherbranch, newConditions, factorVars, labelVars, nextFactorVars, solver, capsule);
-				return;
+		// 1. a BDD per factor describing any legal transition in that factor
+		vector<BDD> any_transition_per_factor(fts->get_size());
+		for (int fac = 0; fac < fts->get_size(); fac++){
+			if (!combineAllBDDsIntoOne){
+				const TransitionSystem & factor = fts->get_ts(fac);
+				any_transition_per_factor[fac] = _manager->bddZero();
+				for (int s = 0; s < factor.get_size(); s++)
+					for (int ss = 0; ss < factor.get_size(); ss++)
+						any_transition_per_factor[fac] +=
+							data->transition_BDDs_per_factor_per_state_pair[fac][s][ss];
+			} else {
+				// project away the state variables.
+				any_transition_per_factor[fac] =
+					data->transition_BDDs_per_factor[fac].ExistAbstract(stateCube);
 			}
 		}
+
+		// 2. Go over all pairs of factors
+		for (int facS = 0; facS < fts->get_size(); facS++){
+			const TransitionSystem & factorSource = fts->get_ts(facS);
+			for (int facT = 0; facT < fts->get_size(); facT++){
+				if (facS == facT) continue;
+				const TransitionSystem & factorTarget = fts->get_ts(facT);
+
+				// cube for the variables that need to be abstracted away
+				BDD cube = _manager->bddOne();
+				bool foundRemainingVariable = false;
+				for(int label = 0; label < fts->get_num_labels(); label++){
+					LabelID labelID (label);
+					// will not be mentioned in this BDD anyway
+					if (!factorSource.is_relevant_label(labelID) && factorSource.is_selfloop_everywhere(labelID)) continue;
+					// don't project away labels that *are* relevant
+					if (factorTarget.is_relevant_label(labelID) || !factorTarget.is_selfloop_everywhere(labelID)) {
+						foundRemainingVariable = true;
+						continue;
+					}
+					cube *= _manager->bddVar(data->labelToBDDVar[label]);
+				}
+
+				// no shared variables
+				if (!foundRemainingVariable) continue;
+
+				BDD constraintsOverLabelsRelevantForTarget = any_transition_per_factor[facS].ExistAbstract(cube);
+
+				// if the relevant BDD is 1, then there is nothing to propagate.
+				if (constraintsOverLabelsRelevantForTarget == _manager->bddOne()) continue;
+
+				// actually propagate
+				if (!combineAllBDDsIntoOne){
+					for (int s = 0; s < factorTarget.get_size(); s++){
+						for (int ss = 0; ss < factorTarget.get_size(); ss++){
+							BDD & currentMemory = data->transition_BDDs_per_factor_per_state_pair[facT][s][ss];
+							BDD old = currentMemory;
+							currentMemory *= constraintsOverLabelsRelevantForTarget;
+							if (old != currentMemory) anyUpdate = true;
+						}
+					}
+				} else {
+					BDD old = data->transition_BDDs_per_factor[facT];
+					data->transition_BDDs_per_factor[facT] *= constraintsOverLabelsRelevantForTarget;
+					if (old != data->transition_BDDs_per_factor[facT]) anyUpdate = true;
+				}
+			}
+		}
+		cout << " completed with " << (anyUpdate?"some reduction. Continuing": "no reduction. Reached fixpoint.") << endl;
 	}
-
-
-	// we now know that we (may) need to create a new decision variable here.
-	// TODO: in theory, we could extend the condition with the branch vars,
-	// but only up to a point as otherwise this will be an exponential encoding
-
-
-
-	if (tseitsinVars.count(lookup)){
-		int myVar = tseitsinVars[lookup];
-		if (!implicationalTseitsin && Cudd_IsComplement(node)) myVar *= -1;
-		andImplies(solver,currentConditions, myVar);
-		return;
-	}
-
-	// create formula for this BDD for the first time, so we need to generate a variable representing its truth
-	int thisVar = capsule.new_variable();
-	DEBUG(capsule.registerVariable(thisVar, "BDD_eval_var_" + to_string(tseitsinVars.size())));
-	tseitsinVars[lookup] = thisVar;
-
-	// variable for this node becomes the new condition
-	vector<int> trueVarVector = {thisVar, var_to_branch};
-	vector<int> falseVarVector = {thisVar, -var_to_branch};
-	
-	bdd_to_cnf(true_branch, trueVarVector, factorVars, labelVars, nextFactorVars, solver, capsule);
-	bdd_to_cnf(false_branch, falseVarVector, factorVars, labelVars, nextFactorVars, solver, capsule);
-	if (!implicationalTseitsin){
-		// if the variable for this one is false, and we take a branch, than that variable also must be false.
-		trueVarVector[0] *= -1;	
-		falseVarVector[0] *= -1;	
-		bdd_to_cnf(Cudd_Not(true_branch), trueVarVector, factorVars, labelVars, nextFactorVars, solver, capsule);
-		bdd_to_cnf(Cudd_Not(false_branch), falseVarVector, factorVars, labelVars, nextFactorVars, solver, capsule);
-		if (Cudd_IsComplement(node)) thisVar *= -1;
-	}
-	
-	andImplies(solver,currentConditions,thisVar);
-}
-
-void exitOutOfMemory(size_t) {
-    cerr << "Memory exceeded within BDD operation" << endl;
-    utils::exit_with(utils::ExitCode::OUT_OF_MEMORY);
 }
 
 
-void BDDSATEncoding::initialize() {
+/**
+ * Report label/state implications that hold in every transition of a factor.
+ *
+ * This is a diagnostic only: it prints what it finds and does not change the
+ * BDDs or the generated formula. It was written to judge whether such
+ * implications are frequent enough to be worth encoding separately.
+ */
+void BDDSATEncodingFactory::report_covering_implications() const {
+	for (int fac = 0; fac < fts->get_size(); fac++){
+		const TransitionSystem & factor = fts->get_ts(fac);
+		const vector<vector<BDD>> & allPossiblePaths = data->transition_BDDs_per_factor_per_state_pair[fac];
+
+		map<int, vector<int>> prev_state_implies_pos_label, prev_state_implies_neg_label;
+		map<int, vector<int>> next_state_implies_pos_label, next_state_implies_neg_label;
+		map<int, vector<int>> pos_label_implies_prev_state, pos_label_implies_next_state;
+
+		for(int label = 0; label < fts->get_num_labels(); label++){
+			LabelID labelID (label);
+			if (!factor.is_relevant_label(labelID) && factor.is_selfloop_everywhere(labelID)) continue;
+
+			vector<int> prev_states_implying_this_neg;
+			vector<int> next_states_implying_this_neg;
+
+			for (int mode = 0; mode < 2; mode++){
+				bool m = mode == 0;
+				BDD testBDD = _manager->bddVar(data->labelToBDDVar[label]);
+				if (!m) testBDD = !testBDD;
+
+				// source
+				for (int s = 0; s < factor.get_size(); s++){
+					bool isFalse = true;
+					for (int ss = 0; ss < factor.get_size(); ss++)
+						if (testBDD * allPossiblePaths[s][ss] != _manager->bddZero()){ isFalse = false; break; }
+
+					if (isFalse){
+						cout << "Relevant label " << label << " is constantly " << (m?"false":"true")
+							 << " for source state " << s << " in factor " << fac << endl;
+						if (m) { prev_state_implies_neg_label[s].push_back(label); prev_states_implying_this_neg.push_back(s); }
+						else     prev_state_implies_pos_label[s].push_back(label);
+					}
+				}
+
+				// target
+				for (int ss = 0; ss < factor.get_size(); ss++){
+					bool isFalse = true;
+					for (int s = 0; s < factor.get_size(); s++)
+						if (testBDD * allPossiblePaths[s][ss] != _manager->bddZero()){ isFalse = false; break; }
+
+					if (isFalse){
+						cout << "Relevant label " << label << " is constantly " << (m?"false":"true")
+							 << " for target state " << ss << " in factor " << fac << endl;
+						if (m) { next_state_implies_neg_label[ss].push_back(label); next_states_implying_this_neg.push_back(ss); }
+						else     next_state_implies_pos_label[ss].push_back(label);
+					}
+				}
+			}
+
+			// If all but one state imply that the label is not taken, then taking
+			// the label implies being in the remaining state. If *every* state
+			// implied it, the label could never be executed at all.
+			assert(int(prev_states_implying_this_neg.size()) != factor.get_size());
+
+			auto only_remaining_state = [&](const vector<int> & implying) {
+				// the states were inserted in increasing order
+				for (int i = 0; i < int(implying.size()); i++)
+					if (i != implying[i]) return i;
+				return factor.get_size() - 1;
+			};
+
+			if (int(prev_states_implying_this_neg.size()) + 1 == factor.get_size()){
+				int s = only_remaining_state(prev_states_implying_this_neg);
+				pos_label_implies_prev_state[label].push_back(s);
+				cout << "Label " << label << " in factor " << fac << " implies source state " << s << endl;
+			}
+			if (int(next_states_implying_this_neg.size()) + 1 == factor.get_size()){
+				int ss = only_remaining_state(next_states_implying_this_neg);
+				pos_label_implies_next_state[label].push_back(ss);
+				cout << "Label " << label << " in factor " << fac << " implies target state " << ss << endl;
+			}
+		}
+	}
+}
+
+
+void BDDSATEncodingFactory::initialize() {
 	utils::Timer sat_init_timer;
 	cout << "Initialising" << endl;
 	cout << "My FTS task has " << fts->get_size() << " systems and " << fts->get_num_labels() << " labels." << endl;
 
-	//labelOrder = label_order_finder->find_order(*fts);
+	data = make_shared<BDDEncodingData>();
+	data->combineAllBDDsIntoOne = combineAllBDDsIntoOne;
+	data->implicationalTseitsin = implicationalTseitsin;
+	data->omitForcedVariables = omitForcedVariables;
+	data->forcedVariablesThreshold = forcedVariablesThreshold;
 
-	bdd_num_vars = fts->get_num_labels();
-	num_factor_vars = 0;
+	data->labelOrder = label_order_finder->find_order(*fts);
+	assert(int(data->labelOrder.size()) == fts->get_num_labels());
+
+	data->num_factor_vars = 0;
 	if (combineAllBDDsIntoOne) {
 		for (int fac = 0; fac < fts->get_size(); fac++){
-			const task_representation::TransitionSystem & factor = fts->get_ts(fac);
-			if (num_factor_vars < factor.get_size()) num_factor_vars = factor.get_size();
+			const TransitionSystem & factor = fts->get_ts(fac);
+			if (data->num_factor_vars < factor.get_size()) data->num_factor_vars = factor.get_size();
 		}
-		num_factor_vars*=2;
-		// add the variables for the factor -- those come first
-		bdd_num_vars += num_factor_vars; 
+		// state variables and next-state variables, they come first
+		data->num_factor_vars *= 2;
 	}
-	cout << "Number BDD vars: " << bdd_num_vars << " of that " << num_factor_vars << " factor state variables." << endl;
+	data->bdd_num_vars = data->num_factor_vars + fts->get_num_labels();
 
-	_manager = std::make_unique<Cudd> (bdd_num_vars, 0,
-	                                      cudd_init_nodes / fts->get_num_labels(),
-	                                      cudd_init_cache_size,
-	                                      cudd_init_available_memory);
+	// The BDD variable order *is* the label order.
+	data->labelToBDDVar.resize(fts->get_num_labels());
+	for (int i = 0; i < fts->get_num_labels(); i++)
+		data->labelToBDDVar[data->labelOrder[i]] = data->num_factor_vars + i;
+
+	cout << "Number BDD vars: " << data->bdd_num_vars << " of that "
+		 << data->num_factor_vars << " factor state variables." << endl;
+
+	_manager = std::make_unique<Cudd> (data->bdd_num_vars, 0,
+			cudd_init_nodes / max(1, fts->get_num_labels()),
+			cudd_init_cache_size,
+			cudd_init_available_memory);
 
 	_manager->setHandler(exceptionError);
 	_manager->setTimeoutHandler(exceptionError);
 	_manager->setNodesExceededHandler(exceptionError);
 	_manager->RegisterOutOfMemoryCallback(exitOutOfMemory);
 
-	if (combineAllBDDsIntoOne) transition_BDDs_per_factor.resize(fts->get_size());
-	else {
-		if (!considerOnlyOneStepTransitions)
-			transition_BDDs_per_factor_per_state_pair.resize(fts->get_size());
-		if (considerOnlyOneStepTransitions || bddEncodingSizeLimit != -1)
-			one_step_transition_BDDs_per_factor_per_state_pair.resize(fts->get_size());
-	}
-	for (int fac = 0; fac < fts->get_size(); fac++){
-		const task_representation::TransitionSystem & factor = fts->get_ts(fac);
+	try {
+		if (combineAllBDDsIntoOne) data->transition_BDDs_per_factor.resize(fts->get_size());
+		else data->transition_BDDs_per_factor_per_state_pair.resize(fts->get_size());
 
-		// we compute a matrix of size |S|^2 that contains all-pair-possible-paths
-		vector<vector<BDD>> allPossiblePaths (factor.get_size());
-		int num_relevant_labels = 0;
+		for (int fac = 0; fac < fts->get_size(); fac++){
+			const TransitionSystem & factor = fts->get_ts(fac);
+			const int numStates = factor.get_size();
+			int num_relevant_labels = 0;
 
-		// pre-compute the full reachability 
-		if (!considerOnlyOneStepTransitions){
-			for (int s = 0; s < factor.get_size(); s++){
-				allPossiblePaths[s].resize(factor.get_size());
-				for (int ss = 0; ss < factor.get_size(); ss++){
-					if (s == ss){
-						allPossiblePaths[s][ss] = _manager->bddOne();
-					} else {
-						allPossiblePaths[s][ss] = _manager->bddZero(); 
-					}
+			// -----------------------------------------------------------------
+			// (a) the full all-pairs reachability under the label order
+			// -----------------------------------------------------------------
+			vector<vector<BDD>> allPossiblePaths;
+			if (!oneStepOnly){
+				allPossiblePaths.resize(numStates);
+				for (int s = 0; s < numStates; s++){
+					allPossiblePaths[s].resize(numStates);
+					for (int ss = 0; ss < numStates; ss++)
+						allPossiblePaths[s][ss] = (s == ss) ? _manager->bddOne() : _manager->bddZero();
 				}
-			}
 
-			// DP backwards(!) over the relevant labels
-			for(int l = fts->get_num_labels() -  1; l >= 0; l--){
-				int label = labelOrder[l];
-				task_representation::LabelID labelID (label);
-				//cout << "Processing label " << label << "." << endl;
-				if (!factor.is_relevant_label(labelID) && factor.is_selfloop_everywhere(labelID)){
-					//cout << "\tLabel is not relevant for factor. Skipping." << endl;
-					continue;
-				}
-				num_relevant_labels++;
-				vector<vector<BDD>> nextPossiblePaths (factor.get_size());
-				for (int s = 0; s < factor.get_size(); s++){
-					nextPossiblePaths[s].resize(factor.get_size());
-					for (int ss = 0; ss < factor.get_size(); ss++){
-						// situation: I am in state s and need to go to state ss.
-						// The first label I can use for this transition is "label" (current variable).
-						// I have two options: either use it and go to one of its successors, or stay here.
+				// DP backwards(!) over the label order
+				for(int l = fts->get_num_labels() - 1; l >= 0; l--){
+					int label = data->labelOrder[l];
+					LabelID labelID (label);
+					if (!factor.is_relevant_label(labelID) && factor.is_selfloop_everywhere(labelID))
+						continue;
+					num_relevant_labels++;
 
-						// base case: don't use the label
-						nextPossiblePaths[s][ss] = ~_manager->bddVar(label + num_factor_vars) * allPossiblePaths[s][ss];
-
-						// inductive case: use the label and go one step
-						for (const auto & transition : factor.get_transitions_with_label(label)){
-							if (transition.src != s) continue;
-							nextPossiblePaths[s][ss] +=
-									_manager->bddVar(label + num_factor_vars) * allPossiblePaths[transition.target][ss];
-						}
-					}
-				}
-				swap(allPossiblePaths,nextPossiblePaths);	
-			}
-		}
-
-		// compute the BDDs expressing single transitions + possible loops before and after
-		if (considerOnlyOneStepTransitions || bddEncodingSizeLimit != -1){
-			one_step_transition_BDDs_per_factor_per_state_pair[fac].resize(factor.get_size());
-			for (int s = 0; s < factor.get_size(); s++){
-				one_step_transition_BDDs_per_factor_per_state_pair[fac][s].resize(factor.get_size());
-				for (int ss = 0; ss < factor.get_size(); ss++){
-					one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss] = _manager->bddZero();
-				}
-			}
-			for(int l = 0; l < fts->get_num_labels(); l++){
-				for (const auto & transition : factor.get_transitions_with_label(l)){
-					BDD thisTrans = _manager->bddOne();
-					bool beforeLabelL = true;
-					for(int ll = 0; ll < fts->get_num_labels(); ll++){
-						int label = labelOrder[ll];
-						task_representation::LabelID labelID (label);
-						if (l == label){
-							beforeLabelL = false;
-							thisTrans *= _manager->bddVar(label + num_factor_vars);
-						} else {
-							int loopState;
-							if (beforeLabelL) loopState = transition.src; else loopState = transition.target;
-							
-							bool foundLoop = false;
+					const BDD labelVar = _manager->bddVar(data->labelToBDDVar[label]);
+					vector<vector<BDD>> nextPossiblePaths (numStates);
+					for (int s = 0; s < numStates; s++){
+						nextPossiblePaths[s].resize(numStates);
+						for (int ss = 0; ss < numStates; ss++){
+							// I am in state s and need to get to state ss. The first label
+							// I may use is "label": either I use it and move one step, or
+							// I skip it.
+							nextPossiblePaths[s][ss] = ~labelVar * allPossiblePaths[s][ss];
 							for (const auto & transition : factor.get_transitions_with_label(label)){
-								if (transition.src == loopState && transition.target == loopState){
-									foundLoop = true;
-									break;
-								}
+								if (transition.src != s) continue;
+								nextPossiblePaths[s][ss] += labelVar * allPossiblePaths[transition.target][ss];
 							}
-							if (!foundLoop)
-								thisTrans *= ~_manager->bddVar(label + num_factor_vars);
 						}
 					}
-					one_step_transition_BDDs_per_factor_per_state_pair[fac][transition.src][transition.target] += thisTrans;
-				}
-			}
-		}
-
-
-
-		cout << "Precomputation for factor Nr " << fac << " with " << factor.get_size() << " states. ";
-		if (num_relevant_labels) cout << num_relevant_labels << " of " << fts->get_num_labels() << " labels relevant.";
-		cout << endl;
-
-		if (combineAllBDDsIntoOne){
-			// compute the union BDD that describes all transitions at the same time.
-			BDD allTransitionsBDD = _manager->bddZero();
-			for (int s = 0; s < factor.get_size(); s++){
-				for (int ss = 0; ss < factor.get_size(); ss++){
-					BDD thisFactorTransitionBDD = _manager->bddVar(s) * _manager->bddVar(num_factor_vars/2 + ss);
-					for (int nots = 0; nots < factor.get_size(); nots++)
-						if (s != nots) thisFactorTransitionBDD *= ~_manager->bddVar(nots);
-					for (int notss = 0; notss < factor.get_size(); notss++)
-						if (ss != notss) thisFactorTransitionBDD *= ~_manager->bddVar(num_factor_vars/2 + notss);
-
-					if (considerOnlyOneStepTransitions)
-						thisFactorTransitionBDD *= one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss];
-					else
-						thisFactorTransitionBDD *= allPossiblePaths[s][ss];
-
-					allTransitionsBDD += thisFactorTransitionBDD;
+					swap(allPossiblePaths,nextPossiblePaths);
 				}
 			}
 
-			//string name = "dots/factor_" + to_string(fac) + ".dot";
-			//bdd_to_dot(allTransitionsBDD, name);
+			// -----------------------------------------------------------------
+			// (b) one real transition plus self loops before and after it
+			// -----------------------------------------------------------------
+			vector<vector<BDD>> oneStepPaths;
+			if (oneStepOnly || bddEncodingSizeLimit != -1){
+				oneStepPaths.resize(numStates);
+				for (int s = 0; s < numStates; s++){
+					oneStepPaths[s].resize(numStates);
+					for (int ss = 0; ss < numStates; ss++)
+						oneStepPaths[s][ss] = _manager->bddZero();
+				}
 
-			transition_BDDs_per_factor[fac] = allTransitionsBDD;
-		} else {
-			if (!considerOnlyOneStepTransitions)
-				transition_BDDs_per_factor_per_state_pair[fac] = allPossiblePaths;	
-		
+				for(int l = 0; l < fts->get_num_labels(); l++){
+					for (const auto & transition : factor.get_transitions_with_label(l)){
+						BDD thisTrans = _manager->bddOne();
+						bool beforeLabelL = true;
+						for(int ll = 0; ll < fts->get_num_labels(); ll++){
+							int label = data->labelOrder[ll];
+							const BDD labelVar = _manager->bddVar(data->labelToBDDVar[label]);
+							if (l == label){
+								beforeLabelL = false;
+								thisTrans *= labelVar;
+							} else {
+								// before the real transition we loop on its source,
+								// after it on its target
+								int loopState = beforeLabelL ? transition.src : transition.target;
+								bool foundLoop = false;
+								for (const auto & other : factor.get_transitions_with_label(label)){
+									if (other.src == loopState && other.target == loopState){
+										foundLoop = true;
+										break;
+									}
+								}
+								if (!foundLoop) thisTrans *= ~labelVar;
+							}
+						}
+						oneStepPaths[transition.src][transition.target] += thisTrans;
+					}
+				}
+
+				// The case of no real transition at all: the factor stays in s and
+				// only labels that self-loop in s may fire (possibly none).
+				// Without this disjunct every term of oneStepPaths would force some
+				// label to be true, so no time step could ever be empty and the
+				// formula would be unsatisfiable for every horizon longer than the
+				// shortest one -- which breaks every length strategy that does not
+				// enumerate lengths one by one.
+				for (int s = 0; s < numStates; s++){
+					BDD stay = _manager->bddOne();
+					for(int ll = 0; ll < fts->get_num_labels(); ll++){
+						int label = data->labelOrder[ll];
+						bool foundLoop = false;
+						for (const auto & other : factor.get_transitions_with_label(label)){
+							if (other.src == s && other.target == s){
+								foundLoop = true;
+								break;
+							}
+						}
+						if (!foundLoop) stay *= ~_manager->bddVar(data->labelToBDDVar[label]);
+					}
+					oneStepPaths[s][s] += stay;
+				}
+			}
+
+			cout << "Precomputation for factor Nr " << fac << " with " << numStates << " states. ";
+			if (num_relevant_labels) cout << num_relevant_labels << " of " << fts->get_num_labels() << " labels relevant.";
+			cout << endl;
+
+			// -----------------------------------------------------------------
+			// (c) pick the representation that is actually encoded
+			// -----------------------------------------------------------------
+			vector<vector<BDD>> & chosen = oneStepOnly ? oneStepPaths : allPossiblePaths;
+
 			int summedSizeBefore = 0, summedSizeAfter = 0, possibleSingleTrans = 0, allTrans = 0;
-
-			
 			map<int,vector<pair<int,int>>> bdd_sizes;
-
-			// printing
-			for (int s = 0; s < factor.get_size(); s++){
-				for (int ss = 0; ss < factor.get_size(); ss++){
-					if (!considerOnlyOneStepTransitions){
-						if (transition_BDDs_per_factor_per_state_pair[fac][s][ss] != _manager->bddZero()){
-							allTrans++;
-
-							int thisBDDsize = transition_BDDs_per_factor_per_state_pair[fac][s][ss].nodeCount();
-							summedSizeBefore += thisBDDsize;
-							bdd_sizes[thisBDDsize].push_back({s,ss});
-						}
+			for (int s = 0; s < numStates; s++){
+				for (int ss = 0; ss < numStates; ss++){
+					if (chosen[s][ss] != _manager->bddZero()){
+						allTrans++;
+						int thisBDDsize = chosen[s][ss].nodeCount();
+						summedSizeBefore += thisBDDsize;
+						bdd_sizes[thisBDDsize].push_back({s,ss});
 					}
-				
-					if (considerOnlyOneStepTransitions || bddEncodingSizeLimit != -1)
-						if (one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss] != _manager->bddZero())
-							possibleSingleTrans++;
-					
-					//cout << "Factor"  << fac << " " << s << " " << ss << " state: " <<  allPossiblePaths[s][ss].nodeCount() << endl;
-					
-					//string name = "dots/factor_" + to_string(fac) + "_" + to_string(s) + "_to_" + to_string(ss) + ".dot";
-					//bdd_to_dot(allPossiblePaths[s][ss], name);
-					
-					//name = "dots/factor_" + to_string(fac) + "_one_" + to_string(s) + "_to_" + to_string(ss) + ".dot";
-					//bdd_to_dot(one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss], name);
+					if (!oneStepPaths.empty() && oneStepPaths[s][ss] != _manager->bddZero())
+						possibleSingleTrans++;
 				}
 			}
 
+			// replace the largest BDDs by their one-step counterpart until the
+			// per-factor node budget is met
 			if (bddEncodingSizeLimit != -1){
 				int size_up_to_now = 0;
 				for (const auto & thisSizeBDDs : bdd_sizes){
 					for (const pair<int,int> & s_ss : thisSizeBDDs.second){
-						// if overall BDD-size would be larger than the limit,
-						// replace it by the one that only allows for a single action in this factor
 						const int & s = s_ss.first;
 						const int & ss = s_ss.second;
-						if (size_up_to_now + thisSizeBDDs.first > bddEncodingSizeLimit){
-							transition_BDDs_per_factor_per_state_pair[fac][s][ss] = 
-								one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss];
-						} else 
+						if (size_up_to_now + thisSizeBDDs.first > bddEncodingSizeLimit)
+							chosen[s][ss] = oneStepPaths[s][ss];
+						else
 							size_up_to_now += thisSizeBDDs.first;
-					
-						summedSizeAfter += transition_BDDs_per_factor_per_state_pair[fac][s][ss].nodeCount();
+						summedSizeAfter += chosen[s][ss].nodeCount();
 					}
 				}
 			}
 
+			cout << "Factor Overall: before limiting " << summedSizeBefore
+				 << " after limiting " << summedSizeAfter
+				 << " all transitions: " << allTrans
+				 << " possible 1-step transitions: " << possibleSingleTrans << endl;
 
-			// try to find a better BDD representation
-			if (bddCovering){
-				vector<vector<BDD>> pathsToForbit (factor.get_size());
-				for (int s = 0; s < factor.get_size(); s++){
-					pathsToForbit[s].resize(factor.get_size());
-					for (int ss = 0; ss < factor.get_size(); ss++){
-						pathsToForbit[s][ss] = !allPossiblePaths[s][ss]; 
-					}
-				}
-
-				// We are trying to find smaller conditions/BDDs that express some of the constraints that are always true/false
-				// The idea is that these extra constraints will provide for overall smaller BDDs and more concise constructions
-				//
-				// In this loop, we try to find
-				//   labels that for a specific source or target state are always true or false
-				// These give implications of the form
-				//   state -> (+-) label
-				//
-				// Implications of the type
-				//   label -> state
-				// Can be inferred from the state -> -label implications. If for a label all implications,
-				// but one are true, the label -> state implication is true 
-				
-				map<int, vector<int> > prev_state_implies_pos_label;
-				map<int, vector<int> > prev_state_implies_neg_label;
-				map<int, vector<int> > next_state_implies_pos_label;
-				map<int, vector<int> > next_state_implies_neg_label;
-				
-				map<int, vector<int> > pos_label_implies_prev_state;
-				map<int, vector<int> > pos_label_implies_next_state;
-				
-				for(int label = 0; label < fts->get_num_labels(); label++){
-					task_representation::LabelID labelID (label);
-					if (!factor.is_relevant_label(labelID) && factor.is_selfloop_everywhere(labelID)) {
-						continue;
-					}
-					cout << "Checking label " << label << endl;
-
-					vector<int> prev_states_implying_this_neg;
-					vector<int> next_states_implying_this_neg;
-
-					for (int mode = 0; mode < 2; mode++){
-						bool m = mode == 0;
-						// source
-						for (int s = 0; s < factor.get_size(); s++){
-							// check whether it is false
-							bool isFalse = true;
-							BDD testBDD = _manager->bddVar(label + num_factor_vars);
-							if (!m) testBDD = !testBDD;
-							for (int ss = 0; ss < factor.get_size(); ss++){
-								if (testBDD * allPossiblePaths[s][ss] != _manager->bddZero()){
-									isFalse = false;
-									break;
-								}
-							}
-
-							if (isFalse){
-								cout << "Relevant label " << label << " is constantly " << (m?"false":"true") << " for source state " << s << " in factor " << fac << endl;
-
-								if (m) {prev_state_implies_neg_label[s].push_back(label);prev_states_implying_this_neg.push_back(s);}
-								else   prev_state_implies_pos_label[s].push_back(label);
-							}
-						}
-
-						// target
-						for (int ss = 0; ss < factor.get_size(); ss++){
-							// check whether it is false
-							bool isFalse = true;
-							BDD testBDD = _manager->bddVar(label + num_factor_vars);
-							if (!m) testBDD = !testBDD;
-							for (int s = 0; s < factor.get_size(); s++){
-								if (testBDD * allPossiblePaths[s][ss] != _manager->bddZero()){
-									isFalse = false;
-									break;
-								}
-							}
-
-							if (isFalse){
-								cout << "Relevant label " << label << " is constantly " << (m?"false":"true") << " for target state " << ss << " in factor " << fac << endl;
-								if (m) {next_state_implies_neg_label[ss].push_back(label);next_states_implying_this_neg.push_back(ss);}
-								else   next_state_implies_pos_label[ss].push_back(label);
-							}
-						}
-					}
-				
-
-					// trying to find cases where a state implies a specific label
-					// We have to have at least that all other states imply that the label is false
-
-					// if equal this label would never be executable!!
-					assert(int(prev_states_implying_this_neg.size()) != factor.get_size());
-
-					// if all but one state implies that the label is not there, then the label implies the remaining state
-					if (int(prev_states_implying_this_neg.size()) + 1 == factor.get_size()){
-						// find missing state. We have inserted them in order
-						bool found = false;
-						for (int i = 0; i < int(prev_state_implies_neg_label.size()); i++){
-							if (i != prev_states_implying_this_neg[i]){
-								pos_label_implies_prev_state[label].push_back(i);
-								cout << "Source state " << i << " in factor " << fac << " implies label " << label << endl;
-								found = true;
-								break;
-							}
-						}
-						// then it must be the last state
-						if (! found){
-							pos_label_implies_prev_state[label].push_back(factor.get_size()-1);
-							cout << "Source state " << factor.get_size()-1 << " in factor " << fac << " implies label " << label << endl;
-						}
-					}
-					if (int(next_states_implying_this_neg.size()) + 1 == factor.get_size()){
-						// find missing state. We have inserted them in order
-						bool found = false;
-						for (int i = 0; i < int(next_states_implying_this_neg.size()); i++){
-							if (i != next_states_implying_this_neg[i]){
-								pos_label_implies_next_state[label].push_back(i);
-								cout << "Target state " << i << " in factor " << fac << " implies label " << label << endl;
-								found = true;
-								break;
-							}
-						}
-						// then it must be the last state
-						if (! found){
-							pos_label_implies_next_state[label].push_back(factor.get_size()-1);
-							cout << "Target state " << factor.get_size()-1 << " in factor " << fac << " implies label " << label << endl;
-						}
-					}
-
-
-
-					// cross-implication between labels
-					for(int otherLabel = label+1; otherLabel < fts->get_num_labels(); otherLabel++){
-						break;
-						task_representation::LabelID otherLabelID (otherLabel);
-						if (!factor.is_relevant_label(otherLabelID) && factor.is_selfloop_everywhere(otherLabelID)) {
-							continue;
-						}
-
-						// check whether it is possible for these two to appear together in any transition
-						BDD testBDD = _manager->bddVar(label + num_factor_vars) * _manager->bddVar(otherLabel + num_factor_vars);
-						bool isFalse = true;
-						for (int s = 0; s < factor.get_size(); s++){
-							for (int ss = 0; ss < factor.get_size(); ss++){
-								if (testBDD * allPossiblePaths[s][ss] != _manager->bddZero()){
-									isFalse = false;
-									break;
-								}
-							}
-							if (isFalse == false) break;
-						}
-
-						if (isFalse){
-							cout << "In Factor " << fac << " labels " << label << " and " << otherLabel << " cannot appear together." << endl;
-						}
-					}
-				}
-
-
-				// 2. Step: now we try to simplify the overall BDDs
-			
-				for (const auto & [s,forbiddenLabels] : prev_state_implies_neg_label){
-					// for the BDDs starting at state s, we don't have to assert any more that the forbidden labels
-					// are actually false.
-					//
-					// Effectively, they represent the fact that all states in which "forbidden label" appears, are forbidden.
-					// To we can remove these states from the set of states to be forbidden
-					for (const int & forbiddenLabel : forbiddenLabels){
-						BDD forcedBDD = !_manager->bddVar(forbiddenLabel + num_factor_vars);
-						BDD forbiddenBDD = !forcedBDD;
-						// TODO forced BDD must be added as a constraint
-
-						cout << "Factor " << fac << " forbidding label " << forbiddenLabel << " from state " << s << endl;
-						for (int ss = 0; ss < factor.get_size(); ss++){
-							BDD old = pathsToForbit[s][ss];
-							pathsToForbit[s][ss] = (pathsToForbit[s][ss] * forcedBDD).ExistAbstract(forbiddenBDD); 
-							cout << "BDD changed from " << old.nodeCount() << " to " << pathsToForbit[s][ss].nodeCount() << endl;
-							//string name = "dots/forbid-"+to_string(fac) + "-" + to_string(s)+ "-" + to_string(forbiddenLabel)+ "-" + to_string(ss)+"-old.dot";
-							//bdd_to_dot(old, name);
-							//name = "dots/forbid-"+to_string(fac) + "-" + to_string(s)+ "-" + to_string(forbiddenLabel)+ "-" + to_string(ss)+"-new.dot";
-							//bdd_to_dot(pathsToForbit[s][ss], name);
-						}
-					}
-				}
-			}
-
-			cout << "Factor Overall: before limiting " << summedSizeBefore << " after limiting " << summedSizeAfter  << " all transitions: " << allTrans << " possible 1-step transitions: " << possibleSingleTrans <<  endl;
-		}
-
-		//int overallVar = bdd_to_cnf(allTransitionsBDD.getNode());
-		//cout << "Overall :" << "T" << overallVar << endl;
-		// TODO for debugging
-		if (bddCovering) exit(0);
-		
-		BDD stateCube = _manager->bddOne();
-		for (int i = 0; i < num_factor_vars; i++) stateCube *= _manager->bddVar(i);
-
-		if (bddCutting){
-			// fixpoint algorithm. Will break from the inside if no BDD changes.
-			int round = 0;
-			bool anyUpdate = true;
-			while (anyUpdate) {	
-				cout << "Propagation Round " << round << endl;
-				anyUpdate = false;
-				round++;
-				// 1. We need to prepare the data structures for cutting
-				// we need a BDD for every factor that describes any legal transition in that factor
-				vector<BDD> any_transition_per_factor(fts->get_size());
-				for (int fac = 0; fac < fts->get_size(); fac++){
-					const task_representation::TransitionSystem & factor = fts->get_ts(fac);
-					if (!combineAllBDDsIntoOne){
-						any_transition_per_factor[fac] = _manager->bddZero();
-						for (int s = 0; s < factor.get_size(); s++){
-							for (int ss = 0; ss < factor.get_size(); ss++){
-								if (considerOnlyOneStepTransitions)
-									any_transition_per_factor[fac] += one_step_transition_BDDs_per_factor_per_state_pair[fac][s][ss];
-								else
-									any_transition_per_factor[fac] += transition_BDDs_per_factor_per_state_pair[fac][s][ss];
-							}
-						}
-					} else {
-						// project away the state variables.
-						any_transition_per_factor[fac] = transition_BDDs_per_factor[fac].ExistAbstract(stateCube);
-					}
-				}
-
-				//cout << "Data structures prepared " << endl;
-	
-				// 2. Go over all pairs of factors	
-				for (int facS = 0; facS < fts->get_size(); facS++){
-					const task_representation::TransitionSystem & factorSource = fts->get_ts(facS);
-					for (int facT = 0; facT < fts->get_size(); facT++){
-						const task_representation::TransitionSystem & factorTarget = fts->get_ts(facT);
-						if (facS == facT) continue;
-					
-						// cube for the variables that need to be abstracted away
-						BDD cube = _manager->bddOne();
-						//cout << "Propagate from " << facS << " to " << facT << " Round: " << round << " labels: " << fts->get_num_labels() << endl;
-						bool foundRemainingVariable = false;
-						for(int label = 0; label < fts->get_num_labels(); label++){
-							task_representation::LabelID labelID (label);
-							// will not be mentioned in this BDD anyway
-							if (!factorSource.is_relevant_label(labelID) && factorSource.is_selfloop_everywhere(labelID)) continue;
-							// don't project away labels that *are* relevant
-							if (factorTarget.is_relevant_label(labelID) || !factorTarget.is_selfloop_everywhere(labelID)) {
-								foundRemainingVariable = true;
-								continue;
-							}
-					
-							//cout << "label " << label << endl;
-							cube *= _manager->bddVar(num_factor_vars + label);
-						}
-						//cout << "Mask build" << endl;
-
-						// no shared variables
-						if (!foundRemainingVariable) continue;
-
-						//string name = "dots/bef"+to_string(facS) + "-" + to_string(facT)+".dot";
-						//bdd_to_dot(any_transition_per_factor[facS], name);
-						BDD constraintsOverLabelsRelevantForTarget = any_transition_per_factor[facS].ExistAbstract(cube);
-						//cout << "Projected onto mask" << endl;
-						//name = "dots/aft"+to_string(facS) + "-" + to_string(facT)+".dot";
-						//bdd_to_dot(constraintsOverLabelsRelevantForTarget, name);
-
-						// if the relevant BDD is 1, then there is nothing to propagate.
-						if (constraintsOverLabelsRelevantForTarget == _manager->bddOne()) continue;
-						// actually propagate
-						if (!combineAllBDDsIntoOne){
-							//cout << "Apply to " << factorTarget.get_size() * factorTarget.get_size()<< endl;
-							for (int s = 0; s < factorTarget.get_size(); s++){
-								for (int ss = 0; ss < factorTarget.get_size(); ss++){
-									// reference to access
-									BDD & currentMemory = (considerOnlyOneStepTransitions)?
-									   one_step_transition_BDDs_per_factor_per_state_pair[facT][s][ss]:
-										transition_BDDs_per_factor_per_state_pair[facT][s][ss];
-									// copy to compare
-									BDD old = currentMemory;
-									currentMemory *= constraintsOverLabelsRelevantForTarget;
-									if (old != currentMemory) anyUpdate = true;
-								}
-							}
-							//cout << "Done" << endl;
-						
-						} else {
-							BDD old = transition_BDDs_per_factor[facT];
-							transition_BDDs_per_factor[facT] *= constraintsOverLabelsRelevantForTarget;
-							if (old != transition_BDDs_per_factor[facT])
-								anyUpdate = true;
-						}
-					}
-				}
-				cout << " completed with " << (anyUpdate?"some reduction. Continuing": "no reduction. Reached fixpoint.") << endl;
-			}
-			//exit(0);
-		}
-	}
-
-    cout << "SAT init time: " << sat_init_timer << endl;
-}
-
-vector<vector<int>> BDDSATEncoding::generateStateVars(void* solver, sat_capsule & capsule/* , int timestep */){
-	vector<vector<int>> stateVars(fts->get_size());
-	for(int ts = 0 ; ts < fts->get_size() ; ts++){
-		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
-			int stateVar = capsule.new_variable();
-			stateVars[ts].push_back(stateVar);
-			DEBUG(capsule.registerVariable(stateVar,"TS:"+to_string(ts)+";Val:"+to_string(states)));
-		}
-		atMostOne(solver, capsule, stateVars[ts]);
-		atLeastOne(solver, capsule, stateVars[ts]);
-	}
-	return stateVars;
-}
-
-vector<int> BDDSATEncoding::generateLabelVars(__attribute__((unused)) void* solver, sat_capsule & capsule/* , int timestep */){
-	vector<int> labelVars(fts->get_num_labels());
-	for(int label = 0 ; label < fts->get_num_labels() ; label++){
-		int labelVar = capsule.new_variable();
-		labelVars[label] = labelVar;
-		DEBUG(capsule.registerVariable(labelVar,"Label:"+to_string(label)));
-		//cout << labelVar << endl;
-	}
-	if (forceAtLeastOneAction)
-		atLeastOne(solver, capsule, labelVars);
-	return labelVars;
-}
-
-
-void BDDSATEncoding::encode(int currentLength, int stepTimeLimit) {
-    utils::Timer step_timer;
-	auto t_start = std::chrono::system_clock::now();
-	cout << "HI doing step! SAT: " << ipasir_signature() << endl; // << " starting at " << t_start << endl;
-	//bool parallelism = false;
-	vector<vector<vector<int>>> allTimesStateVars;
-	vector<vector<int>> allTimesLabelVars;
-	vector<map<int, map<int, vector<pair<Transition, int>>>>> allTimesTransitionVars;
-	sat_capsule capsule;
-	reset_number_of_clauses();
-	void* solver = ipasir_init();
-	// try to solve for length currentLength
-
-	vector<vector<int>> previousStateVars = generateStateVars(solver, capsule/* , 0 */);
-	allTimesStateVars.push_back(previousStateVars);
-
-	for(int ts = 0 ; ts < fts->get_size() ; ts++){
-		assertYes(solver, previousStateVars[ts][fts->get_ts(ts).get_init_state()]);
-	}
-
-	vector<int> labelVars;
-	vector<vector<int>> nextStateVars;
-	
-	// determine the in-degree of nodes in the BDD for better encoding.
-	for(int fac = 0 ; fac < fts->get_size() ; fac++){
-		if (combineAllBDDsIntoOne){
-			bdd_in_degree(transition_BDDs_per_factor[fac].getNode());
-		} else {
-			const task_representation::TransitionSystem & factor = fts->get_ts(fac);
-			for (int s = 0; s < factor.get_size(); s++){
-				for (int ss = 0; ss < factor.get_size(); ss++){
-					bdd_in_degree(transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode());
-				}
-			}
-		}
-	}
-
-
-	for(int timestep = 1 ; timestep <= currentLength ; timestep++){
-		labelVars = generateLabelVars(solver, capsule/* , int timestep */);
-		allTimesLabelVars.push_back(labelVars);
-		nextStateVars = generateStateVars(solver, capsule/* , timestep */);
-		allTimesStateVars.push_back(nextStateVars);
-
-		// BDD-based encoding
-		for(int fac = 0 ; fac < fts->get_size() ; fac++){
-			tseitsinVars.clear();
 			if (combineAllBDDsIntoOne){
-				vector<int> __no_conditions;
-				bdd_to_cnf(transition_BDDs_per_factor[fac].getNode(), __no_conditions, previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
-			} else {
-				const task_representation::TransitionSystem & factor = fts->get_ts(fac);
-				for (int s = 0; s < factor.get_size(); s++){
-					for (int ss = 0; ss < factor.get_size(); ss++){
-						//// edge case: it can happen that this transition is impossible under the chosen order
-						//if (transition_BDDs_per_factor_per_state_pair[fac][s][ss] == _manager->bddZero()){
-						//	impliesNot(solver,previousStateVars[fac][s], nextStateVars[fac][ss]);
-						//	continue;
-						//}
-						//if (transition_BDDs_per_factor_per_state_pair[fac][s][ss] == _manager->bddOne()){
-						//	// Nothing to encode, this transition is always allowed
-						//	continue;
-						//}
+				// one BDD describing all transitions of this factor at once
+				BDD allTransitionsBDD = _manager->bddZero();
+				const int halfFactorVars = data->num_factor_vars / 2;
+				for (int s = 0; s < numStates; s++){
+					for (int ss = 0; ss < numStates; ss++){
+						BDD thisFactorTransitionBDD = _manager->bddVar(s) * _manager->bddVar(halfFactorVars + ss);
+						for (int nots = 0; nots < numStates; nots++)
+							if (s != nots) thisFactorTransitionBDD *= ~_manager->bddVar(nots);
+						for (int notss = 0; notss < numStates; notss++)
+							if (ss != notss) thisFactorTransitionBDD *= ~_manager->bddVar(halfFactorVars + notss);
 
-						// Providing the previous and next state here is useless -- they will not be accessed anyway.
-						// But the function API requires them.
-						vector<int> conditions = {previousStateVars[fac][s], nextStateVars[fac][ss]};
-						bdd_to_cnf(transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode(), conditions, previousStateVars[fac], labelVars, nextStateVars[fac], solver, capsule);
+						thisFactorTransitionBDD *= chosen[s][ss];
+						allTransitionsBDD += thisFactorTransitionBDD;
 					}
 				}
+				data->transition_BDDs_per_factor[fac] = allTransitionsBDD;
+			} else {
+				data->transition_BDDs_per_factor_per_state_pair[fac] = std::move(chosen);
 			}
 		}
-		
-		swap(previousStateVars, nextStateVars);
 
-		cout << "Constructed time " << timestep << " of " << currentLength << ". Now " << get_number_of_clauses() << " clauses and " << capsule.number_of_variables << " variables." << endl;
-	
-		if (stepTimeLimit != -1){
-			auto t_now = std::chrono::system_clock::now();
-			std::chrono::milliseconds elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_start);
-			std::chrono::milliseconds time_limit(stepTimeLimit * 1000);
-			if(time_limit <= elapsed) {
-				// generation of formula ran out of time
-				cout << "Generation of SAT formula exceeded time limit. Aborting overall run." << endl;
+		if (bddCovering) report_covering_implications();
+		if (bddCutting) cut_bdds_to_fixpoint();
+
+		// -----------------------------------------------------------------
+		// (d) node in-degrees, used by the omitForcedVariables optimisation.
+		//     This is a property of the BDDs, so it is computed once here
+		//     rather than per SAT call.
+		// -----------------------------------------------------------------
+		for(int fac = 0 ; fac < fts->get_size() ; fac++){
+			if (combineAllBDDsIntoOne){
+				bdd_in_degree(data->transition_BDDs_per_factor[fac].getNode());
+			} else {
+				const TransitionSystem & factor = fts->get_ts(fac);
+				for (int s = 0; s < factor.get_size(); s++)
+					for (int ss = 0; ss < factor.get_size(); ss++)
+						bdd_in_degree(data->transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode());
+			}
+		}
+	} catch (const BDDError &) {
+		cerr << "BDD construction exceeded the limits of the Cudd manager." << endl;
+		utils::exit_with(utils::ExitCode::OUT_OF_MEMORY);
+	}
+
+	cout << "BDD nodes with an in-degree entry: " << data->node_indegree.size() << endl;
+	cout << "SAT init time: " << sat_init_timer << endl;
+}
+
+
+unique_ptr<SATEncoding> BDDSATEncodingFactory::createEncodingInstance(std::shared_ptr<sat_capsule> capsule){
+	return make_unique<BDDSATEncoding>(capsule, fts, forceAtLeastOneAction, data);
+}
+
+
+// ---------------------------------------------------------------------------
+// Encoding
+// ---------------------------------------------------------------------------
+
+BDDSATEncoding::BDDSATEncoding(
+	std::shared_ptr<sat_capsule> capsule,
+	const std::shared_ptr<FTSTask> & _fts,
+	bool _forceAtLeastOneAction,
+	const std::shared_ptr<const BDDEncodingData> & _data):
+	LabelEncoding(capsule, _fts, _forceAtLeastOneAction, false, false),
+	data(_data)
+{
+}
+
+
+int BDDSATEncoding::givevar(int bddvar,
+		const vector<int> & factorVars,
+		const vector<int> & labelVars,
+		const vector<int> & nextFactorVars) const {
+	const int nfv = data->num_factor_vars;
+	if (bddvar >= nfv){
+		// the BDD variable order is the label order
+		return labelVars[data->labelOrder[bddvar - nfv]];
+	}
+	if (bddvar < nfv / 2) {
+		assert(factorVars.size() > size_t(bddvar));
+		return factorVars[bddvar];
+	}
+	assert(int(nextFactorVars.size()) > bddvar - nfv / 2);
+	return nextFactorVars[bddvar - nfv / 2];
+}
+
+
+void BDDSATEncoding::bdd_to_cnf(DdNode * node,
+		const vector<int> & currentConditions,
+		const vector<int> & factorVars,
+		const vector<int> & labelVars,
+		const vector<int> & nextFactorVars){
+
+	// first handle edge cases
+	if (Cudd_IsConstant(node)){
+		bool isTrue = !Cudd_IsComplement(node);
+		if (!isTrue){
+			// if the conditions were true we would end up at the false node,
+			// so the conditions must not all be true
+			sat->notAll(currentConditions);
+		}
+		// in the true case the BDD is satisfied anyway and there is nothing to do
+		return;
+	}
+
+	// this node is branching
+	DdNode* true_branch = Cudd_T(node);
+	DdNode* false_branch = Cudd_E(node);
+	if (data->implicationalTseitsin && Cudd_IsComplement(node)) {
+		true_branch = Cudd_Not(true_branch);
+		false_branch = Cudd_Not(false_branch);
+	}
+	int var_to_branch = givevar(Cudd_NodeReadIndex(node), factorVars, labelVars, nextFactorVars);
+	vector<tuple<int,DdNode*,DdNode*>> successors {
+		{var_to_branch, true_branch, false_branch},
+		{-var_to_branch, false_branch, true_branch}};
+
+	// compute lookup node. For the biimplicational encoding we only keep one copy,
+	// for tseitsin we need both positive and negative versions
+	DdNode * lookup;
+	if (data->implicationalTseitsin) lookup = node; else lookup = Cudd_Regular(node);
+
+	// forcing takes precedence over lookup.
+	// A node that the factory did not see cannot be judged, so we conservatively
+	// skip the optimisation for it. Either choice is sound; this one only ever
+	// costs clauses, never correctness.
+	auto indegree = data->node_indegree.find(lookup);
+	if (data->implicationalTseitsin && data->omitForcedVariables &&
+			indegree != data->node_indegree.end() &&
+			indegree->second <= data->forcedVariablesThreshold){
+		// check if one of the branches leads to the false node
+		for (const auto & [branch_var, branch, otherbranch] : successors){
+			if (Cudd_IsConstant(branch) && Cudd_IsComplement(branch)){
+				// this branch leads immediately to false, so we *must* take the other
+				// one: if the conditions hold, the branch variable must point away.
+				sat->andImplies(currentConditions,-branch_var);
+				// and the conditions are then propagated further down the tree
+				bdd_to_cnf(otherbranch, currentConditions, factorVars, labelVars, nextFactorVars);
+				// this can happen for only one branch (otherwise the BDD is not reduced)
+				return;
+			}
+			if (Cudd_IsConstant(branch) && !Cudd_IsComplement(branch)){
+				// this branch immediately leads to true, so the other branch is only
+				// relevant if the condition is false: the negation of the branch
+				// variable essentially becomes a new condition.
+				vector<int> newConditions = currentConditions;
+				newConditions.push_back(-branch_var);
+				bdd_to_cnf(otherbranch, newConditions, factorVars, labelVars, nextFactorVars);
 				return;
 			}
 		}
 	}
 
-	for(int ts = 0 ; ts < fts->get_size() ; ts++){
-		vector<int> goals = fts->get_ts(ts).get_goal_states();
-		vector<int> goalStateVars;
-		for(size_t goal = 0 ; goal < goals.size() ; goal++){
-			goalStateVars.push_back(previousStateVars[ts][goals[goal]]);
-		}
-		atLeastOne(solver, capsule, goalStateVars);
+	// we now know that we (may) need to create a new decision variable here.
+	// TODO: in theory, we could extend the condition with the branch vars,
+	// but only up to a point as otherwise this will be an exponential encoding
 
-		//cout << endl << endl << "Factor " << ts << endl;
-		//fts->get_ts(ts).dump_dot_graph();
+	auto known = tseitsinVars.find(lookup);
+	if (known != tseitsinVars.end()){
+		int myVar = known->second;
+		if (!data->implicationalTseitsin && Cudd_IsComplement(node)) myVar *= -1;
+		sat->andImplies(currentConditions, myVar);
+		return;
 	}
 
-	//DEBUG(capsule.printVariables());
+	// create the formula for this BDD for the first time, so we need a variable
+	// representing its truth
+	int thisVar = sat->new_variable();
+	DEBUG(sat->registerVariable(thisVar, "BDD_eval_var_" + to_string(tseitsinVars.size())));
+	tseitsinVars[lookup] = thisVar;
 
-	cout << "Formula has " << get_number_of_clauses() << " clauses and " << capsule.number_of_variables << " variables." << endl;
+	// the variable for this node becomes the new condition
+	vector<int> trueVarVector = {thisVar, var_to_branch};
+	vector<int> falseVarVector = {thisVar, -var_to_branch};
 
-	// run plan extraction
-	// likely check_goal_and_set_plan with four arguments
-	vector<vector<int>> statesPerTimestep;
-	vector<vector<int>> labelsPerTimestep;
-	vector<int> stateReconstructor;
-	for(size_t ts = 0 ; ts < allTimesStateVars[0].size() ; ts++){
-		for(size_t state = 0 ; state < allTimesStateVars[0][ts].size() ; state++){
-			if(ipasir_val(solver, allTimesStateVars[0][ts][state]) > 0){
-				stateReconstructor.push_back(state);
-				break;
-			}
-		}
+	bdd_to_cnf(true_branch, trueVarVector, factorVars, labelVars, nextFactorVars);
+	bdd_to_cnf(false_branch, falseVarVector, factorVars, labelVars, nextFactorVars);
+	if (!data->implicationalTseitsin){
+		// if the variable for this one is false, and we take a branch, then that
+		// variable also must be false.
+		trueVarVector[0] *= -1;
+		falseVarVector[0] *= -1;
+		bdd_to_cnf(Cudd_Not(true_branch), trueVarVector, factorVars, labelVars, nextFactorVars);
+		bdd_to_cnf(Cudd_Not(false_branch), falseVarVector, factorVars, labelVars, nextFactorVars);
+		if (Cudd_IsComplement(node)) thisVar *= -1;
 	}
-	statesPerTimestep.push_back(stateReconstructor);
-	stateReconstructor.clear();
 
-	set<int> timesteps_with_labels;	
-
-	for(int timestep = 1 ; timestep <= currentLength ; timestep++){
-		cout << "Time " << timestep << endl;
-		vector<int> selectedLabels;
-		for(size_t label = 0 ; label < allTimesLabelVars[timestep-1].size() ; label++){
-			if(ipasir_val(solver, allTimesLabelVars[timestep-1][label]) <= 0){
-				continue;
-			}else{
-				selectedLabels.push_back(label);
-				timesteps_with_labels.insert(timestep);
-				cout << "Label : " << label << endl;
-			}
-		}
-
-		if(selectedLabels.size() > 1){
-			for(size_t l = 0 ; l < selectedLabels.size() - 1 ; l++){
-				vector<int> intermediateState;
-				for(int ts = 0 ; ts < fts->get_size() ; ts++){
-					// TODO what to do here
-					//if(isAlwaysSelfLoop(ts, selectedLabels[l])){
-					//	intermediateState.push_back(statesPerTimestep.back()[ts]);
-					//}else{
-					//	intermediateState.push_back(stateReconstructor[ts]);
-					//}
-				}
-				statesPerTimestep.push_back(intermediateState);
-			}
-		}
-
-		if (selectedLabels.size()){
-			set<int> labelSet(selectedLabels.begin(), selectedLabels.end());
-			selectedLabels.clear();
-			for (const int & l : labelOrder)
-				if (labelSet.count(l)){
-					cout << "Actual Order label: " << l << endl;
-					selectedLabels.push_back(l);
-				}
-		}
-
-		labelsPerTimestep.push_back(selectedLabels);
-		// For the BDD-based encoding, we need to reconstruct the plan via search (labels are non-deterministic)
-		// What we have: the labels to be applied in which order (in selectedLabels) and the previous and next overall state
-		// We know how many intermediate state there are *and*
-		// that the determination of the intermediate states is independent between all factors.
-		// So we can reconstruct the visited states per factor
-		if (selectedLabels.size()){ // if we don't execute any label, we don't have to extract a new state.
-			// the labels are sorted in their natural order -- that is from 1 to L, but we might have used a different label ordering.
-			// we need to re-order them
-		
-
-			vector<vector<int>> reconstructedStates(selectedLabels.size() + 1);
-			for (size_t i = 1; i < selectedLabels.size(); i++) reconstructedStates[i].resize(fts->get_size());
-			reconstructedStates[0] = statesPerTimestep.back();
-			
-			for(size_t ts = 0 ; ts < allTimesStateVars[timestep].size() ; ts++){
-				for(size_t state = 0 ; state < allTimesStateVars[timestep][ts].size() ; state++){
-					if(ipasir_val(solver, allTimesStateVars[timestep][ts][state]) > 0){
-						reconstructedStates[selectedLabels.size()].push_back(state);
-						break;
-					}
-				}
-			}
-			for (int fac = 0; fac < fts->get_size(); fac++){
-				std::set<std::pair<int,int>> visited;
-				//cout << "Factor " << fac << " from " << reconstructedStates[0][fac] << " to " << reconstructedStates.back()[fac] << endl;
-				bool reconstruction_successful = bdd_state_reconstruction_dfs(fac,reconstructedStates,0,selectedLabels,visited);
-				if (!reconstruction_successful) cout << "Reconstruction failed on factor " << fac << "." << endl;
-				assert(reconstruction_successful);
-			}
-			// add the reconstructed states to the list of states
-			for (size_t i = 1; i <= selectedLabels.size(); i++)
-				statesPerTimestep.push_back(reconstructedStates[i]);
-		}
-	}
+	sat->andImplies(currentConditions,thisVar);
 }
-	
 
-bool BDDSATEncoding::bdd_state_reconstruction_dfs(int fac, std::vector<std::vector<int>> & reconstructedStates, int depth, std::vector<int> & plan, std::set<std::pair<int,int>> & visited){
-	const task_representation::TransitionSystem & factor = fts->get_ts(fac);
+
+void BDDSATEncoding::encode(int fromTime, int toTime){
+	// generate state vars if necessary for from time
+	auto preStateVarFind = allTimesStateVars.find(fromTime);
+	const vector<vector<int>> & previousStateVars = (preStateVarFind == allTimesStateVars.end()) ?
+		(allTimesStateVars[fromTime] = generateStateVars()):
+		preStateVarFind->second;
+
+	// generate state vars if necessary for next time
+	auto nextStateVarFind = allTimesStateVars.find(toTime);
+	const vector<vector<int>> & nextStateVars = (nextStateVarFind == allTimesStateVars.end()) ?
+		(allTimesStateVars[toTime] = generateStateVars()):
+		nextStateVarFind->second;
+
+	// generate label vars (must not exist yet)
+	assert(allTimesLabelVars.find(fromTime) == allTimesLabelVars.end());
+	const vector<int> & labelVars = (allTimesLabelVars[fromTime] = generateLabelVars());
+
+	if (forceAtLeastOneAction) sat->atLeastOne(labelVars);
+
+	// no frame axioms are needed: the BDDs describe, for every factor, exactly
+	// which label sets lead from one state of that factor to another, and that
+	// includes staying put.
+	const vector<int> noFactorVars;
+	for(int fac = 0 ; fac < fts->get_size() ; fac++){
+		// the Tseitin variables are only shared within one factor
+		tseitsinVars.clear();
+
+		if (data->combineAllBDDsIntoOne){
+			const vector<int> noConditions;
+			bdd_to_cnf(data->transition_BDDs_per_factor[fac].getNode(), noConditions,
+					previousStateVars[fac], labelVars, nextStateVars[fac]);
+		} else {
+			const TransitionSystem & factor = fts->get_ts(fac);
+			for (int s = 0; s < factor.get_size(); s++){
+				for (int ss = 0; ss < factor.get_size(); ss++){
+					// The factor state variables are not part of these BDDs, they are
+					// the conditions instead.
+					const vector<int> conditions = {previousStateVars[fac][s], nextStateVars[fac][ss]};
+					bdd_to_cnf(data->transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode(),
+							conditions, noFactorVars, labelVars, noFactorVars);
+				}
+			}
+		}
+	}
+	tseitsinVars.clear();
+}
+
+
+bool BDDSATEncoding::bdd_state_reconstruction_dfs(int fac,
+		std::vector<std::vector<int>> & reconstructedStates,
+		int depth,
+		const std::vector<int> & plan,
+		std::set<std::pair<int,int>> & visited) const {
+	const TransitionSystem & factor = fts->get_ts(fac);
 
 	int currentState = reconstructedStates[depth][fac];
 
@@ -964,17 +822,121 @@ bool BDDSATEncoding::bdd_state_reconstruction_dfs(int fac, std::vector<std::vect
 	for (const auto & transition : factor.get_transitions_with_label(plan[depth])){
 		if (transition.src != currentState) continue;
 		if (depth == int(plan.size()) - 1){
-			// this is the last label to we need to have reached the goal state
-			if (transition.target == reconstructedStates[depth+1][fac]){
-				return true;
-			} else continue; // cannot use this transition
+			// this is the last label, so we need to have reached the target state
+			if (transition.target == reconstructedStates[depth+1][fac]) return true;
+			continue; // cannot use this transition
 		}
 
 		reconstructedStates[depth + 1][fac] = transition.target;
 		if (bdd_state_reconstruction_dfs(fac,reconstructedStates,depth+1,plan,visited))
 			return true;
 	}
-	return false;	
+	return false;
 }
 
-};
+
+std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>>
+BDDSATEncoding::extractSolution(int initTime, std::vector<std::pair<int,int>> time_step_order){
+
+	auto readState = [&](int time){
+		vector<int> state;
+		for(int ts = 0 ; ts < fts->get_size() ; ts++){
+			for(size_t s = 0 ; s < allTimesStateVars[time][ts].size() ; s++){
+				if(ipasir_val(sat->solver, allTimesStateVars[time][ts][s]) > 0){
+					state.push_back(s);
+					break;
+				}
+			}
+		}
+		return state;
+	};
+
+	vector<vector<int>> statesPerTimestep;
+	statesPerTimestep.push_back(readState(initTime));
+
+	set<int> timesteps_with_labels;
+	vector<int> labels;
+
+	for(auto [labelTimestep,stateAfterTimestep] : time_step_order){
+		// which labels are used in this time step?
+		set<int> selectedLabelSet;
+		for(size_t label = 0 ; label < allTimesLabelVars[labelTimestep].size() ; label++)
+			if(ipasir_val(sat->solver, allTimesLabelVars[labelTimestep][label]) > 0)
+				selectedLabelSet.insert(label);
+
+		// if we don't execute any label, we don't have to extract a new state
+		if (selectedLabelSet.empty()) continue;
+		timesteps_with_labels.insert(labelTimestep);
+
+		// Several labels may fire in one time step and they have to be applied in
+		// the order the BDDs were built with, not in the order of their IDs.
+		vector<int> selectedLabels;
+		for (const int & l : data->labelOrder)
+			if (selectedLabelSet.count(l))
+				selectedLabels.push_back(l);
+
+		// The formula does not contain the states between the labels of one time
+		// step, so we have to reconstruct them. We know the labels and their order,
+		// and the state before and after the step. Since the factors are
+		// independent, each of them can be reconstructed on its own.
+		vector<vector<int>> reconstructedStates(selectedLabels.size() + 1);
+		reconstructedStates[0] = statesPerTimestep.back();
+		for (size_t i = 1; i < selectedLabels.size(); i++)
+			reconstructedStates[i].resize(fts->get_size());
+		reconstructedStates[selectedLabels.size()] = readState(stateAfterTimestep);
+
+		for (int fac = 0; fac < fts->get_size(); fac++){
+			std::set<std::pair<int,int>> visited;
+			bool reconstruction_successful =
+				bdd_state_reconstruction_dfs(fac,reconstructedStates,0,selectedLabels,visited);
+			if (!reconstruction_successful){
+				cout << "Reconstruction failed on factor " << fac << " at time " << labelTimestep
+					 << " going from " << reconstructedStates[0][fac]
+					 << " to " << reconstructedStates.back()[fac] << "." << endl;
+				assert(false);
+			}
+		}
+
+		for (size_t i = 1; i <= selectedLabels.size(); i++)
+			statesPerTimestep.push_back(reconstructedStates[i]);
+		for (const int & l : selectedLabels)
+			labels.push_back(l);
+	}
+
+	vector<int> GS = statesPerTimestep.back();
+	PlanState goalState = PlanState(std::move(GS));
+	vector<PlanState> states;
+	for(size_t s = 0 ; s < statesPerTimestep.size() ; s++)
+		states.push_back(PlanState(std::move(statesPerTimestep[s])));
+
+	cout << "Total states: " << states.size() << endl;
+	cout << "Total labels: " << labels.size() << endl;
+	cout << "Total timesteps with label: " << timesteps_with_labels.size() << endl;
+
+	// manual checking of the FTS plan
+	for (size_t i = 0; i < labels.size(); i++){
+		for(int ts = 0 ; ts < fts->get_size() ; ts++){
+			int from = states[i][ts];
+			int to = states[i+1][ts];
+
+			const TransitionSystem & tss = fts->get_ts(ts);
+			auto transitions = tss.get_transitions_with_label(labels[i]);
+			bool good = false;
+			for (const Transition &t: transitions)
+				if (t.src == from && t.target == to) good = true;
+
+			if (!good){
+				cout << "Execution of FTS plan failed at label nr. " << i << " being " << labels[i] << endl;
+				cout << "Formula wanted to transition in ts " << ts << " from " << from << " to " << to << " but this is impossible" << endl;
+				cout << "Possible transitions are: " << endl;
+				for (const Transition &t: transitions)
+					cout << "\t" << t.src << " -> " << t.target << endl;
+				assert(false);
+			}
+		}
+	}
+
+	return make_tuple(goalState,states,labels,timesteps_with_labels);
+}
+
+}

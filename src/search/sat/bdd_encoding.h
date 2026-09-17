@@ -1,73 +1,145 @@
-#ifndef SEARCH_ALGORITHMS_SAT_SEARCH
-#define SEARCH_ALGORITHMS_SAT_SEARCH
+#ifndef SAT_BDD_ENCODING_H
+#define SAT_BDD_ENCODING_H
 
-#include "sat_encoding.h"
-#include "sat_encoder.h"
-#include "../task_representation/label_equivalence_relation.h"
+#include <map>
+#include <memory>
+#include <set>
+#include <vector>
 
+#include "label_encoding.h"
 
 // include for BDDs
 #include "cuddObj.hh"
-#include "../task_utils/label_order_finder.h"
 
+namespace label_order_finder {
+	class LabelOrderFinder;
+}
 
-namespace sat_search{
+namespace sat_search {
 
-class BDDSATEncoding : public SAT_encoding {
-private:
-	
-	bool considerOnlyOneStepTransitions = true;
-	int bddEncodingSizeLimit = -1; // -1 means no limit
+/**
+ * Task-level data for the BDD encoding.
+ *
+ * Everything in here is computed once by BDDSATEncodingFactory::initialize()
+ * and is strictly read-only afterwards. The per-SAT-call encodings hold a
+ * shared_ptr to it, so several encodings (rintanen interleaves a number of
+ * them) can share the BDDs without copying and without touching the Cudd
+ * manager again. No BDD may be created after initialize() has returned.
+ */
+struct BDDEncodingData {
+	// --- options that the encoding itself needs at clause-generation time ---
+	bool combineAllBDDsIntoOne;
 	bool implicationalTseitsin;
 	bool omitForcedVariables;
 	int forcedVariablesThreshold;
-	bool combineAllBDDsIntoOne;
-	bool bddCutting;
-	bool bddCovering;
 
-	bool forceAtLeastOneAction;
-	
-	std::shared_ptr<task_representation::FTSTask> fts;
-    std::vector<int> labelOrder;
+	// --- BDD variable layout ---
+	// Variables 0 .. num_factor_vars-1 encode (factor state | factor next state),
+	// variables num_factor_vars .. bdd_num_vars-1 encode the labels, in labelOrder.
+	// num_factor_vars is 0 unless combineAllBDDsIntoOne is set.
+	int bdd_num_vars = 0;
+	int num_factor_vars = 0;
 
-	std::unique_ptr<Cudd> _manager; //_manager associated with this symbolic search
-	void bdd_to_dot(const BDD &bdd, const std::string &file_name) const;
+	// The label order is the BDD variable order: label labelOrder[i] is BDD
+	// variable num_factor_vars + i. labelToBDDVar is the inverse mapping,
+	// i.e. labelToBDDVar[labelOrder[i]] == num_factor_vars + i.
+	std::vector<int> labelOrder;
+	std::vector<int> labelToBDDVar;
 
-
-	// TODO: read from command line arguments
-	const long cudd_init_nodes = 16000000; //Number of initial nodes
-    const long cudd_init_cache_size = 16000000; //Initial cache size
-    const long cudd_init_available_memory = 0; //Maximum available memory (bytes)
-	int bdd_num_vars;
-	int num_factor_vars;
-	
-	// for the combined encoding
+	// exactly one of the two is populated, depending on combineAllBDDsIntoOne
 	std::vector<BDD> transition_BDDs_per_factor;
 	std::vector<std::vector<std::vector<BDD>>> transition_BDDs_per_factor_per_state_pair;
-	std::vector<std::vector<std::vector<BDD>>> one_step_transition_BDDs_per_factor_per_state_pair;
 
-	int givevar(int bddvar, std::vector<int> & factorVars, std::vector<int> & labelVars, std::vector<int> & nextFactorVars);
-
-	void bdd_in_degree(DdNode * node);
-
-	void bdd_to_cnf(DdNode * node, std::vector<int> & currentConditions, std::vector<int> & factorVars, std::vector<int> & labelVars, std::vector<int> & nextFactorVars, void* solver, sat_capsule & capsule);
-
-	bool bdd_state_reconstruction_dfs(int fac, std::vector<std::vector<int>> & reconstructedStates, int depth, std::vector<int> & plan, std::set<std::pair<int,int>> & visited);
-
-
-
-	std::vector<std::vector<int>> generateStateVars(void* solver, sat_capsule & capsule/* , int timestep */);
-	std::vector<int> generateLabelVars(__attribute__((unused)) void* solver, sat_capsule & capsule/* , int timestep */);
-public:
-    explicit BDDSATEncoding(const Options &opts,std::shared_ptr<task_representation::FTSTask> main_task);
-    virtual ~BDDSATEncoding() = default;
-
-
-	void initialize() override;
-	void encode(int currentLength, int stepTimeLimit) override;
+	// in-degree of every BDD node, used by the omitForcedVariables optimisation
+	std::map<DdNode *, int> node_indegree;
 };
 
-//extern void add_options_to_feature(plugins::Feature &feature);
+
+/**
+ * One BDD encoding instance, i.e. one SAT call / one plan length.
+ *
+ * State variables, the exactly-one constraints over them and init/goal come
+ * from StateEncoding; the per-time label variables come from LabelEncoding.
+ * What this class adds is the Tseitin translation of the factor BDDs and the
+ * plan extraction, which has to reconstruct the intermediate states inside a
+ * time step by DFS because the encoding does not represent them.
+ */
+class BDDSATEncoding : public LabelEncoding {
+	std::shared_ptr<const BDDEncodingData> data;
+
+	// Tseitin variables for the BDD nodes. Per encoding instance (the SAT
+	// variable numbering is per capsule) and reset for every factor.
+	std::map<DdNode *, int> tseitsinVars;
+
+	/// map a BDD variable index onto the SAT variable of this time step
+	int givevar(int bddvar,
+		const std::vector<int> & factorVars,
+		const std::vector<int> & labelVars,
+		const std::vector<int> & nextFactorVars) const;
+
+	/// Tseitin-translate the BDD rooted at node, guarded by currentConditions
+	void bdd_to_cnf(DdNode * node,
+		const std::vector<int> & currentConditions,
+		const std::vector<int> & factorVars,
+		const std::vector<int> & labelVars,
+		const std::vector<int> & nextFactorVars);
+
+	/// reconstruct the states a factor passes through within one time step
+	bool bdd_state_reconstruction_dfs(int fac,
+		std::vector<std::vector<int>> & reconstructedStates,
+		int depth,
+		const std::vector<int> & plan,
+		std::set<std::pair<int,int>> & visited) const;
+
+public:
+	explicit BDDSATEncoding(
+		std::shared_ptr<sat_capsule> capsule,
+		const std::shared_ptr<task_representation::FTSTask> & _fts,
+		bool _forceAtLeastOneAction,
+		const std::shared_ptr<const BDDEncodingData> & _data);
+	~BDDSATEncoding() override = default;
+
+	void encode(int fromTime, int toTime) override;
+	std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>>
+		extractSolution(int initTime, std::vector<std::pair<int,int>> time_step_order) override;
+};
+
+
+class BDDSATEncodingFactory : public SATEncodingFactory {
+	const bool oneStepOnly;
+	const bool combineAllBDDsIntoOne;
+	const int bddEncodingSizeLimit;
+	const bool implicationalTseitsin;
+	const bool omitForcedVariables;
+	const int forcedVariablesThreshold;
+	const bool bddCutting;
+	const bool bddCovering;
+
+	std::shared_ptr<label_order_finder::LabelOrderFinder> label_order_finder;
+
+	// The Cudd manager must outlive every BDD in data, so it is owned here and
+	// never used again once initialize() has returned.
+	std::unique_ptr<Cudd> _manager;
+	std::shared_ptr<BDDEncodingData> data;
+
+	// TODO: read from command line arguments
+	const long cudd_init_nodes = 16000000;          // Number of initial nodes
+	const long cudd_init_cache_size = 16000000;     // Initial cache size
+	const long cudd_init_available_memory = 0;      // Maximum available memory (bytes)
+
+	void bdd_to_dot(const BDD & bdd, const std::string & file_name) const;
+	void bdd_in_degree(DdNode * node);
+	void cut_bdds_to_fixpoint();
+	void report_covering_implications() const;
+
+public:
+	explicit BDDSATEncodingFactory(const options::Options &opts);
+	~BDDSATEncodingFactory() override = default;
+
+	void initialize() override;
+	std::unique_ptr<SATEncoding> createEncodingInstance(std::shared_ptr<sat_capsule> capsule) override;
+};
+
 }
 
 #endif
