@@ -112,7 +112,13 @@ endif()
 
 
 
-if(PLUGIN_SYMBOLIC_ENABLED)
+# CUDD is needed by the symbolic search engines and by the BDD-based SAT
+# encoding (sat/bdd_encoding). Either plugin alone is enough to require it.
+if(PLUGIN_SYMBOLIC_ENABLED OR PLUGIN_SAT_SEARCH_ENABLED)
+    set(USE_CUDD TRUE)
+endif()
+
+if(USE_CUDD)
     include(ExternalProject)
     if(${CMAKE_SIZEOF_VOID_P} EQUAL 4)
         message("libcudd 32-bits build")
