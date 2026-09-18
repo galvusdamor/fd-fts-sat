@@ -467,6 +467,47 @@ wrong measurements rather than crashes:
 7. **`bdd_size_limit`** is now rejected with `one_step_only`.
 
 
+### Label dependencies extractable from the BDDs
+
+`bdd_sat(report_label_implications=true)` (diagnostic, default off) mines each
+factor's label BDD for dependencies that hold in *every* legal label set, so
+they are sound clauses over any time step's label variables.
+
+The union over all `(source,target)` pairs of a factor's transition BDDs is a
+BDD over label variables describing every label set that factor permits in one
+step. `Cudd_FindEssential` returns the cube of variables forced in every
+satisfying assignment, so applying it to that function gives the unit
+dependencies and applying it to the cofactor by a literal gives **every**
+binary dependency with that literal as premise in one call. Extraction is
+therefore O(|support|) cofactor+essential calls per factor, not O(L²), and the
+support is only the labels relevant to the factor.
+
+What is actually there, with every claimed mutex re-checked by a direct
+`any AND l AND l' == 0` test (287288 checked, **0 refuted**):
+
+| instance | labels | mode | unconditional distinct `l -> -l'` |
+|---|---:|---|---:|
+| `cavediving/testing18A_easy` | 804 | full | **114022** |
+| `cavediving/testing18A_easy` | 804 | one-step | **153538** |
+| `matrix-mult/mm2x2X2x1` | 135 | one-step | 4220 |
+| `matrix-mult/mm2x2X2x1` | 135 | full | 0 |
+| `rubiks-cube`, `pancakes`, `burnt-pancakes`, `topspin` | 2-18 | both | 0 |
+
+On cavediving that is ~35% of all label pairs, extracted in 11s against 0.03s
+of construction. The zeros are a property of the domains, not of the method:
+in the permutation puzzles every label is applicable in every state, so the
+union is *identically true* and the BDDs carry no unconditional label
+information at all — everything they know is about *which* state pair they
+connect. Conditioning on the source state does not help there either. Check
+`BDDSTAT implications_shape`'s `unconditional_informative` count first; it is
+milliseconds and tells you whether extraction is worth running.
+
+Caveat: these are consequences of constraints the encoding already emits, so
+adding them as clauses buys propagation speed, not a smaller search space. The
+untested and more promising use is to `Restrict`/`Constrain` the factor BDDs by
+the implication care-set *before* the Tseitin translation, since `nodes_sum`
+drives CNF size directly.
+
 ### Where BDD construction breaks
 
 Measured over all 431 FTS-benchmark instances with the `BDDSTAT` output and
@@ -488,32 +529,30 @@ Note these are *not* the largest files, and the smaller `mm2x2X2x2` builds in
 full mode without trouble. At a 30s budget they die in `full_reachability_dp`
 around factor 39-47 of 144 with 250k-330k live nodes.
 
-**`one_step_only=true` is the fragile mode.** 17 instances cannot be built in
-10 minutes: 13 of the 20 `cavediving-adl14` instances and 4 of the 11
-`matrix-multiplication` ones. Some do not get past factor 0 of 453 in ten
-minutes.
+**`one_step_only=true` was the fragile mode, and mostly for a fixable reason.**
+As originally written it could not build 17 instances in 10 minutes. After the
+rewrite in `8d5b39a2d` (prefix/suffix cubes, see below) **14 of those 17 build**,
+most in under a minute; `testing10/11/12_easy` went from not reaching factor 12
+of 453 to completing in ~547s, and `testing09_easy` in 403s.
 
-The cause is structural, not BDD blow-up — live node counts at abort are tiny
-(8k-48k). The one-step construction is quadratic in the number of labels:
+The original cost was *not* BDD blow-up — live node counts at abort were 8k-48k.
+It was the number of BDD conjunctions: one per label that has to be forced
+false, for every transition, and the transition count is itself around |L|·|S|
+because a label that is irrelevant for a factor still has |S| explicit
+self-loops there. The nested rescanning of transition lists looked like the
+culprit and is not: removing it alone made things *slower*. What fixed it was
+emitting two BDD operations per transition instead of |forced-false| of them.
 
-```cpp
-for l in labels:                        // cavediving 14160, matrix-mult 59535
-  for transition in trans(l):
-    for ll in labels:                   // again
-      scan trans(labelOrder[ll]) for a self-loop at the relevant state
-```
-
-The inner scan recomputes "does label `ll` self-loop in state X" for every
-`(l, transition)` pair. The full-reachability DP, by contrast, is *linear* in
-labels (`for l in labels: for s,ss in states²`). So on label-heavy tasks the
-mode meant to be cheap costs far more than the mode meant to be expensive.
-The pancake-family domains have ~22 labels, which is why this never showed.
-Precomputing, per factor, the set of states in which each label self-loops
-would turn this into O(L·(S+T)) and is the obvious fix.
+The three remaining instances — `matrix-multiplication/mm2x2X2x3`,
+`mm2x3X3x2`, `mm3x2X2x2` — are a genuine BDD blow-up and not worth chasing with
+more budget. On `mm2x2X2x3`, one-step dies at factor **2 of 144** after 300s
+with **33.6M live nodes** (53M peak, 2.5GB), while *full reachability builds the
+whole task in 1.67s* with 916k live nodes. For these tasks the one-step
+semantics is simply the wrong representation.
 
 For the record: the empty-step disjunct added during the port is a separate
-phase (`one_step_stay_disjunct`) and **none** of the 17 failures occur in it —
-all 17 report `where one_step_construction`.
+phase (`one_step_stay_disjunct`) and none of the failures occur in it — they all
+report `where one_step_construction`.
 
 **What full mode actually costs is formula size, not constructibility.**
 `nodes_sum_all_factors` is the summed `nodeCount()` over the per-(source,
