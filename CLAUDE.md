@@ -351,6 +351,37 @@ against kissat regardless, which has no `ipasir_assume`).
 step — it **must** be, since the Tseitin variable of a BDD node stands for
 that node evaluated against *this* time step's label variables.
 
+### Validation status
+
+918 runs, every plan checked with VAL, **no invalid plan and no assertion
+failure**:
+
+| batch | transform | runs | VALID | TIMEOUT |
+|---|---|---:|---:|---:|
+| 61 instances x 12 configs | `-shr` | 732 | 657 | 75 |
+| 31 instances x 6 configs | `-ntr` (atomic FTS) | 186 | 173 | 13 |
+
+30 domains, `sat()` with `one_by_one()` and `rintanen()` with
+`by_iteration()`, covering `one_step_only`, `combinebdds`, `impltseitsin`,
+`omitforcedvariables`, `bdd_size_limit`, `cutbdds` and the label orders.
+Timeouts are a 40s limit on deliberately oversized instances; the four worst
+(`hanoi/pfile11`, `grid/prob03`, `freecell/pfile11`, `depot/pfile11`) time out
+for all twelve configurations, `label_sat` included.
+
+The DFS intermediate-state reconstruction — the part of `extractSolution` with
+no counterpart in the other encodings — is exercised properly by
+`one_step_only=false`, which packs several labels into one time step:
+2.5 labels/step on gripper and driverlog, 4.5 on openstacks, 7.5 on
+woodworking, 8.5 on freecell and 10 on ferry (a single time step holding the
+whole plan). All VAL-valid.
+
+Two instances where `bdd_sat` is clearly weaker than `label_sat` and worth
+investigating: `mprime/prob03` (label 15 steps, `bdd_full` 88) and
+`grid/prob01` (label 40, `rint_full` 58, most bdd configs time out).
+Generally `bdd_full` finds *longer* plans than `label_sat` at the same number
+of time steps — 82 longer vs 25 shorter vs 110 equal over the matrix — which
+is the expected cost of packing more labels per step.
+
 ### Options (`bdd_sat(...)`)
 
 | option | default | meaning |
