@@ -15,7 +15,13 @@ namespace label_order_finder {
 	class LabelOrderFinder;
 }
 
+namespace task_representation {
+	class TransitionSystem;
+}
+
 namespace sat_search {
+
+class FTSMatrix;
 
 /**
  * Task-level data for the BDD encoding.
@@ -114,6 +120,7 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const int forcedVariablesThreshold;
 	const bool bddCutting;
 	const bool bddCovering;
+	const bool reportLabelImplications;
 	// budgets for the BDD construction itself, so that an instance whose BDDs
 	// cannot be built is reported as such instead of running until the driver
 	// kills it. -1 disables the budget.
@@ -121,6 +128,11 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const long bddNodeLimit;
 
 	std::shared_ptr<label_order_finder::LabelOrderFinder> label_order_finder;
+
+	// one per transition system, same objects the label-based encoding uses.
+	// Holds, among other things, the per-state self-loop sets that the one-step
+	// construction needs.
+	std::vector<std::shared_ptr<FTSMatrix>> fts_matrices;
 
 	// The Cudd manager must outlive every BDD in data, so it is owned here and
 	// never used again once initialize() has returned.
@@ -136,8 +148,35 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	void bdd_in_degree(DdNode * node);
 	/// throws BDDBudgetExceeded once a construction budget is used up
 	void check_budget(int fac, const char * where) const;
+
+	/*
+	  The two transition relations a factor can be given, as two separate
+	  constructions because they answer different questions.
+
+	  build_full_reachability_bdds: which label *sequences*, in label order,
+	  take the factor from s to ss within one time step. A DP backwards over
+	  the label order, so it costs one pass per label that is relevant for this
+	  factor.
+
+	  build_one_step_bdds: which label sets do so using at most one real
+	  transition, framed by self loops before and after it. Every label that
+	  cannot self-loop in the relevant state has to be forced false, so it
+	  needs to know, per state, which labels self-loop there -- which is what
+	  FTSMatrix already stores.
+	*/
+	std::vector<std::vector<BDD>> build_full_reachability_bdds(
+		int fac,
+		const task_representation::TransitionSystem & factor,
+		int & num_relevant_labels);
+
+	std::vector<std::vector<BDD>> build_one_step_bdds(
+		int fac,
+		const task_representation::TransitionSystem & factor,
+		const FTSMatrix & matrix);
 	void cut_bdds_to_fixpoint();
 	void report_covering_implications() const;
+	/// mine the per-factor label BDDs for unit and binary label dependencies
+	void report_label_implications() const;
 
 public:
 	explicit BDDSATEncodingFactory(const options::Options &opts);
