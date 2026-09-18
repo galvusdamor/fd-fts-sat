@@ -50,6 +50,10 @@ int main(int argc, const char **argv) {
     // errors, and then in normal mode.
     bool is_unit_cost = g_sas_task()->is_unit_cost();
     try {
+        // Must happen before the transformation: if the transformation solves
+        // the task outright we save the plan below without ever parsing the
+        // search options.
+        OptionParser::parse_plan_filename(argc, argv);
         OptionParser::parse_cmd_line_transform(argc, argv, true, is_unit_cost);
         transformer = OptionParser::parse_cmd_line_transform(argc, argv, false, is_unit_cost);
     } catch (ArgError &error) {

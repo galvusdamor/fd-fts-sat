@@ -172,6 +172,32 @@ shared_ptr<SearchEngine> OptionParser::parse_cmd_line(
     return parse_cmd_line_aux(args, dry_run);
 }
 
+void OptionParser::parse_plan_filename(int argc, const char **argv) {
+    for (int i = 1; i < argc; ++i) {
+        string arg = argv[i];
+
+        // Ignore case -- for the option name only. The *value* is a file name
+        // and is taken from argv verbatim.
+        transform(arg.begin(), arg.end(), arg.begin(), ::tolower);
+        arg.erase(remove(arg.begin(), arg.end(), '\n'), arg.end());
+
+        bool is_last = (i == argc - 1);
+        if (arg == "--internal-plan-file") {
+            if (is_last)
+                throw ArgError("missing argument after --internal-plan-file");
+            g_plan_filename = argv[++i];
+        } else if (arg == "--internal-previous-portfolio-plans") {
+            if (is_last)
+                throw ArgError("missing argument after --internal-previous-portfolio-plans");
+            ++i;
+            g_is_part_of_anytime_portfolio = true;
+            g_num_previously_generated_plans = parse_int_arg(arg, argv[i]);
+            if (g_num_previously_generated_plans < 0)
+                throw ArgError("argument for --internal-previous-portfolio-plans must be positive");
+        }
+    }
+}
+
 shared_ptr<TaskTransformation> OptionParser::parse_cmd_line_transform(
     int argc, const char **argv, bool dry_run, bool is_unit_cost) {
     vector<string> args;
@@ -280,18 +306,17 @@ shared_ptr<SearchEngine> OptionParser::parse_cmd_line_aux(
             cout << "Help output finished." << endl;
             exit(0);
         } else if (arg == "--internal-plan-file") {
+            // Already handled by parse_plan_filename() from the raw argv, both
+            // because it is needed earlier and because args[] has been
+            // lower-cased, which would mangle the file name. Just skip the value.
             if (is_last)
                 throw ArgError("missing argument after --internal-plan-file");
             ++i;
-            g_plan_filename = args[i];
         } else if (arg == "--internal-previous-portfolio-plans") {
+            // likewise
             if (is_last)
                 throw ArgError("missing argument after --internal-previous-portfolio-plans");
             ++i;
-            g_is_part_of_anytime_portfolio = true;
-            g_num_previously_generated_plans = parse_int_arg(arg, args[i]);
-            if (g_num_previously_generated_plans < 0)
-                throw ArgError("argument for --internal-previous-portfolio-plans must be positive");
         } else {
             throw ArgError("unknown option " + arg);
         }

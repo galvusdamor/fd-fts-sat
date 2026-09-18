@@ -114,6 +114,14 @@ public:
     static std::shared_ptr<task_transformation::TaskTransformation> parse_cmd_line_transform(
         int argc, const char **argv, bool dry_run, bool is_unit_cost);
 
+    /*
+      Read --internal-plan-file / --internal-previous-portfolio-plans from the
+      raw argv. Must run before the task transformation, because a task that
+      the transformation solves outright is written out before the search
+      options are ever parsed.
+    */
+    static void parse_plan_filename(int argc, const char **argv);
+
     static std::string usage(const std::string &progname);
 };
 
