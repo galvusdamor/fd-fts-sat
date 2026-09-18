@@ -146,6 +146,26 @@ Notes:
   length-based anyway.
 * Instances from the **FTS benchmarks** already are transformed FTS files; use
   them directly with the same `--search` and (usually) no further transform.
+  They are plain `.sas` files laid out as `fts-tasks/<domain>/<instance>.sas`
+  and reached through `$FTS_BENCHMARKS`; the lab scripts symlink each one into
+  a run directory as `task.sas`. The set is 431 instances over six domains:
+  `pancakes` and `burnt-pancakes` (100 each), `rubiks-cube` (100), `topspin`
+  (100), `cavediving-adl14` (20) and `matrix-multiplication` (11); that is
+  `common_setup.FTS_SUITE`.
+
+  **They are not on Zenodo.** Record 20444380 for the IJCAI'26 paper is
+  results only — logs, parsed properties and the experiment scripts — and its
+  run directories contain `task.sas` merely as a dangling symlink into
+  `~/benchmarks/fts-tasks/` on the cluster. Its README points at
+  `aibasel/downward-benchmarks`, which is the PDDL suite and does not have
+  these domains either. To run against the FTS benchmarks you need a copy of
+  that `fts-tasks` directory.
+
+  Without them, the nearest local substitute is the **atomic FTS**: run a PDDL
+  task with `--transform "cost(cost_type=one)"` (the `-ntr` setting in the
+  experiment scripts), which skips shrinking and leaves one factor per SAS+
+  variable — many small factors, which is structurally what the FTS benchmarks
+  look like.
 * `--debug` builds and runs `debug64`, which prints registered SAT variable
   names (`sat_capsule::registerVariable`) — very useful when validating an
   encoding.
@@ -167,16 +187,32 @@ Notes:
   Validate <domain.pddl> <problem.pddl> /tmp/plan     # must print "Plan valid"
   ```
 
-Known rough edges, both **pre-existing and not specific to any encoding**
-(`label_sat` reproduces them identically), so don't chase them when a new
-encoding seems to misbehave:
+**Watch out for tasks the transformation solves on its own.** With the usual
+shrink transformation the FTS can come out empty — `Main task: FTSTask with 0
+variables, 0 labels` followed by `Task solved without search`. The planner then
+reports a plan and "Solution found." without the search engine, let alone the
+encoding, ever running. Of 32 first-instances tried, five behave this way:
+`elevators-00-strips/s1-0`, `logistics00/adl-98-prob01`, `miconic/s1-0`,
+`movie/prob01` and `zenotravel/pfile1`. Such a task tells you nothing about an
+encoding, and because every encoder "agrees" on it, it is easy to mistake for
+passing coverage. Grep the log for `Task solved without search` and discount
+those runs.
+
+A known rough edge, **pre-existing and not specific to any encoding**
+(`label_sat` reproduces it identically), so don't chase it when a new encoding
+seems to misbehave:
 
 * `debug64` aborts on some tasks in the `FTSTask` constructor —
   `assert(distances.get_goal_distance(s) < numeric_limits<int>::max())`
   (`task_representation/fts_task.cc:87`), e.g. on parcprinter p01. Assertion
   coverage has to come from tasks that get past it.
-* On some tasks (e.g. `miconic/s1-0`) the plan is printed and "Solution found."
-  is reported but no plan file is written, so VAL has nothing to check.
+
+When scripting validation, find the domain file the way the driver does
+(`driver/util.py:find_domain_filename`): `domain.pddl`, else
+**`basename[:3] + "-domain.pddl"`**, else `domain_<basename>`, else
+`domain-<basename>`. Guessing `<problem>-domain.pddl` silently picks the wrong
+file in e.g. `airport/` (`p01-airport1-p1.pddl` pairs with `p01-domain.pddl`),
+and VAL then calls every plan invalid.
 
 ### Search engines and plugin names
 
