@@ -114,6 +114,11 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const int forcedVariablesThreshold;
 	const bool bddCutting;
 	const bool bddCovering;
+	// budgets for the BDD construction itself, so that an instance whose BDDs
+	// cannot be built is reported as such instead of running until the driver
+	// kills it. -1 disables the budget.
+	const int bddInitTimeLimit;
+	const long bddNodeLimit;
 
 	std::shared_ptr<label_order_finder::LabelOrderFinder> label_order_finder;
 
@@ -129,6 +134,8 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 
 	void bdd_to_dot(const BDD & bdd, const std::string & file_name) const;
 	void bdd_in_degree(DdNode * node);
+	/// throws BDDBudgetExceeded once a construction budget is used up
+	void check_budget(int fac, const char * where) const;
 	void cut_bdds_to_fixpoint();
 	void report_covering_implications() const;
 

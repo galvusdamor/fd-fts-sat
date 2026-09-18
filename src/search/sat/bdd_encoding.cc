@@ -26,6 +26,21 @@ namespace sat_search {
 namespace {
 struct BDDError {};
 
+/// raised when a construction budget (time or nodes) runs out
+struct BDDBudgetExceeded {
+	const char * reason;   // "time_limit" or "node_limit"
+	int factor;
+	const char * where;
+	// captured when the budget runs out: unwinding destroys the local BDD
+	// vectors, so reading the manager in the handler would under-report.
+	double elapsed;
+	long live_nodes;
+	long peak_nodes;
+};
+
+/// wall clock for the whole BDD construction, started by initialize()
+utils::Timer bdd_construction_timer;
+
 // promise from symbolic
 void exceptionError(string /*message*/) {
 	throw BDDError();
@@ -52,6 +67,8 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	forcedVariablesThreshold(opts.get<int>("forcedvariablesthreshold")),
 	bddCutting(opts.get<bool>("cutbdds")),
 	bddCovering(opts.get<bool>("coverbdds")),
+	bddInitTimeLimit(opts.get<int>("bdd_init_time_limit")),
+	bddNodeLimit(long(opts.get<int>("bdd_node_limit"))),
 	label_order_finder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order"))
 {
 	if (oneStepOnly && bddEncodingSizeLimit != -1){
@@ -124,6 +141,19 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 		"force that every time step contains at least one action",
 		"false");
 
+	parser.add_option<int>(
+		"bdd_init_time_limit",
+		"seconds allowed for building the BDDs. When it is used up the run stops "
+		"with 'BDDSTAT construction_failed ... reason time_limit' instead of "
+		"grinding on until the driver kills it. -1 means no limit",
+		"-1");
+
+	parser.add_option<int>(
+		"bdd_node_limit",
+		"how many live Cudd nodes the construction may use, reported the same way. "
+		"-1 means no limit",
+		"-1");
+
 	parser.add_option<shared_ptr<label_order_finder::LabelOrderFinder>>(
 		"label_order",
 		"order in which labels may be applied within one time step. This is also the "
@@ -161,6 +191,17 @@ void BDDSATEncodingFactory::bdd_to_dot(const BDD &bdd, const std::string &file_n
 	Cudd_DumpDot(_manager->getManager(), 1, ddnodearray, names.data(), NULL, outfile);
 	free(ddnodearray);
 	fclose(outfile);
+}
+
+
+void BDDSATEncodingFactory::check_budget(int fac, const char * where) const {
+	if (bddInitTimeLimit >= 0 &&
+			bdd_construction_timer() > double(bddInitTimeLimit))
+		throw BDDBudgetExceeded{"time_limit", fac, where, bdd_construction_timer(),
+			_manager->ReadNodeCount(), _manager->ReadPeakNodeCount()};
+	if (bddNodeLimit >= 0 && _manager->ReadNodeCount() > bddNodeLimit)
+		throw BDDBudgetExceeded{"node_limit", fac, where, bdd_construction_timer(),
+			_manager->ReadNodeCount(), _manager->ReadPeakNodeCount()};
 }
 
 
@@ -402,10 +443,16 @@ void BDDSATEncodingFactory::initialize() {
 			cudd_init_cache_size,
 			cudd_init_available_memory);
 
+	bdd_construction_timer.reset();
+	bdd_construction_timer.resume();
+
 	_manager->setHandler(exceptionError);
 	_manager->setTimeoutHandler(exceptionError);
 	_manager->setNodesExceededHandler(exceptionError);
 	_manager->RegisterOutOfMemoryCallback(exitOutOfMemory);
+
+	long total_nodes_sum = 0;
+	int overall_max_pair_nodes = 0;
 
 	try {
 		if (combineAllBDDsIntoOne) data->transition_BDDs_per_factor.resize(fts->get_size());
@@ -415,6 +462,9 @@ void BDDSATEncodingFactory::initialize() {
 			const TransitionSystem & factor = fts->get_ts(fac);
 			const int numStates = factor.get_size();
 			int num_relevant_labels = 0;
+			check_budget(fac, "factor_start");
+			const double factor_t_start = bdd_construction_timer();
+			const long nodes_before_factor = _manager->ReadNodeCount();
 
 			// -----------------------------------------------------------------
 			// (a) the full all-pairs reachability under the label order
@@ -435,6 +485,7 @@ void BDDSATEncodingFactory::initialize() {
 					if (!factor.is_relevant_label(labelID) && factor.is_selfloop_everywhere(labelID))
 						continue;
 					num_relevant_labels++;
+					check_budget(fac, "full_reachability_dp");
 
 					const BDD labelVar = _manager->bddVar(data->labelToBDDVar[label]);
 					vector<vector<BDD>> nextPossiblePaths (numStates);
@@ -468,6 +519,7 @@ void BDDSATEncodingFactory::initialize() {
 				}
 
 				for(int l = 0; l < fts->get_num_labels(); l++){
+					check_budget(fac, "one_step_construction");
 					for (const auto & transition : factor.get_transitions_with_label(l)){
 						BDD thisTrans = _manager->bddOne();
 						bool beforeLabelL = true;
@@ -529,12 +581,14 @@ void BDDSATEncodingFactory::initialize() {
 			vector<vector<BDD>> & chosen = oneStepOnly ? oneStepPaths : allPossiblePaths;
 
 			int summedSizeBefore = 0, summedSizeAfter = 0, possibleSingleTrans = 0, allTrans = 0;
+			int maxPairNodes = 0;
 			map<int,vector<pair<int,int>>> bdd_sizes;
 			for (int s = 0; s < numStates; s++){
 				for (int ss = 0; ss < numStates; ss++){
 					if (chosen[s][ss] != _manager->bddZero()){
 						allTrans++;
 						int thisBDDsize = chosen[s][ss].nodeCount();
+						if (thisBDDsize > maxPairNodes) maxPairNodes = thisBDDsize;
 						summedSizeBefore += thisBDDsize;
 						bdd_sizes[thisBDDsize].push_back({s,ss});
 					}
@@ -565,11 +619,27 @@ void BDDSATEncodingFactory::initialize() {
 				 << " all transitions: " << allTrans
 				 << " possible 1-step transitions: " << possibleSingleTrans << endl;
 
+			// one machine-readable line per factor
+			cout << "BDDSTAT factor " << fac
+				 << " states " << numStates
+				 << " relevant_labels " << num_relevant_labels
+				 << " nonzero_pairs " << allTrans
+				 << " onestep_pairs " << possibleSingleTrans
+				 << " nodes_sum " << summedSizeBefore
+				 << " nodes_max_pair " << maxPairNodes
+				 << " nodes_sum_after_limit " << summedSizeAfter
+				 << " live_nodes_delta " << (_manager->ReadNodeCount() - nodes_before_factor)
+				 << " time " << (bdd_construction_timer() - factor_t_start)
+				 << endl;
+			total_nodes_sum += summedSizeBefore;
+			if (maxPairNodes > overall_max_pair_nodes) overall_max_pair_nodes = maxPairNodes;
+
 			if (combineAllBDDsIntoOne){
 				// one BDD describing all transitions of this factor at once
 				BDD allTransitionsBDD = _manager->bddZero();
 				const int halfFactorVars = data->num_factor_vars / 2;
 				for (int s = 0; s < numStates; s++){
+					check_budget(fac, "combine_bdds");
 					for (int ss = 0; ss < numStates; ss++){
 						BDD thisFactorTransitionBDD = _manager->bddVar(s) * _manager->bddVar(halfFactorVars + ss);
 						for (int nots = 0; nots < numStates; nots++)
@@ -605,10 +675,43 @@ void BDDSATEncodingFactory::initialize() {
 						bdd_in_degree(data->transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode());
 			}
 		}
+	} catch (const BDDBudgetExceeded & e) {
+		cout << "BDDSTAT construction_failed reason " << e.reason
+			 << " factor " << e.factor << " of " << fts->get_size()
+			 << " where " << e.where
+			 << " elapsed " << e.elapsed
+			 << " live_nodes " << e.live_nodes
+			 << " peak_nodes " << e.peak_nodes
+			 << " memory_bytes " << _manager->ReadMemoryInUse()
+			 << endl;
+		cerr << "BDD construction ran out of its " << e.reason << "." << endl;
+		utils::exit_with(string(e.reason) == "time_limit"
+			? utils::ExitCode::OUT_OF_TIME : utils::ExitCode::OUT_OF_MEMORY);
 	} catch (const BDDError &) {
+		cout << "BDDSTAT construction_failed reason cudd_limit"
+			 << " elapsed " << bdd_construction_timer()
+			 << " live_nodes " << _manager->ReadNodeCount()
+			 << " peak_nodes " << _manager->ReadPeakNodeCount()
+			 << " memory_bytes " << _manager->ReadMemoryInUse()
+			 << endl;
 		cerr << "BDD construction exceeded the limits of the Cudd manager." << endl;
 		utils::exit_with(utils::ExitCode::OUT_OF_MEMORY);
 	}
+
+	bdd_construction_timer.stop();
+	cout << "BDDSTAT construction_ok factors " << fts->get_size()
+		 << " labels " << fts->get_num_labels()
+		 << " bdd_vars " << data->bdd_num_vars
+		 << " one_step_only " << (oneStepOnly ? 1 : 0)
+		 << " combined " << (combineAllBDDsIntoOne ? 1 : 0)
+		 << " nodes_sum_all_factors " << total_nodes_sum
+		 << " nodes_max_pair " << overall_max_pair_nodes
+		 << " tseitin_nodes " << data->node_indegree.size()
+		 << " live_nodes " << _manager->ReadNodeCount()
+		 << " peak_nodes " << _manager->ReadPeakNodeCount()
+		 << " memory_bytes " << _manager->ReadMemoryInUse()
+		 << " construction_time " << bdd_construction_timer()
+		 << endl;
 
 	cout << "BDD nodes with an in-degree entry: " << data->node_indegree.size() << endl;
 	cout << "SAT init time: " << sat_init_timer << endl;
