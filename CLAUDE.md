@@ -159,7 +159,20 @@ Notes:
   `~/benchmarks/fts-tasks/` on the cluster. Its README points at
   `aibasel/downward-benchmarks`, which is the PDDL suite and does not have
   these domains either. To run against the FTS benchmarks you need a copy of
-  that `fts-tasks` directory.
+  that `fts-tasks` directory from the cluster.
+
+  Run them straight from the `.sas` file — no translator step, and the
+  `--transform` is still yours to choose:
+
+  ```bash
+  ./fast-downward.py --plan-file /tmp/plan fts-tasks/pancakes/n5-p4.sas \
+    --transform "cost(cost_type=one)" \
+    --search "sat(encoder=bdd_sat(),length_strategy=one_by_one())"
+  python3 experiments/validate_sas_plan.py fts-tasks/pancakes/n5-p4.sas /tmp/plan
+  ```
+
+  VAL cannot check these — there is no PDDL — hence
+  `experiments/validate_sas_plan.py`.
 
   Without them, the nearest local substitute is the **atomic FTS**: run a PDDL
   task with `--transform "cost(cost_type=one)"` (the `-ntr` setting in the
@@ -353,20 +366,39 @@ that node evaluated against *this* time step's label variables.
 
 ### Validation status
 
-918 runs, every plan checked with VAL, **no invalid plan and no assertion
-failure**:
+1846 runs, every plan checked — PDDL tasks with VAL, FTS tasks with
+`experiments/validate_sas_plan.py` — with **no invalid plan and no assertion
+failure anywhere**:
 
 | batch | transform | runs | VALID | TIMEOUT |
 |---|---|---:|---:|---:|
-| 61 instances x 12 configs | `-shr` | 732 | 657 | 75 |
-| 31 instances x 6 configs | `-ntr` (atomic FTS) | 186 | 173 | 13 |
+| 61 PDDL instances x 12 configs | `-shr` | 732 | 657 | 75 |
+| 31 PDDL instances x 6 configs | `-ntr` (atomic FTS) | 186 | 173 | 13 |
+| 58 FTS-benchmark instances x 8 configs x 2 | `-ntr` and `-shr` | 928 | 543 | 385 |
 
-30 domains, `sat()` with `one_by_one()` and `rintanen()` with
-`by_iteration()`, covering `one_step_only`, `combinebdds`, `impltseitsin`,
-`omitforcedvariables`, `bdd_size_limit`, `cutbdds` and the label orders.
-Timeouts are a 40s limit on deliberately oversized instances; the four worst
-(`hanoi/pfile11`, `grid/prob03`, `freecell/pfile11`, `depot/pfile11`) time out
-for all twelve configurations, `label_sat` included.
+36 domains in total (30 PDDL + the six FTS-benchmark domains), `sat()` with
+`one_by_one()` and `rintanen()` with `by_iteration()`, covering
+`one_step_only`, `combinebdds`, `impltseitsin`, `omitforcedvariables`,
+`bdd_size_limit`, `cutbdds` and the label orders. Timeouts are a 40s limit;
+on the PDDL side the four worst (`hanoi/pfile11`, `grid/prob03`,
+`freecell/pfile11`, `depot/pfile11`) time out for all twelve configurations,
+`label_sat` included, and on the FTS side they concentrate in `rubiks-cube`
+(124/160) and `cavediving-adl14` (94/160), which is task difficulty at 40s.
+
+**On the FTS benchmarks `bdd_sat` beats `label_sat`**, which is the first
+result that argues for the encoding rather than merely clearing it. Comparing
+`bdd_sat(one_step_only=false)` against the `label_sat` chains baseline on the
+same instance and transform:
+
+| transform | both | only `bdd_full` | only `label_sat` | neither |
+|---|---:|---:|---:|---:|
+| `-ntr` | 33 | **5** | 2 | 18 |
+| `-shr` | 35 | **4** | 0 | 19 |
+
+With `-shr` the `bdd_full` coverage is a strict superset. `combinebdds=true` is
+level with it (37/39 vs 38/39 solved). This is the opposite of the PDDL
+picture, where `label_sat` is ahead — worth understanding before drawing
+conclusions either way.
 
 The DFS intermediate-state reconstruction — the part of `extractSolution` with
 no counterpart in the other encodings — is exercised properly by
