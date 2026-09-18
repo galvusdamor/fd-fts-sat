@@ -467,6 +467,66 @@ wrong measurements rather than crashes:
 7. **`bdd_size_limit`** is now rejected with `one_step_only`.
 
 
+### Where BDD construction breaks
+
+Measured over all 431 FTS-benchmark instances with the `BDDSTAT` output and
+`bdd_init_time_limit` (30s screen, then 10 min on everything that failed).
+The result is the opposite of what the naming suggests.
+
+**The full transition relation is always constructible.** 430 of 431 build
+(the 431st, `pancakes/n5-p2`, has goal = initial state, so nothing is built),
+and 427 of them in under 2.7s. Only three need more than 30s, and they finish
+comfortably inside 10 minutes:
+
+| instance | labels | factors | time | nodes_sum |
+|---|---:|---:|---:|---:|
+| `matrix-multiplication/mm2x2X2x3` | 59535 | 144 | 65s | 4.72M |
+| `matrix-multiplication/mm2x3X3x2` | 59535 | 144 | 66s | 4.72M |
+| `matrix-multiplication/mm3x2X2x2` | 59535 | 144 | 66s | 4.72M |
+
+Note these are *not* the largest files, and the smaller `mm2x2X2x2` builds in
+full mode without trouble. At a 30s budget they die in `full_reachability_dp`
+around factor 39-47 of 144 with 250k-330k live nodes.
+
+**`one_step_only=true` is the fragile mode.** 17 instances cannot be built in
+10 minutes: 13 of the 20 `cavediving-adl14` instances and 4 of the 11
+`matrix-multiplication` ones. Some do not get past factor 0 of 453 in ten
+minutes.
+
+The cause is structural, not BDD blow-up — live node counts at abort are tiny
+(8k-48k). The one-step construction is quadratic in the number of labels:
+
+```cpp
+for l in labels:                        // cavediving 14160, matrix-mult 59535
+  for transition in trans(l):
+    for ll in labels:                   // again
+      scan trans(labelOrder[ll]) for a self-loop at the relevant state
+```
+
+The inner scan recomputes "does label `ll` self-loop in state X" for every
+`(l, transition)` pair. The full-reachability DP, by contrast, is *linear* in
+labels (`for l in labels: for s,ss in states²`). So on label-heavy tasks the
+mode meant to be cheap costs far more than the mode meant to be expensive.
+The pancake-family domains have ~22 labels, which is why this never showed.
+Precomputing, per factor, the set of states in which each label self-loops
+would turn this into O(L·(S+T)) and is the obvious fix.
+
+For the record: the empty-step disjunct added during the port is a separate
+phase (`one_step_stay_disjunct`) and **none** of the 17 failures occur in it —
+all 17 report `where one_step_construction`.
+
+**What full mode actually costs is formula size, not constructibility.**
+`nodes_sum_all_factors` is the summed `nodeCount()` over the per-(source,
+target) BDDs, i.e. exactly what gets Tseitin-translated, so it predicts CNF
+size. Full is a median **4.5x** larger than one-step, up to 10x. Per-domain
+medians for full: `burnt-pancakes` 148k, `cavediving-adl14` 399k, `pancakes`
+85k, `rubiks-cube` 204k, `matrix-multiplication` 2k. The extremes are
+`cavediving-adl14/testing10_easy` (6.47M nodes, largest single pair 24150,
+1.05M Tseitin nodes, built in 2.05s) and the three matrix-multiplication
+instances above. Note `burnt-pancakes/n22-*` reaches 1.90M summed nodes with
+only 506 Tseitin nodes — heavy structural sharing, so summed nodes overstates
+its CNF size; compare the two columns rather than trusting either alone.
+
 ### Investigating the encoding
 
 `bdd_sat` builds and validates, so the goal now is to *understand* the

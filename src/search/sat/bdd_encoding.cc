@@ -555,6 +555,7 @@ void BDDSATEncodingFactory::initialize() {
 				// shortest one -- which breaks every length strategy that does not
 				// enumerate lengths one by one.
 				for (int s = 0; s < numStates; s++){
+					check_budget(fac, "one_step_stay_disjunct");
 					BDD stay = _manager->bddOne();
 					for(int ll = 0; ll < fts->get_num_labels(); ll++){
 						int label = data->labelOrder[ll];
