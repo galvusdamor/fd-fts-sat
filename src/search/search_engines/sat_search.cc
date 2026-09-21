@@ -92,12 +92,36 @@ SearchStatus SATSearch::step() {
 
 	std::vector<std::pair<int,int>> time_step_order; // for plan extraction
 	// encode all state transitions
+	// Track what one time step costs. The first step is not representative: it
+	// creates the state variables for both of its end points, while every later
+	// step only adds the ones for its successor. So report the steady-state
+	// step (the last one) alongside the mean.
+	int clausesBeforeSteps = capsule->get_number_of_clauses();
+	int varsBeforeSteps = capsule->number_of_variables;
+	int lastStepClauses = 0, lastStepVars = 0;
 	for(int timestep = 1 ; timestep <= currentLength ; timestep++){
+		const int cBefore = capsule->get_number_of_clauses();
+		const int vBefore = capsule->number_of_variables;
 		thisEncoding->encode(timestep,timestep+1);
+		lastStepClauses = capsule->get_number_of_clauses() - cBefore;
+		lastStepVars = capsule->number_of_variables - vBefore;
 		time_step_order.push_back({timestep,timestep+1});
 	}
+	const int stepClausesTotal = capsule->get_number_of_clauses() - clausesBeforeSteps;
+	const int stepVarsTotal = capsule->number_of_variables - varsBeforeSteps;
+
 	thisEncoding->encodeInit(1,false);
 	thisEncoding->encodeGoal(currentLength + 1,false);
+
+	if (currentLength > 0)
+		cout << "ENCSTAT length " << currentLength
+			 << " step_clauses_mean " << (stepClausesTotal / currentLength)
+			 << " step_variables_mean " << (stepVarsTotal / currentLength)
+			 << " step_clauses_last " << lastStepClauses
+			 << " step_variables_last " << lastStepVars
+			 << " total_clauses " << capsule->get_number_of_clauses()
+			 << " total_variables " << capsule->number_of_variables
+			 << endl;
 
 
 	//DEBUG(capsule->printVariables());
