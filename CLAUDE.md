@@ -543,6 +543,29 @@ self-loops there. The nested rescanning of transition lists looked like the
 culprit and is not: removing it alone made things *slower*. What fixed it was
 emitting two BDD operations per transition instead of |forced-false| of them.
 
+What that costs and buys, sequential 3-repeat medians against the
+pre-rewrite build (`one_step_only=true`):
+
+| instance | labels | before | after | |
+|---|---:|---:|---:|---|
+| `topspin/n12-k6-p1` | 2 | 0.27ms | 0.66ms | +0.4ms |
+| `pancakes/n8-p0` | 7 | 0.37ms | 0.66ms | +0.3ms |
+| `rubiks-cube/s3-t9-p3` | 18 | 10.4ms | 11.6ms | +1.2ms |
+| `cavediving/testing08_easy` | 496 | 6880ms | 207ms | **-6.7s** |
+
+So it is a fixed overhead of a few hundred microseconds per factor that pays
+for itself above roughly 50 labels. The overhead is building the `FTSMatrix`
+(six sparse index structures and their complements), which below that replaces
+a scan that was nearly free. Both are linear in the label count.
+
+Do **not** trust ratios from parallel sweeps over the whole suite here: 172 of
+the 410 instances construct in under 2ms, and two sweeps of *identical* code at
+`-P 6` gave medians of x2.03 and x0.64. The commit message of `8d5b39a2d`
+quotes "median x2.0", which came from such a sweep and does not hold — the
+table above, measured sequentially with repeats, is the real picture. Equivalence
+(`nodes_sum_all_factors`, `nodes_max_pair`) was identical in all four sweeps, so
+only the timings were affected.
+
 The three remaining instances — `matrix-multiplication/mm2x2X2x3`,
 `mm2x3X3x2`, `mm3x2X2x2` — are a genuine BDD blow-up and not worth chasing with
 more budget. On `mm2x2X2x3`, one-step dies at factor **2 of 144** after 300s
