@@ -799,6 +799,7 @@ void BDDSATEncodingFactory::initialize() {
 	_manager->RegisterOutOfMemoryCallback(exitOutOfMemory);
 
 	long total_nodes_sum = 0;
+	long total_nodes_after_limit = 0;
 	int overall_max_pair_nodes = 0;
 	double construction_seconds = 0.0;
 
@@ -883,6 +884,7 @@ void BDDSATEncodingFactory::initialize() {
 				 << " time " << (bdd_construction_timer() - factor_t_start)
 				 << endl;
 			total_nodes_sum += summedSizeBefore;
+			total_nodes_after_limit += summedSizeAfter;
 			if (maxPairNodes > overall_max_pair_nodes) overall_max_pair_nodes = maxPairNodes;
 
 			if (combineAllBDDsIntoOne){
@@ -962,6 +964,11 @@ void BDDSATEncodingFactory::initialize() {
 		 << " one_step_only " << (oneStepOnly ? 1 : 0)
 		 << " combined " << (combineAllBDDsIntoOne ? 1 : 0)
 		 << " nodes_sum_all_factors " << total_nodes_sum
+		 // What actually gets encoded once bdd_size_limit has substituted the
+		 // one-step BDD for oversized pairs. Without this, nodes_sum_all_factors
+		 // reads the same with and without a limit and looks like the limit does
+		 // nothing. -1 when no limit is set, where the two are equal by definition.
+		 << " nodes_sum_encoded " << (bddEncodingSizeLimit == -1 ? -1 : total_nodes_after_limit)
 		 << " nodes_max_pair " << overall_max_pair_nodes
 		 << " tseitin_nodes " << data->node_indegree.size()
 		 << " live_nodes " << _manager->ReadNodeCount()
