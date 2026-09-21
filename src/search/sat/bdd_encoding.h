@@ -121,6 +121,7 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const bool bddCutting;
 	const bool bddCovering;
 	const bool reportLabelImplications;
+	const bool reportFactorStatistics;
 	// budgets for the BDD construction itself, so that an instance whose BDDs
 	// cannot be built is reported as such instead of running until the driver
 	// kills it. -1 disables the budget.
@@ -129,10 +130,12 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 
 	std::shared_ptr<label_order_finder::LabelOrderFinder> label_order_finder;
 
-	// one per transition system, same objects the label-based encoding uses.
-	// Holds, among other things, the per-state self-loop sets that the one-step
-	// construction needs.
-	std::vector<std::shared_ptr<FTSMatrix>> fts_matrices;
+	// One per transition system, same objects the label-based encoding uses;
+	// holds the per-state self-loop sets the one-step construction needs.
+	// Built lazily: the full-reachability construction never looks at them, so
+	// building one per factor up front is pure overhead for that mode.
+	mutable std::vector<std::shared_ptr<FTSMatrix>> fts_matrices;
+	const FTSMatrix & matrix_for(int fac) const;
 
 	// The Cudd manager must outlive every BDD in data, so it is owned here and
 	// never used again once initialize() has returned.

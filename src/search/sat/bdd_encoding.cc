@@ -70,6 +70,7 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	bddCutting(opts.get<bool>("cutbdds")),
 	bddCovering(opts.get<bool>("coverbdds")),
 	reportLabelImplications(opts.get<bool>("report_label_implications")),
+	reportFactorStatistics(opts.get<bool>("report_factor_statistics")),
 	bddInitTimeLimit(opts.get<int>("bdd_init_time_limit")),
 	bddNodeLimit(long(opts.get<int>("bdd_node_limit"))),
 	label_order_finder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order"))
@@ -151,6 +152,13 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 		"Diagnostic only: it does not change the formula",
 		"false");
 
+	parser.add_option<bool>(
+		"report_factor_statistics",
+		"emit one BDDSTAT line per factor with its sizes and construction time. "
+		"Off by default: it is one line per factor and there can be hundreds. The "
+		"single construction_ok/construction_failed summary is always emitted",
+		"false");
+
 	parser.add_option<int>(
 		"bdd_init_time_limit",
 		"seconds allowed for building the BDDs. When it is used up the run stops "
@@ -201,6 +209,13 @@ void BDDSATEncodingFactory::bdd_to_dot(const BDD &bdd, const std::string &file_n
 	Cudd_DumpDot(_manager->getManager(), 1, ddnodearray, names.data(), NULL, outfile);
 	free(ddnodearray);
 	fclose(outfile);
+}
+
+
+const FTSMatrix & BDDSATEncodingFactory::matrix_for(int fac) const {
+	if (!fts_matrices[fac])
+		fts_matrices[fac] = make_shared<FTSMatrix>(fts->get_ts(fac));
+	return *fts_matrices[fac];
 }
 
 
@@ -746,8 +761,7 @@ void BDDSATEncodingFactory::initialize() {
 	data->omitForcedVariables = omitForcedVariables;
 	data->forcedVariablesThreshold = forcedVariablesThreshold;
 
-	for (const auto & ts : fts->get_transition_systems())
-		fts_matrices.push_back(make_shared<FTSMatrix>(*ts));
+	fts_matrices.assign(fts->get_size(), nullptr);
 
 	data->labelOrder = label_order_finder->find_order(*fts);
 	assert(int(data->labelOrder.size()) == fts->get_num_labels());
@@ -809,7 +823,7 @@ void BDDSATEncodingFactory::initialize() {
 
 			vector<vector<BDD>> oneStepPaths;
 			if (oneStepOnly || bddEncodingSizeLimit != -1)
-				oneStepPaths = build_one_step_bdds(fac, factor, *fts_matrices[fac]);
+				oneStepPaths = build_one_step_bdds(fac, factor, matrix_for(fac));
 
 			// -----------------------------------------------------------------
 			// pick the representation that is actually encoded
@@ -856,6 +870,7 @@ void BDDSATEncodingFactory::initialize() {
 				 << " possible 1-step transitions: " << possibleSingleTrans << endl;
 
 			// one machine-readable line per factor
+			if (reportFactorStatistics)
 			cout << "BDDSTAT factor " << fac
 				 << " states " << numStates
 				 << " relevant_labels " << num_relevant_labels
@@ -893,13 +908,14 @@ void BDDSATEncodingFactory::initialize() {
 			}
 		}
 
-		// Freeze the construction time here: the diagnostics below are not part
-		// of building the BDDs and must not be charged to construction_time.
+		// Cutting changes the BDDs, so it is part of building them and is charged
+		// to construction_time. The two reporting passes below are not.
+		if (bddCutting) cut_bdds_to_fixpoint();
+
 		construction_seconds = bdd_construction_timer();
 
 		if (bddCovering) report_covering_implications();
 		if (reportLabelImplications) report_label_implications();
-		if (bddCutting) cut_bdds_to_fixpoint();
 
 		// -----------------------------------------------------------------
 		// (d) node in-degrees, used by the omitForcedVariables optimisation.
