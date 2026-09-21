@@ -1,140 +1,52 @@
 #! /usr/bin/env python3
 
 """
-First run of the re-integrated BDD encoding (plugin `bdd_sat`).
+bdd_sat on the IPC/PDDL suite, algorithm A, -shr, with the h2 preprocessor.
 
-Two questions:
+Scope is deliberately narrow (see _bdd_common.py): algorithm A only, the full
+transition relation only, -shr only. Compared against two reference
+configurations, chains_slf____rcpol and fulltransitions_slf_transeff.
 
- 1. Does `bdd_sat` hold up against the `label_sat` chains baseline at all?
- 2. Which of its knobs actually matter? The encoding has never been evaluated
-    systematically -- `cutbdds` and `coverbdds` in particular were written and
-    then left alone.
-
-The axes varied here are the ones that change the BDDs themselves:
-
- * `one_step_only`  - one real transition per factor per step vs. the full
-                      all-pairs reachability DP over the label order.
- * `label_order`    - this *is* the BDD variable order, so it drives BDD size.
- * `combinebdds`    - one BDD per factor vs. one per (factor, s, ss).
- * Tseitin variants - `impltseitsin`, `omitforcedvariables` + threshold.
- * `bdd_size_limit` - interpolates from full reachability towards one-step.
- * `cutbdds`        - cross-factor constraint propagation to a fixpoint.
-
-`coverbdds` is deliberately absent: it is diagnostic only and does not change
-the formula.
+The question is where the BDD encoding wins and where it is problematic, so
+the report carries the per-time-step formula size from encoding_size_parser.py
+alongside coverage -- a configuration that solves less while producing a
+smaller formula per step is a different finding from one that simply produces
+a huge formula.
 """
 
-import re
-import itertools
-import math
 import os
-from pathlib import Path
-import subprocess
 
-from lab.environments import TetralithEnvironment, LocalEnvironment
+from lab.environments import LocalEnvironment
 from lab.reports import Attribute, geometric_mean, arithmetic_mean
-from lab import tools
-from lab.parser import Parser
 
 from downward.reports.absolute import AbsoluteReport
-from downward.reports.compare import ComparativeReport
 from downward.reports.scatter import ScatterPlotReport
 
 import common_setup
 from common_setup import IssueConfig, IssueExperiment
 
 import fts_parser
-
+import encoding_size_parser
 import filters
 from snellius import SnelliusEnvironment
+
+import _bdd_common as B
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
 BENCHMARKS_DIR = os.environ["DOWNWARD_BENCHMARKS"]
-REVISION = "91a21bb60b416624c03c23e8b9639f8230eb152e"
+REVISION = "eb3a1b0ed54569d3efd69f1e2f220e505a3eb63f"
 REVISIONS = [REVISION]
 
-KISSAT = "-s/gpfs/home2/behnkeg/software/kissat-p/build"
-BUILD_OPTS = ["-j24", KISSAT, "--custom-kissat"]
-
 CONFIGS = []
-
-# the label_sat configuration the good-configurations runs settled on
-LABEL_BASELINE = ("label_sat(encoding=CHAINS_PARALLEL,use_self_loop_optimisation=true,"
-                  "use_label_group=false,use_empty_pillars=true,use_empty_rows=true,"
-                  "use_empty_cols=true,use_positive_one=true,use_ones_in_last_dimension=true,"
-                  "force_at_least_one_action=false)")
-
-
-def bdd(**kw):
-    defaults = dict(one_step_only="true", combinebdds="false", impltseitsin="true",
-                    omitforcedvariables="true", forcedvariablesthreshold=100,
-                    bdd_size_limit=-1, cutbdds="false",
-                    label_order="label_order_linear()")
-    defaults.update(kw)
-    return "bdd_sat(" + ",".join(f"{k}={v}" for k, v in defaults.items()) + ")"
-
-
-encodings = {
-    # --- baseline ---------------------------------------------------------
-    "label_chains______": LABEL_BASELINE,
-
-    # --- the two semantics ------------------------------------------------
-    "bdd_1step_________": bdd(),
-    "bdd_full__________": bdd(one_step_only="false"),
-
-    # --- label order == BDD variable order --------------------------------
-    "bdd_full_rev______": bdd(one_step_only="false", label_order="label_order_reverse()"),
-    "bdd_full_rnd______": bdd(one_step_only="false", label_order="label_order_random()"),
-    "bdd_1step_rev_____": bdd(label_order="label_order_reverse()"),
-
-    # --- one BDD per factor -----------------------------------------------
-    "bdd_full_comb_____": bdd(one_step_only="false", combinebdds="true"),
-    "bdd_1step_comb____": bdd(combinebdds="true"),
-
-    # --- Tseitin variants -------------------------------------------------
-    "bdd_full_biimpl___": bdd(one_step_only="false", impltseitsin="false"),
-    "bdd_full_noomit___": bdd(one_step_only="false", omitforcedvariables="false"),
-    "bdd_full_omit1____": bdd(one_step_only="false", forcedvariablesthreshold=1),
-    "bdd_full_omit10___": bdd(one_step_only="false", forcedvariablesthreshold=10),
-
-    # --- interpolation between full reachability and one-step -------------
-    "bdd_full_lim100___": bdd(one_step_only="false", bdd_size_limit=100),
-    "bdd_full_lim1000__": bdd(one_step_only="false", bdd_size_limit=1000),
-    "bdd_full_lim10000_": bdd(one_step_only="false", bdd_size_limit=10000),
-
-    # --- cross-factor propagation ----------------------------------------
-    "bdd_full_cut______": bdd(one_step_only="false", cutbdds="true"),
-    "bdd_1step_cut_____": bdd(cutbdds="true"),
-}
-
-RINTANEN_OPTS = ("solver_quiet=true,length_strategy=by_iteration(),memory_limit_mb=3500,"
-                 "max_parallel_calls=20,scheduler_interval=1,schedule_formula_as_one=true")
-
-searches = sum([
-    [
-        # shortest plan length, one length at a time
-        (("A1__" + name), f"sat(encoder={enc},solver_quiet=true,length_strategy=one_by_one())"),
-        # Rintanen's Algorithm C, the configuration used elsewhere
-        (("CMit" + name), f"rintanen(encoder={enc},{RINTANEN_OPTS})"),
-    ]
-    for name, enc in encodings.items()
-], [])
-
-DRIVER_OPTS = ["--overall-time-limit", "30m", "--overall-memory-limit", "3500m"]
-TRANSFORM_OPTS = {
-    "-shr": ["--transform", "transform_merge_and_shrink(shrink_strategy=shrink_weak_bisimulation(ignore_irrelevant_tau_groups=false),label_reduction=exact(max_time=300,atomic_fts=true,before_shrinking=true,before_merging=false),shrink_atomic_fts=true,run_main_loop=false,max_time=900,cost_type=one,prune_transitions_from_goal=true)"],
-}
-
-for s_name, s_opt in searches:
+for s_name, s_opt in B.SEARCHES:
     print("Search: " + s_name)
-    for t_name, t_opt in TRANSFORM_OPTS.items():
+    for t_name, t_opt in B.TRANSFORM_OPTS.items():
         CONFIGS.append(IssueConfig(
-            f'{s_name}{t_name}',
-            t_opt + ['--search', f'{s_opt}'],
-            driver_options=DRIVER_OPTS,
-            build_options=BUILD_OPTS))
-
+            f"{s_name}{t_name}",
+            t_opt + ["--search", s_opt],
+            driver_options=B.driver_opts(h2=True),
+            build_options=B.build_opts()))
 
 SUITE = common_setup.DEFAULT_SATISFICING_SUITE
 
@@ -156,36 +68,46 @@ exp.add_parser(exp.TRANSLATOR_PARSER)
 exp.add_parser(exp.SINGLE_SEARCH_PARSER)
 exp.add_parser(exp.PLANNER_PARSER)
 
-exp.add_step('build', exp.build)
-exp.add_step('start', exp.start_runs)
+exp.add_step("build", exp.build)
+exp.add_step("start", exp.start_runs)
 exp.add_step("parse", exp.parse)
 exp.add_parser(fts_parser.FTSParser())
+exp.add_parser(encoding_size_parser.EncodingSizeParser())
 
-exp.add_fetcher(name='fetch')
+exp.add_fetcher(name="fetch")
 
-FORMAT = "html"
-attributes = common_setup.ATTRIBUTES
+ATTRIBUTES = common_setup.ATTRIBUTES + [
+    Attribute(a, min_wins=True, function=arithmetic_mean, absolute=False)
+    for a in B.ENCODING_ATTRIBUTES if a != "bdd_failure_reason"
+] + ["bdd_failure_reason"]
 
 exp.add_report(
-    AbsoluteReport(attributes=attributes,
+    AbsoluteReport(attributes=ATTRIBUTES,
                    filter=[filters.filter_bdd_known_unexplained_errors,
                            filters.filter_kissat_known_unexplained_errors]),
     outfile=f"{SCRIPT_NAME}-all.html")
 
-# The comparison that decides whether bdd_sat is worth pursuing at all.
-PLOT_FORMAT = "png"
-for c1, c2 in [("CMitlabel_chains______-shr", "CMitbdd_full__________-shr"),
-               ("CMitlabel_chains______-shr", "CMitbdd_1step_________-shr"),
-               ("CMitbdd_1step_________-shr", "CMitbdd_full__________-shr")]:
+for c1, c2 in [("A_1__chains_slf____rcpol-shr", "A_1__bdd_full-shr"),
+               ("A_1__fulltransitions_slf_transeff-shr", "A_1__bdd_full-shr")]:
     exp.add_report(
         ScatterPlotReport(
             attributes=["planner_time"],
-            filter_algorithm=[c1, c2],
+            filter_algorithm=[f"{REVISION}-{c1}", f"{REVISION}-{c2}"],
             get_category=lambda x, y: x["domain"],
-            format=PLOT_FORMAT,
+            format="png",
             show_missing=True,
         ),
         name=f"scatterplot-planner-time-{c1}-vs-{c2}",
+    )
+    exp.add_report(
+        ScatterPlotReport(
+            attributes=["enc_step_clauses_last"],
+            filter_algorithm=[f"{REVISION}-{c1}", f"{REVISION}-{c2}"],
+            get_category=lambda x, y: x["domain"],
+            format="png",
+            show_missing=False,
+        ),
+        name=f"scatterplot-step-clauses-{c1}-vs-{c2}",
     )
 
 exp.run_steps()
