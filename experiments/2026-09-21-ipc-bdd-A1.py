@@ -28,7 +28,6 @@ from common_setup import IssueConfig, IssueExperiment
 import fts_parser
 import encoding_size_parser
 import filters
-from snellius import SnelliusEnvironment
 
 import _bdd_common as B
 
@@ -51,9 +50,7 @@ for s_name, s_opt in B.SEARCHES:
 SUITE = common_setup.DEFAULT_SATISFICING_SUITE
 
 #ENVIRONMENT = LocalEnvironment(processes=1)
-ENVIRONMENT = SnelliusEnvironment(
-    email="g.behnke@uva.nl",
-)
+ENVIRONMENT = B.make_environment(email="g.behnke@uva.nl")
 
 exp = IssueExperiment(
     revisions=REVISIONS,

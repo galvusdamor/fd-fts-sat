@@ -22,6 +22,29 @@ FULLTRANS = ("full_transitions_sat(use_self_loop_optimisation=true, "
              "use_labels_in_effects_constraints=false)")
 
 
+def make_environment(email):
+    """24 parallel runs per task on a 24-core / 42 GB partition.
+
+    snellius.py defaults to 12 runs at 3500M each, which is the same 42 GB on
+    half the cores. Subclassed here rather than edited there so the other
+    scripts keep their settings. 42 GB / 24 = 1750M per cpu; the driver limit
+    in driver_opts() is set under that, so an over-budget run is killed by the
+    driver with a diagnosable error instead of by SLURM taking down the whole
+    24-run task.
+
+    Imported inside the function so that this module stays importable without
+    lab installed -- which is what lets the configuration strings be checked
+    outside the cluster.
+    """
+    from snellius import SnelliusEnvironment
+
+    class BDDSnelliusEnvironment(SnelliusEnvironment):
+        PARALLEL_RUNS_PER_TASK = 24
+        DEFAULT_MEMORY_PER_CPU = "1750M"
+
+    return BDDSnelliusEnvironment(email=email)
+
+
 def bdd(**kw):
     """bdd_sat with the full transition relation and explicit construction budgets.
 
@@ -35,7 +58,17 @@ def bdd(**kw):
              omitforcedvariables="true", forcedvariablesthreshold=100,
              bdd_size_limit=-1, cutbdds="false",
              label_order="label_order_linear()",
-             bdd_init_time_limit=600, bdd_node_limit=60000000)
+             bdd_init_time_limit=600, bdd_node_limit=60000000,
+             # Cudd sizes itself from the machine's RAM when left alone, which
+             # cost 440-770MB per process before a single BDD existed -- a
+             # quarter to a half of the 1750M each run gets here. These two have
+             # to come down together: with maxMemory unset Cudd clamps both
+             # requests to its own budget, so lowering either alone changes
+             # nothing. Measured over cavediving, burnt-pancakes, topspin,
+             # pancakes and rubiks: 442-770MB -> 19-20MB, construction time
+             # unchanged, nodes_sum identical. init_nodes=10000 is too far and
+             # makes cavediving construction 9x slower through table resizing.
+             cudd_init_nodes=100000, cudd_cache_size=1000000)
     d.update(kw)
     return "bdd_sat(" + ",".join(f"{k}={v}" for k, v in d.items()) + ")"
 
@@ -104,8 +137,9 @@ def driver_opts(h2):
     opts = []
     if h2:
         opts += ["--transform-task", "preprocess-h2"]
+    # under the 1750M per-cpu share, see BDDSnelliusEnvironment
     return opts + ["--overall-time-limit", "30m",
-                   "--overall-memory-limit", "3500m"]
+                   "--overall-memory-limit", "1600m"]
 
 
 def build_opts():

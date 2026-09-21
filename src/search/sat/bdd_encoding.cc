@@ -73,7 +73,10 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	reportFactorStatistics(opts.get<bool>("report_factor_statistics")),
 	bddInitTimeLimit(opts.get<int>("bdd_init_time_limit")),
 	bddNodeLimit(long(opts.get<int>("bdd_node_limit"))),
-	label_order_finder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order"))
+	label_order_finder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order")),
+	cudd_init_nodes(long(opts.get<int>("cudd_init_nodes"))),
+	cudd_init_cache_size(long(opts.get<int>("cudd_cache_size"))),
+	cudd_init_available_memory(long(opts.get<int>("cudd_max_memory_mb")) * 1024L * 1024L)
 {
 	if (oneStepOnly && bddEncodingSizeLimit != -1){
 		cerr << "bdd_size_limit only has an effect if one_step_only=false: it interpolates "
@@ -158,6 +161,23 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 		"Off by default: it is one line per factor and there can be hundreds. The "
 		"single construction_ok/construction_failed summary is always emitted",
 		"false");
+
+	parser.add_option<int>(
+		"cudd_init_nodes",
+		"initial size of the Cudd unique table, divided by the number of labels",
+		"16000000");
+
+	parser.add_option<int>(
+		"cudd_cache_size",
+		"initial number of Cudd cache slots. Allocated up front and independent "
+		"of task size, so it dominates memory on small tasks",
+		"16000000");
+
+	parser.add_option<int>(
+		"cudd_max_memory_mb",
+		"hard cap on Cudd's memory in MB. 0 lets Cudd decide from the machine's "
+		"RAM, which ignores any per-run budget",
+		"0");
 
 	parser.add_option<int>(
 		"bdd_init_time_limit",

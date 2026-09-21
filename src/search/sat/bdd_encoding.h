@@ -142,10 +142,14 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	std::unique_ptr<Cudd> _manager;
 	std::shared_ptr<BDDEncodingData> data;
 
-	// TODO: read from command line arguments
-	const long cudd_init_nodes = 16000000;          // Number of initial nodes
-	const long cudd_init_cache_size = 16000000;     // Initial cache size
-	const long cudd_init_available_memory = 0;      // Maximum available memory (bytes)
+	// Cudd manager sizing. The defaults reproduce what was hard-coded before.
+	// They matter more than they look: the cache is allocated up front and is
+	// not scaled by anything, so it costs the same ~400MB on a task with 18
+	// labels as on one with 59535. That is a quarter of the budget when many
+	// runs share a node.
+	const long cudd_init_nodes;             // initial nodes, divided by the label count
+	const long cudd_init_cache_size;        // initial cache slots
+	const long cudd_init_available_memory;  // hard cap in bytes, 0 = let Cudd decide
 
 	void bdd_to_dot(const BDD & bdd, const std::string & file_name) const;
 	void bdd_in_degree(DdNode * node);
