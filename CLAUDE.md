@@ -625,6 +625,50 @@ encoding, not just run it. Useful directions and where the hooks already are:
   variables) — handy for eyeballing small factors. Nothing calls it; add a call
   in `initialize()` while debugging.
 
+## Instances that take 10-30 seconds
+
+Most of the IPC suite is useless for comparing encodings: it is either trivial
+or hopeless, with very little in between. Screening 251 instances across 25
+domains gave 64 under one second, 21 between one and ten, **6** between ten and
+thirty, 5 between thirty and seventy, and 53 over seventy. Finding the middle
+means sampling around the instances that already land near it, not sampling the
+suite uniformly.
+
+These are the ones in the band, at most two per domain, horizons from 2 to 17:
+
+| instance | seconds | horizon |
+|---|---:|---:|
+| `openstacks-opt08-strips/p10` | 11.4 | 7 |
+| `airport/p16-airport3-p4` | 11.5 | 17 |
+| `tpp/p18` | 11.7 | 3 |
+| `rovers/p29` | 13.0 | 2 |
+| `nomystery-opt11-strips/p08` | 14.0 | 11 |
+| `trucks-strips/p05` | 14.4 | 10 |
+| `rovers/p31` | 14.5 | 3 |
+| `scanalyzer-08-strips/p05` | 15.2 | 3 |
+| `openstacks-opt08-strips/p11` | 18.2 | 7 |
+| `pathways-noneg/p29` | 22.7 | 9 |
+| `storage/p14` | 24.4 | 5 |
+| `trucks-strips/p07` | 24.4 | 9 |
+| `satellite/p24-HC-pfile4` | 27.0 | 2 |
+| `airport/p17-airport3-p5` | 27.6 | 17 |
+| `storage/p15` | 28.5 | 4 |
+| `tpp/p22` | 28.6 | 3 |
+| `pathways-noneg/p26` | 29.7 | 9 |
+
+**Measured with `sat(encoder=bdd_sat(one_step_only=false), length_strategy=one_by_one())`,
+the `-shr` transform, and no h2 preprocessing.** That matters: the band belongs
+to that configuration, not to the instances. `label_sat`, the reverse label
+order and the h2-preprocessed versions all sit somewhere else -- h2 alone took
+pipesworld from 4810 to 3920 clauses per time step. Re-measure before reusing
+these for a different encoding.
+
+"horizon" is the number of time steps at which the formula first becomes
+satisfiable, i.e. `ENCSTAT length` for the successful SAT call. It is not the
+plan length: this encoding packs several labels into one step by design, so it
+returns longer plans at shorter horizons, and plan length is the wrong thing to
+compare between encodings or label orders.
+
 ## Conventions and gotchas
 
 * C++ code style is loose FD style with tabs in the `sat/` directory; match

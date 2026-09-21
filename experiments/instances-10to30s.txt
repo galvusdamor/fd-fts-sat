@@ -1,0 +1,17 @@
+openstacks-opt08-strips/p10
+airport/p16-airport3-p4
+tpp/p18
+rovers/p29
+nomystery-opt11-strips/p08
+trucks-strips/p05
+rovers/p31
+scanalyzer-08-strips/p05
+openstacks-opt08-strips/p11
+pathways-noneg/p29
+storage/p14
+trucks-strips/p07
+satellite/p24-HC-pfile4
+airport/p17-airport3-p5
+storage/p15
+tpp/p22
+pathways-noneg/p26
