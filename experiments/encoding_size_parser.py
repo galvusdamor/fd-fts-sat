@@ -22,6 +22,11 @@ import re
 
 from lab.parser import Parser
 
+# A full float, exponent included. Note the "-" inside the exponent: a pattern
+# like [-?\d.e+]+ stops at the minus of "8.934e-05" and yields "8.934e", which
+# float() then rejects.
+NUMBER = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
+
 ENCSTAT_FIELDS = [
     "step_clauses_mean",
     "step_variables_mean",
@@ -37,19 +42,19 @@ def add_encoding_size(content, props):
     lines = re.findall(r"ENCSTAT (.+)", content)
     if not lines:
         return
-    fields = dict(re.findall(r"(\w+) (-?\d+)", lines[-1]))
+    fields = dict(re.findall(rf"(\w+) ({NUMBER})", lines[-1]))
     for key in ENCSTAT_FIELDS:
         if key in fields:
-            props[f"enc_{key}"] = int(fields[key])
+            props[f"enc_{key}"] = int(float(fields[key]))
     if "length" in fields:
-        props["enc_last_length"] = int(fields["length"])
+        props["enc_last_length"] = int(float(fields["length"]))
 
 
 def add_bdd_construction(content, props):
     """BDDSTAT construction_ok / construction_failed from bdd_sat."""
     ok = re.findall(r"BDDSTAT construction_ok (.+)", content)
     if ok:
-        fields = dict(re.findall(r"(\w+) (-?[\d.e+]+)", ok[-1]))
+        fields = dict(re.findall(rf"(\w+) ({NUMBER})", ok[-1]))
         for key, cast in [
             ("nodes_sum_all_factors", int),
             ("nodes_sum_encoded", int),
@@ -59,12 +64,12 @@ def add_bdd_construction(content, props):
             ("construction_time", float),
         ]:
             if key in fields:
-                props[f"bdd_{key}"] = cast(float(fields[key])) if cast is int else cast(fields[key])
+                props[f"bdd_{key}"] = cast(float(fields[key]))
         props["bdd_construction_failed"] = 0
         return
     failed = re.findall(r"BDDSTAT construction_failed (.+)", content)
     if failed:
-        fields = dict(re.findall(r"(\w+) (-?[\d.e+]+)", failed[-1]))
+        fields = dict(re.findall(rf"(\w+) ({NUMBER})", failed[-1]))
         reason = re.search(r"reason (\w+)", failed[-1])
         props["bdd_construction_failed"] = 1
         if reason:
