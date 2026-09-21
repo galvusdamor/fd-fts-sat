@@ -69,6 +69,7 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	forcedVariablesThreshold(opts.get<int>("forcedvariablesthreshold")),
 	bddCutting(opts.get<bool>("cutbdds")),
 	bddCovering(opts.get<bool>("coverbdds")),
+	alternateLabelOrders(opts.get<bool>("alternate_label_orders")),
 	reportLabelImplications(opts.get<bool>("report_label_implications")),
 	reportFactorStatistics(opts.get<bool>("report_factor_statistics")),
 	bddInitTimeLimit(opts.get<int>("bdd_init_time_limit")),
@@ -149,6 +150,15 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 		"false");
 
 	parser.add_option<bool>(
+		"alternate_label_orders",
+		"use two label orderings instead of one: the order from label_order for "
+		"the odd-numbered time steps and its reverse for the even ones. The label "
+		"order is the BDD variable order, so this means building and encoding two "
+		"sets of BDDs, and a step's label variables are then constrained in the "
+		"order belonging to that step",
+		"false");
+
+	parser.add_option<bool>(
 		"report_label_implications",
 		"mine each factor's label BDD for dependencies that hold in every legal "
 		"label set (l, -l, l -> l', l -> -l') and report how many there are. "
@@ -217,7 +227,7 @@ void BDDSATEncodingFactory::bdd_to_dot(const BDD &bdd, const std::string &file_n
 			var_names[f] = "factor_next_state_" + to_string(f - (data->num_factor_vars/2));
 	}
 	for(int i = 0; i < fts->get_num_labels(); i++)
-		var_names[data->num_factor_vars + i] = "label_" + to_string(data->labelOrder[i]);
+		var_names[data->num_factor_vars + i] = "label_" + to_string(data->orderings[0].labelOrder[i]);
 
 	std::vector<char *> names(var_names.size());
 	for (size_t i = 0; i < var_names.size(); ++i)
@@ -286,7 +296,7 @@ void BDDSATEncodingFactory::bdd_in_degree(DdNode * node){
  * constraint over the labels both factors share, and it can be conjoined onto
  * every transition BDD of the target.
  */
-void BDDSATEncodingFactory::cut_bdds_to_fixpoint(){
+void BDDSATEncodingFactory::cut_bdds_to_fixpoint(BDDEncodingData::Ordering & ord){
 	BDD stateCube = _manager->bddOne();
 	for (int i = 0; i < data->num_factor_vars; i++) stateCube *= _manager->bddVar(i);
 
@@ -306,11 +316,11 @@ void BDDSATEncodingFactory::cut_bdds_to_fixpoint(){
 				for (int s = 0; s < factor.get_size(); s++)
 					for (int ss = 0; ss < factor.get_size(); ss++)
 						any_transition_per_factor[fac] +=
-							data->transition_BDDs_per_factor_per_state_pair[fac][s][ss];
+							ord.transition_BDDs_per_factor_per_state_pair[fac][s][ss];
 			} else {
 				// project away the state variables.
 				any_transition_per_factor[fac] =
-					data->transition_BDDs_per_factor[fac].ExistAbstract(stateCube);
+					ord.transition_BDDs_per_factor[fac].ExistAbstract(stateCube);
 			}
 		}
 
@@ -333,7 +343,7 @@ void BDDSATEncodingFactory::cut_bdds_to_fixpoint(){
 						foundRemainingVariable = true;
 						continue;
 					}
-					cube *= _manager->bddVar(data->labelToBDDVar[label]);
+					cube *= _manager->bddVar(ord.labelToBDDVar[label]);
 				}
 
 				// no shared variables
@@ -348,16 +358,16 @@ void BDDSATEncodingFactory::cut_bdds_to_fixpoint(){
 				if (!combineAllBDDsIntoOne){
 					for (int s = 0; s < factorTarget.get_size(); s++){
 						for (int ss = 0; ss < factorTarget.get_size(); ss++){
-							BDD & currentMemory = data->transition_BDDs_per_factor_per_state_pair[facT][s][ss];
+							BDD & currentMemory = ord.transition_BDDs_per_factor_per_state_pair[facT][s][ss];
 							BDD old = currentMemory;
 							currentMemory *= constraintsOverLabelsRelevantForTarget;
 							if (old != currentMemory) anyUpdate = true;
 						}
 					}
 				} else {
-					BDD old = data->transition_BDDs_per_factor[facT];
-					data->transition_BDDs_per_factor[facT] *= constraintsOverLabelsRelevantForTarget;
-					if (old != data->transition_BDDs_per_factor[facT]) anyUpdate = true;
+					BDD old = ord.transition_BDDs_per_factor[facT];
+					ord.transition_BDDs_per_factor[facT] *= constraintsOverLabelsRelevantForTarget;
+					if (old != ord.transition_BDDs_per_factor[facT]) anyUpdate = true;
 				}
 			}
 		}
@@ -373,11 +383,11 @@ void BDDSATEncodingFactory::cut_bdds_to_fixpoint(){
  * BDDs or the generated formula. It was written to judge whether such
  * implications are frequent enough to be worth encoding separately.
  */
-void BDDSATEncodingFactory::report_covering_implications() const {
+void BDDSATEncodingFactory::report_covering_implications(const BDDEncodingData::Ordering & ord) const {
 	long claims_verified = 0, claims_refuted = 0;
 	for (int fac = 0; fac < fts->get_size(); fac++){
 		const TransitionSystem & factor = fts->get_ts(fac);
-		const vector<vector<BDD>> & allPossiblePaths = data->transition_BDDs_per_factor_per_state_pair[fac];
+		const vector<vector<BDD>> & allPossiblePaths = ord.transition_BDDs_per_factor_per_state_pair[fac];
 
 		map<int, vector<int>> prev_state_implies_pos_label, prev_state_implies_neg_label;
 		map<int, vector<int>> next_state_implies_pos_label, next_state_implies_neg_label;
@@ -392,7 +402,7 @@ void BDDSATEncodingFactory::report_covering_implications() const {
 
 			for (int mode = 0; mode < 2; mode++){
 				bool m = mode == 0;
-				BDD testBDD = _manager->bddVar(data->labelToBDDVar[label]);
+				BDD testBDD = _manager->bddVar(ord.labelToBDDVar[label]);
 				if (!m) testBDD = !testBDD;
 
 				// source
@@ -439,7 +449,7 @@ void BDDSATEncodingFactory::report_covering_implications() const {
 			// The claimed state is the one the others do not rule out, so the
 			// label must actually be possible there. Checking that catches a
 			// wrong pick, which the derivation itself cannot.
-			const BDD labelIsTaken = _manager->bddVar(data->labelToBDDVar[label]);
+			const BDD labelIsTaken = _manager->bddVar(ord.labelToBDDVar[label]);
 			if (int(prev_states_implying_this_neg.size()) + 1 == factor.get_size()){
 				int s = only_remaining_state(prev_states_implying_this_neg);
 				bool possible = false;
@@ -478,7 +488,8 @@ void BDDSATEncodingFactory::report_covering_implications() const {
  * pass per *relevant* label, each pass touching |S|^2 entries.
  */
 vector<vector<BDD>> BDDSATEncodingFactory::build_full_reachability_bdds(
-		int fac, const TransitionSystem & factor, int & num_relevant_labels){
+		int fac, const TransitionSystem & factor,
+		const BDDEncodingData::Ordering & ord, int & num_relevant_labels){
 	const int numStates = factor.get_size();
 
 	vector<vector<BDD>> paths(numStates);
@@ -489,14 +500,14 @@ vector<vector<BDD>> BDDSATEncodingFactory::build_full_reachability_bdds(
 	}
 
 	for(int l = fts->get_num_labels() - 1; l >= 0; l--){
-		int label = data->labelOrder[l];
+		int label = ord.labelOrder[l];
 		LabelID labelID (label);
 		if (!factor.is_relevant_label(labelID) && factor.is_selfloop_everywhere(labelID))
 			continue;
 		num_relevant_labels++;
 		check_budget(fac, "full_reachability_dp");
 
-		const BDD labelVar = _manager->bddVar(data->labelToBDDVar[label]);
+		const BDD labelVar = _manager->bddVar(ord.labelToBDDVar[label]);
 		vector<vector<BDD>> next (numStates);
 		for (int s = 0; s < numStates; s++){
 			next[s].resize(numStates);
@@ -529,7 +540,8 @@ vector<vector<BDD>> BDDSATEncodingFactory::build_full_reachability_bdds(
  * transitions in this factor, so they self-loop in the same states.
  */
 vector<vector<BDD>> BDDSATEncodingFactory::build_one_step_bdds(
-		int fac, const TransitionSystem & factor, const FTSMatrix & matrix){
+		int fac, const TransitionSystem & factor, const FTSMatrix & matrix,
+		const BDDEncodingData::Ordering & ord){
 	const int numStates = factor.get_size();
 	const int numLabels = fts->get_num_labels();
 
@@ -551,7 +563,7 @@ vector<vector<BDD>> BDDSATEncodingFactory::build_one_step_bdds(
 	for (int s = 0; s < numStates; s++){
 		const set<int> & loops = matrix.get_self_loop_labels_for_state(s);
 		for (int pos = 0; pos < numLabels; pos++){
-			const int label = data->labelOrder[pos];
+			const int label = ord.labelOrder[pos];
 			assert(groupOfLabel[label] >= 0);
 			if (!loops.count(groupOfLabel[label]))
 				mustBeFalseAt[s].push_back(label);
@@ -559,7 +571,7 @@ vector<vector<BDD>> BDDSATEncodingFactory::build_one_step_bdds(
 	}
 
 	// position in the label order, which is also the BDD variable order
-	auto orderOf = [&](int label){ return data->labelToBDDVar[label] - data->num_factor_vars; };
+	auto orderOf = [&](int label){ return ord.labelToBDDVar[label] - data->num_factor_vars; };
 
 	/*
 	  Per state, the running conjunctions of "this label is false" over a
@@ -586,18 +598,18 @@ vector<vector<BDD>> BDDSATEncodingFactory::build_one_step_bdds(
 		prefixFalse[s].resize(numLabels + 1);
 		prefixFalse[s][0] = _manager->bddOne();
 		for (int pos = 0; pos < numLabels; pos++){
-			const int label = data->labelOrder[pos];
+			const int label = ord.labelOrder[pos];
 			prefixFalse[s][pos+1] = cannotSelfLoop[label]
-				? prefixFalse[s][pos] * ~_manager->bddVar(data->labelToBDDVar[label])
+				? prefixFalse[s][pos] * ~_manager->bddVar(ord.labelToBDDVar[label])
 				: prefixFalse[s][pos];
 		}
 
 		suffixFalse[s].resize(numLabels + 1);
 		suffixFalse[s][numLabels] = _manager->bddOne();
 		for (int pos = numLabels - 1; pos >= 0; pos--){
-			const int label = data->labelOrder[pos];
+			const int label = ord.labelOrder[pos];
 			suffixFalse[s][pos] = cannotSelfLoop[label]
-				? suffixFalse[s][pos+1] * ~_manager->bddVar(data->labelToBDDVar[label])
+				? suffixFalse[s][pos+1] * ~_manager->bddVar(ord.labelToBDDVar[label])
 				: suffixFalse[s][pos+1];
 		}
 	}
@@ -624,7 +636,7 @@ vector<vector<BDD>> BDDSATEncodingFactory::build_one_step_bdds(
 		const int orderL = orderOf(l);
 		for (const auto & transition : factor.get_transitions_with_label(l)){
 			// self loops on the source before it, on the target after it
-			const BDD thisTrans = _manager->bddVar(data->labelToBDDVar[l])
+			const BDD thisTrans = _manager->bddVar(ord.labelToBDDVar[l])
 				* prefixFalse[transition.src][orderL]
 				* suffixFalse[transition.target][orderL + 1];
 			paths[transition.src][transition.target] += thisTrans;
@@ -649,13 +661,13 @@ vector<vector<BDD>> BDDSATEncodingFactory::build_one_step_bdds(
  * every binary dependency with that literal as premise at once. So this costs
  * O(|support|) cofactor+essential calls per factor rather than testing pairs.
  */
-void BDDSATEncodingFactory::report_label_implications() const {
+void BDDSATEncodingFactory::report_label_implications(const BDDEncodingData::Ordering & ord) const {
 	const int nfv = data->num_factor_vars;
 	BDD stateCube = _manager->bddOne();
 	for (int i = 0; i < nfv; i++) stateCube *= _manager->bddVar(i);
 
 	// BDD variable index -> label (the variable order is the label order)
-	auto labelOfVar = [&](int v){ return data->labelOrder[v - nfv]; };
+	auto labelOfVar = [&](int v){ return ord.labelOrder[v - nfv]; };
 
 	long units = 0, implications = 0, mutexes = 0;
 	int trivial_one = 0, trivial_zero = 0, nontrivial = 0;
@@ -673,12 +685,12 @@ void BDDSATEncodingFactory::report_label_implications() const {
 		// every label set this factor permits in one step
 		BDD any = _manager->bddZero();
 		if (combineAllBDDsIntoOne){
-			any = data->transition_BDDs_per_factor[fac].ExistAbstract(stateCube);
+			any = ord.transition_BDDs_per_factor[fac].ExistAbstract(stateCube);
 		} else {
 			const TransitionSystem & factor = fts->get_ts(fac);
 			for (int s = 0; s < factor.get_size(); s++)
 				for (int ss = 0; ss < factor.get_size(); ss++)
-					any += data->transition_BDDs_per_factor_per_state_pair[fac][s][ss];
+					any += ord.transition_BDDs_per_factor_per_state_pair[fac][s][ss];
 		}
 		if (any == _manager->bddOne()) { trivial_one++; continue; }
 		if (any == _manager->bddZero()) { trivial_zero++; continue; }
@@ -735,7 +747,7 @@ void BDDSATEncodingFactory::report_label_implications() const {
 			for (int src = 0; src < factor.get_size(); src++){
 				BDD fromSrc = _manager->bddZero();
 				for (int ss = 0; ss < factor.get_size(); ss++)
-					fromSrc += data->transition_BDDs_per_factor_per_state_pair[fac][src][ss];
+					fromSrc += ord.transition_BDDs_per_factor_per_state_pair[fac][src][ss];
 				if (fromSrc == _manager->bddOne()) { cond_trivial_one++; continue; }
 				if (fromSrc == _manager->bddZero()) continue;
 				cond_nontrivial++;
@@ -787,62 +799,11 @@ void BDDSATEncodingFactory::report_label_implications() const {
 }
 
 
-void BDDSATEncodingFactory::initialize() {
-	utils::Timer sat_init_timer;
-	cout << "Initialising" << endl;
-	cout << "My FTS task has " << fts->get_size() << " systems and " << fts->get_num_labels() << " labels." << endl;
-
-	data = make_shared<BDDEncodingData>();
-	data->combineAllBDDsIntoOne = combineAllBDDsIntoOne;
-	data->implicationalTseitsin = implicationalTseitsin;
-	data->omitForcedVariables = omitForcedVariables;
-	data->forcedVariablesThreshold = forcedVariablesThreshold;
-
-	fts_matrices.assign(fts->get_size(), nullptr);
-
-	data->labelOrder = label_order_finder->find_order(*fts);
-	assert(int(data->labelOrder.size()) == fts->get_num_labels());
-
-	data->num_factor_vars = 0;
-	if (combineAllBDDsIntoOne) {
-		for (int fac = 0; fac < fts->get_size(); fac++){
-			const TransitionSystem & factor = fts->get_ts(fac);
-			if (data->num_factor_vars < factor.get_size()) data->num_factor_vars = factor.get_size();
-		}
-		// state variables and next-state variables, they come first
-		data->num_factor_vars *= 2;
-	}
-	data->bdd_num_vars = data->num_factor_vars + fts->get_num_labels();
-
-	// The BDD variable order *is* the label order.
-	data->labelToBDDVar.resize(fts->get_num_labels());
-	for (int i = 0; i < fts->get_num_labels(); i++)
-		data->labelToBDDVar[data->labelOrder[i]] = data->num_factor_vars + i;
-
-	cout << "Number BDD vars: " << data->bdd_num_vars << " of that "
-		 << data->num_factor_vars << " factor state variables." << endl;
-
-	_manager = std::make_unique<Cudd> (data->bdd_num_vars, 0,
-			cudd_init_nodes / max(1, fts->get_num_labels()),
-			cudd_init_cache_size,
-			cudd_init_available_memory);
-
-	bdd_construction_timer.reset();
-	bdd_construction_timer.resume();
-
-	_manager->setHandler(exceptionError);
-	_manager->setTimeoutHandler(exceptionError);
-	_manager->setNodesExceededHandler(exceptionError);
-	_manager->RegisterOutOfMemoryCallback(exitOutOfMemory);
-
-	long total_nodes_sum = 0;
-	long total_nodes_after_limit = 0;
-	int overall_max_pair_nodes = 0;
-	double construction_seconds = 0.0;
-
-	try {
-		if (combineAllBDDsIntoOne) data->transition_BDDs_per_factor.resize(fts->get_size());
-		else data->transition_BDDs_per_factor_per_state_pair.resize(fts->get_size());
+void BDDSATEncodingFactory::build_bdds_for_ordering(BDDEncodingData::Ordering & ord,
+		long & total_nodes_sum, long & total_nodes_after_limit,
+		int & overall_max_pair_nodes){
+	if (combineAllBDDsIntoOne) ord.transition_BDDs_per_factor.resize(fts->get_size());
+	else ord.transition_BDDs_per_factor_per_state_pair.resize(fts->get_size());
 
 		for (int fac = 0; fac < fts->get_size(); fac++){
 			const TransitionSystem & factor = fts->get_ts(fac);
@@ -857,11 +818,11 @@ void BDDSATEncodingFactory::initialize() {
 			// -----------------------------------------------------------------
 			vector<vector<BDD>> allPossiblePaths;
 			if (!oneStepOnly)
-				allPossiblePaths = build_full_reachability_bdds(fac, factor, num_relevant_labels);
+				allPossiblePaths = build_full_reachability_bdds(fac, factor, ord, num_relevant_labels);
 
 			vector<vector<BDD>> oneStepPaths;
 			if (oneStepOnly || bddEncodingSizeLimit != -1)
-				oneStepPaths = build_one_step_bdds(fac, factor, matrix_for(fac));
+				oneStepPaths = build_one_step_bdds(fac, factor, matrix_for(fac), ord);
 
 			// -----------------------------------------------------------------
 			// pick the representation that is actually encoded
@@ -941,36 +902,116 @@ void BDDSATEncodingFactory::initialize() {
 						allTransitionsBDD += thisFactorTransitionBDD;
 					}
 				}
-				data->transition_BDDs_per_factor[fac] = allTransitionsBDD;
+				ord.transition_BDDs_per_factor[fac] = allTransitionsBDD;
 			} else {
-				data->transition_BDDs_per_factor_per_state_pair[fac] = std::move(chosen);
+				ord.transition_BDDs_per_factor_per_state_pair[fac] = std::move(chosen);
 			}
 		}
 
 		// Cutting changes the BDDs, so it is part of building them and is charged
 		// to construction_time. The two reporting passes below are not.
-		if (bddCutting) cut_bdds_to_fixpoint();
+}
+
+
+void BDDSATEncodingFactory::initialize() {
+	utils::Timer sat_init_timer;
+	cout << "Initialising" << endl;
+	cout << "My FTS task has " << fts->get_size() << " systems and " << fts->get_num_labels() << " labels." << endl;
+
+	data = make_shared<BDDEncodingData>();
+	data->combineAllBDDsIntoOne = combineAllBDDsIntoOne;
+	data->implicationalTseitsin = implicationalTseitsin;
+	data->omitForcedVariables = omitForcedVariables;
+	data->forcedVariablesThreshold = forcedVariablesThreshold;
+
+	fts_matrices.assign(fts->get_size(), nullptr);
+
+	{
+		vector<int> primary = label_order_finder->find_order(*fts);
+		assert(int(primary.size()) == fts->get_num_labels());
+		data->orderings.resize(alternateLabelOrders ? 2 : 1);
+		data->orderings[0].labelOrder = primary;
+		if (alternateLabelOrders){
+			// the reverse of the primary order, for the even-numbered steps
+			data->orderings[1].labelOrder.assign(primary.rbegin(), primary.rend());
+		}
+	}
+
+	data->num_factor_vars = 0;
+	if (combineAllBDDsIntoOne) {
+		for (int fac = 0; fac < fts->get_size(); fac++){
+			const TransitionSystem & factor = fts->get_ts(fac);
+			if (data->num_factor_vars < factor.get_size()) data->num_factor_vars = factor.get_size();
+		}
+		// state variables and next-state variables, they come first
+		data->num_factor_vars *= 2;
+	}
+	data->bdd_num_vars = data->num_factor_vars + fts->get_num_labels();
+
+	// The BDD variable order *is* the label order, once per ordering.
+	for (auto & ord : data->orderings){
+		ord.labelToBDDVar.resize(fts->get_num_labels());
+		for (int i = 0; i < fts->get_num_labels(); i++)
+			ord.labelToBDDVar[ord.labelOrder[i]] = data->num_factor_vars + i;
+	}
+
+	cout << "Number BDD vars: " << data->bdd_num_vars << " of that "
+		 << data->num_factor_vars << " factor state variables"
+		 << (data->orderings.size() > 1 ? ", two label orderings." : ".") << endl;
+
+	_manager = std::make_unique<Cudd> (data->bdd_num_vars, 0,
+			cudd_init_nodes / max(1, fts->get_num_labels()),
+			cudd_init_cache_size,
+			cudd_init_available_memory);
+
+	bdd_construction_timer.reset();
+	bdd_construction_timer.resume();
+
+	_manager->setHandler(exceptionError);
+	_manager->setTimeoutHandler(exceptionError);
+	_manager->setNodesExceededHandler(exceptionError);
+	_manager->RegisterOutOfMemoryCallback(exitOutOfMemory);
+
+	long total_nodes_sum = 0;
+	long total_nodes_after_limit = 0;
+	int overall_max_pair_nodes = 0;
+	double construction_seconds = 0.0;
+
+	try {
+		for (size_t o = 0; o < data->orderings.size(); o++){
+			if (data->orderings.size() > 1)
+				cout << "Building BDDs for label ordering " << o
+					 << (o == 0 ? " (primary, odd time steps)" : " (reversed, even time steps)") << endl;
+			build_bdds_for_ordering(data->orderings[o], total_nodes_sum,
+					total_nodes_after_limit, overall_max_pair_nodes);
+		}
+
+		if (bddCutting)
+			for (auto & o : data->orderings) cut_bdds_to_fixpoint(o);
 
 		construction_seconds = bdd_construction_timer();
 
-		if (bddCovering) report_covering_implications();
-		if (reportLabelImplications) report_label_implications();
+		if (bddCovering)
+			for (const auto & o : data->orderings) report_covering_implications(o);
+		if (reportLabelImplications)
+			for (const auto & o : data->orderings) report_label_implications(o);
 
 		// -----------------------------------------------------------------
 		// (d) node in-degrees, used by the omitForcedVariables optimisation.
 		//     This is a property of the BDDs, so it is computed once here
 		//     rather than per SAT call.
 		// -----------------------------------------------------------------
-		for(int fac = 0 ; fac < fts->get_size() ; fac++){
-			if (combineAllBDDsIntoOne){
-				bdd_in_degree(data->transition_BDDs_per_factor[fac].getNode());
-			} else {
-				const TransitionSystem & factor = fts->get_ts(fac);
-				for (int s = 0; s < factor.get_size(); s++)
-					for (int ss = 0; ss < factor.get_size(); ss++)
-						bdd_in_degree(data->transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode());
+		for (auto & ord : data->orderings)
+			for(int fac = 0 ; fac < fts->get_size() ; fac++){
+				if (combineAllBDDsIntoOne){
+					bdd_in_degree(ord.transition_BDDs_per_factor[fac].getNode());
+				} else {
+					const TransitionSystem & factor = fts->get_ts(fac);
+					for (int s = 0; s < factor.get_size(); s++)
+						for (int ss = 0; ss < factor.get_size(); ss++)
+							bdd_in_degree(ord.transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode());
+				}
 			}
-		}
 	} catch (const BDDBudgetExceeded & e) {
 		cout << "BDDSTAT construction_failed reason " << e.reason
 			 << " factor " << e.factor << " of " << fts->get_size()
@@ -1040,13 +1081,14 @@ BDDSATEncoding::BDDSATEncoding(
 
 
 int BDDSATEncoding::givevar(int bddvar,
+		const BDDEncodingData::Ordering & ord,
 		const vector<int> & factorVars,
 		const vector<int> & labelVars,
 		const vector<int> & nextFactorVars) const {
 	const int nfv = data->num_factor_vars;
 	if (bddvar >= nfv){
 		// the BDD variable order is the label order
-		return labelVars[data->labelOrder[bddvar - nfv]];
+		return labelVars[ord.labelOrder[bddvar - nfv]];
 	}
 	if (bddvar < nfv / 2) {
 		assert(factorVars.size() > size_t(bddvar));
@@ -1058,6 +1100,7 @@ int BDDSATEncoding::givevar(int bddvar,
 
 
 void BDDSATEncoding::bdd_to_cnf(DdNode * node,
+		const BDDEncodingData::Ordering & ord,
 		const vector<int> & currentConditions,
 		const vector<int> & factorVars,
 		const vector<int> & labelVars,
@@ -1082,7 +1125,7 @@ void BDDSATEncoding::bdd_to_cnf(DdNode * node,
 		true_branch = Cudd_Not(true_branch);
 		false_branch = Cudd_Not(false_branch);
 	}
-	int var_to_branch = givevar(Cudd_NodeReadIndex(node), factorVars, labelVars, nextFactorVars);
+	int var_to_branch = givevar(Cudd_NodeReadIndex(node), ord, factorVars, labelVars, nextFactorVars);
 	vector<tuple<int,DdNode*,DdNode*>> successors {
 		{var_to_branch, true_branch, false_branch},
 		{-var_to_branch, false_branch, true_branch}};
@@ -1107,7 +1150,7 @@ void BDDSATEncoding::bdd_to_cnf(DdNode * node,
 				// one: if the conditions hold, the branch variable must point away.
 				sat->andImplies(currentConditions,-branch_var);
 				// and the conditions are then propagated further down the tree
-				bdd_to_cnf(otherbranch, currentConditions, factorVars, labelVars, nextFactorVars);
+				bdd_to_cnf(otherbranch, ord, currentConditions, factorVars, labelVars, nextFactorVars);
 				// this can happen for only one branch (otherwise the BDD is not reduced)
 				return;
 			}
@@ -1117,7 +1160,7 @@ void BDDSATEncoding::bdd_to_cnf(DdNode * node,
 				// variable essentially becomes a new condition.
 				vector<int> newConditions = currentConditions;
 				newConditions.push_back(-branch_var);
-				bdd_to_cnf(otherbranch, newConditions, factorVars, labelVars, nextFactorVars);
+				bdd_to_cnf(otherbranch, ord, newConditions, factorVars, labelVars, nextFactorVars);
 				return;
 			}
 		}
@@ -1145,15 +1188,15 @@ void BDDSATEncoding::bdd_to_cnf(DdNode * node,
 	vector<int> trueVarVector = {thisVar, var_to_branch};
 	vector<int> falseVarVector = {thisVar, -var_to_branch};
 
-	bdd_to_cnf(true_branch, trueVarVector, factorVars, labelVars, nextFactorVars);
-	bdd_to_cnf(false_branch, falseVarVector, factorVars, labelVars, nextFactorVars);
+	bdd_to_cnf(true_branch, ord, trueVarVector, factorVars, labelVars, nextFactorVars);
+	bdd_to_cnf(false_branch, ord, falseVarVector, factorVars, labelVars, nextFactorVars);
 	if (!data->implicationalTseitsin){
 		// if the variable for this one is false, and we take a branch, then that
 		// variable also must be false.
 		trueVarVector[0] *= -1;
 		falseVarVector[0] *= -1;
-		bdd_to_cnf(Cudd_Not(true_branch), trueVarVector, factorVars, labelVars, nextFactorVars);
-		bdd_to_cnf(Cudd_Not(false_branch), falseVarVector, factorVars, labelVars, nextFactorVars);
+		bdd_to_cnf(Cudd_Not(true_branch), ord, trueVarVector, factorVars, labelVars, nextFactorVars);
+		bdd_to_cnf(Cudd_Not(false_branch), ord, falseVarVector, factorVars, labelVars, nextFactorVars);
 		if (Cudd_IsComplement(node)) thisVar *= -1;
 	}
 
@@ -1183,6 +1226,10 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 	// no frame axioms are needed: the BDDs describe, for every factor, exactly
 	// which label sets lead from one state of that factor to another, and that
 	// includes staying put.
+	// Which ordering this time step is encoded in. Its BDDs constrain only this
+	// step's label variables, so neighbouring steps may differ.
+	const BDDEncodingData::Ordering & ord = data->ordering_at(fromTime);
+
 	const vector<int> noFactorVars;
 	for(int fac = 0 ; fac < fts->get_size() ; fac++){
 		// the Tseitin variables are only shared within one factor
@@ -1190,7 +1237,7 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 
 		if (data->combineAllBDDsIntoOne){
 			const vector<int> noConditions;
-			bdd_to_cnf(data->transition_BDDs_per_factor[fac].getNode(), noConditions,
+			bdd_to_cnf(ord.transition_BDDs_per_factor[fac].getNode(), ord, noConditions,
 					previousStateVars[fac], labelVars, nextStateVars[fac]);
 		} else {
 			const TransitionSystem & factor = fts->get_ts(fac);
@@ -1199,8 +1246,8 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 					// The factor state variables are not part of these BDDs, they are
 					// the conditions instead.
 					const vector<int> conditions = {previousStateVars[fac][s], nextStateVars[fac][ss]};
-					bdd_to_cnf(data->transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode(),
-							conditions, noFactorVars, labelVars, noFactorVars);
+					bdd_to_cnf(ord.transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode(),
+							ord, conditions, noFactorVars, labelVars, noFactorVars);
 				}
 			}
 		}
@@ -1275,7 +1322,7 @@ BDDSATEncoding::extractSolution(int initTime, std::vector<std::pair<int,int>> ti
 		// Several labels may fire in one time step and they have to be applied in
 		// the order the BDDs were built with, not in the order of their IDs.
 		vector<int> selectedLabels;
-		for (const int & l : data->labelOrder)
+		for (const int & l : data->ordering_at(labelTimestep).labelOrder)
 			if (selectedLabelSet.count(l))
 				selectedLabels.push_back(l);
 

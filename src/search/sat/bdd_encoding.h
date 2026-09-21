@@ -46,15 +46,35 @@ struct BDDEncodingData {
 	int bdd_num_vars = 0;
 	int num_factor_vars = 0;
 
-	// The label order is the BDD variable order: label labelOrder[i] is BDD
-	// variable num_factor_vars + i. labelToBDDVar is the inverse mapping,
-	// i.e. labelToBDDVar[labelOrder[i]] == num_factor_vars + i.
-	std::vector<int> labelOrder;
-	std::vector<int> labelToBDDVar;
+	/*
+	  One label ordering together with the BDDs built under it.
 
-	// exactly one of the two is populated, depending on combineAllBDDsIntoOne
-	std::vector<BDD> transition_BDDs_per_factor;
-	std::vector<std::vector<std::vector<BDD>>> transition_BDDs_per_factor_per_state_pair;
+	  The label order *is* the BDD variable order: label labelOrder[i] is BDD
+	  variable num_factor_vars + i, and labelToBDDVar is the inverse. Two
+	  orderings therefore mean two sets of BDDs, built over the same Cudd
+	  variables but mapping labels onto them differently.
+	*/
+	struct Ordering {
+		std::vector<int> labelOrder;
+		std::vector<int> labelToBDDVar;
+		// exactly one of the two is populated, depending on combineAllBDDsIntoOne
+		std::vector<BDD> transition_BDDs_per_factor;
+		std::vector<std::vector<std::vector<BDD>>> transition_BDDs_per_factor_per_state_pair;
+	};
+
+	/*
+	  Normally one entry. With alternate_label_orders there are two, and a time
+	  step picks one by its parity: the first encoded step (fromTime == 1) uses
+	  orderings[0], the second orderings[1], and so on. Since a step's BDDs
+	  constrain only that step's label variables, neighbouring steps may use
+	  different orderings without any interaction -- the state variables they
+	  share carry no order information.
+	*/
+	std::vector<Ordering> orderings;
+
+	const Ordering & ordering_at(int fromTime) const {
+		return orderings[(fromTime - 1) % orderings.size()];
+	}
 
 	// in-degree of every BDD node, used by the omitForcedVariables optimisation
 	std::map<DdNode *, int> node_indegree;
@@ -79,12 +99,14 @@ class BDDSATEncoding : public LabelEncoding {
 
 	/// map a BDD variable index onto the SAT variable of this time step
 	int givevar(int bddvar,
+		const BDDEncodingData::Ordering & ord,
 		const std::vector<int> & factorVars,
 		const std::vector<int> & labelVars,
 		const std::vector<int> & nextFactorVars) const;
 
 	/// Tseitin-translate the BDD rooted at node, guarded by currentConditions
 	void bdd_to_cnf(DdNode * node,
+		const BDDEncodingData::Ordering & ord,
 		const std::vector<int> & currentConditions,
 		const std::vector<int> & factorVars,
 		const std::vector<int> & labelVars,
@@ -120,6 +142,7 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const int forcedVariablesThreshold;
 	const bool bddCutting;
 	const bool bddCovering;
+	const bool alternateLabelOrders;
 	const bool reportLabelImplications;
 	const bool reportFactorStatistics;
 	// budgets for the BDD construction itself, so that an instance whose BDDs
@@ -174,16 +197,23 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	std::vector<std::vector<BDD>> build_full_reachability_bdds(
 		int fac,
 		const task_representation::TransitionSystem & factor,
+		const BDDEncodingData::Ordering & ord,
 		int & num_relevant_labels);
 
 	std::vector<std::vector<BDD>> build_one_step_bdds(
 		int fac,
 		const task_representation::TransitionSystem & factor,
-		const FTSMatrix & matrix);
-	void cut_bdds_to_fixpoint();
-	void report_covering_implications() const;
+		const FTSMatrix & matrix,
+		const BDDEncodingData::Ordering & ord);
+
+	/// build every factor's BDDs under one ordering
+	void build_bdds_for_ordering(BDDEncodingData::Ordering & ord,
+		long & total_nodes_sum, long & total_nodes_after_limit,
+		int & overall_max_pair_nodes);
+	void cut_bdds_to_fixpoint(BDDEncodingData::Ordering & ord);
+	void report_covering_implications(const BDDEncodingData::Ordering & ord) const;
 	/// mine the per-factor label BDDs for unit and binary label dependencies
-	void report_label_implications() const;
+	void report_label_implications(const BDDEncodingData::Ordering & ord) const;
 
 public:
 	explicit BDDSATEncodingFactory(const options::Options &opts);
