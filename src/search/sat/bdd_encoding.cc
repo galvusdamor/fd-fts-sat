@@ -354,6 +354,7 @@ void BDDSATEncodingFactory::cut_bdds_to_fixpoint(){
  * implications are frequent enough to be worth encoding separately.
  */
 void BDDSATEncodingFactory::report_covering_implications() const {
+	long claims_verified = 0, claims_refuted = 0;
 	for (int fac = 0; fac < fts->get_size(); fac++){
 		const TransitionSystem & factor = fts->get_ts(fac);
 		const vector<vector<BDD>> & allPossiblePaths = data->transition_BDDs_per_factor_per_state_pair[fac];
@@ -415,18 +416,34 @@ void BDDSATEncodingFactory::report_covering_implications() const {
 				return factor.get_size() - 1;
 			};
 
+			// The claimed state is the one the others do not rule out, so the
+			// label must actually be possible there. Checking that catches a
+			// wrong pick, which the derivation itself cannot.
+			const BDD labelIsTaken = _manager->bddVar(data->labelToBDDVar[label]);
 			if (int(prev_states_implying_this_neg.size()) + 1 == factor.get_size()){
 				int s = only_remaining_state(prev_states_implying_this_neg);
+				bool possible = false;
+				for (int ss = 0; ss < factor.get_size() && !possible; ss++)
+					possible = (labelIsTaken * allPossiblePaths[s][ss]) != _manager->bddZero();
+				if (possible) claims_verified++; else claims_refuted++;
 				pos_label_implies_prev_state[label].push_back(s);
-				cout << "Label " << label << " in factor " << fac << " implies source state " << s << endl;
+				cout << "Label " << label << " in factor " << fac << " implies source state " << s
+					 << (possible ? "" : "   *** REFUTED: label impossible there ***") << endl;
 			}
 			if (int(next_states_implying_this_neg.size()) + 1 == factor.get_size()){
 				int ss = only_remaining_state(next_states_implying_this_neg);
+				bool possible = false;
+				for (int s = 0; s < factor.get_size() && !possible; s++)
+					possible = (labelIsTaken * allPossiblePaths[s][ss]) != _manager->bddZero();
+				if (possible) claims_verified++; else claims_refuted++;
 				pos_label_implies_next_state[label].push_back(ss);
-				cout << "Label " << label << " in factor " << fac << " implies target state " << ss << endl;
+				cout << "Label " << label << " in factor " << fac << " implies target state " << ss
+					 << (possible ? "" : "   *** REFUTED: label impossible there ***") << endl;
 			}
 		}
 	}
+	cout << "BDDSTAT covering_claims verified " << claims_verified
+		 << " refuted " << claims_refuted << endl;
 }
 
 
