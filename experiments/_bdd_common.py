@@ -16,7 +16,7 @@ import os
 CHAINS = ("label_sat(encoding=CHAINS_PARALLEL,use_self_loop_optimisation=true,"
           "use_label_group=false,use_empty_pillars=true,use_empty_rows=true,"
           "use_empty_cols=true,use_positive_one=true,use_ones_in_last_dimension=true,"
-          "force_at_least_one_action=true)")
+          "force_at_least_one_action=false)")
 # fulltransitions_slf_transeff, from 2026-07-25-*-all-transitions-encodings.py
 FULLTRANS = ("full_transitions_sat(use_self_loop_optimisation=true, "
              "use_labels_in_effects_constraints=false)")
@@ -55,7 +55,7 @@ def bdd(**kw):
     up as bdd_construction_failed.
     """
     d = dict(one_step_only="false", combinebdds="false", impltseitsin="true",
-             omitforcedvariables="true", forcedvariablesthreshold=100,
+             omitforcedvariables="true", forcedvariablesthreshold=1,
              bdd_size_limit=-1, cutbdds="false",
              label_order="label_order_linear()",
              bdd_init_time_limit=600, bdd_node_limit=60000000,
@@ -86,12 +86,12 @@ ENCODINGS = {
     "bdd_full_rev":        bdd(label_order="label_order_reverse()"),
     "bdd_full_rnd":        bdd(label_order="label_order_random()"),
     # Tseitin variants
-    "bdd_full_biimpl":     bdd(impltseitsin="false"),
+    #"bdd_full_biimpl":     bdd(impltseitsin="false"),
     "bdd_full_noomit":     bdd(omitforcedvariables="false"),
-    "bdd_full_omit1":      bdd(forcedvariablesthreshold=1),
+    "bdd_full_omit2":      bdd(forcedvariablesthreshold=2),
     # interpolate towards the one-step relation for oversized state pairs
-    "bdd_full_lim1000":    bdd(bdd_size_limit=1000),
-    "bdd_full_lim100000":  bdd(bdd_size_limit=100000),
+    #"bdd_full_lim1000":    bdd(bdd_size_limit=1000),
+    #"bdd_full_lim100000":  bdd(bdd_size_limit=100000),
 }
 
 # algorithm A: one SAT call per length, shortest first

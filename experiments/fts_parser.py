@@ -22,8 +22,8 @@ def add_sat_vars_and_clauses(content, props):
                      f"file {filename}.",
                  )
              else:
-                 props["sat_variables"] = int(var) 
-                 props["sat_clauses"] = int(clauses) 
+                 props["solved_sat_variables"] = int(var) 
+                 props["solved_sat_clauses"] = int(clauses) 
         else:
             all_generated_formulas = re.findall(r"Formula has ([0-9]+) clauses and ([0-9]+) variables.",content)
             if len(all_generated_formulas) != 0:

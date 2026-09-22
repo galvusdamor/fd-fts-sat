@@ -34,7 +34,7 @@ import _bdd_common as B
 DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
 BENCHMARKS_DIR = os.environ["DOWNWARD_BENCHMARKS"]
-REVISION = "eb3a1b0ed54569d3efd69f1e2f220e505a3eb63f"
+REVISION = "f27d845858ae0001bfb375289e6b5b72a7b70b11"
 REVISIONS = [REVISION]
 
 CONFIGS = []
@@ -80,7 +80,8 @@ ATTRIBUTES = common_setup.ATTRIBUTES + [
 
 exp.add_report(
     AbsoluteReport(attributes=ATTRIBUTES,
-                   filter=[filters.filter_bdd_known_unexplained_errors,
+                   filter=[filters.remove_revision,
+                           filters.filter_bdd_known_unexplained_errors,
                            filters.filter_kissat_known_unexplained_errors]),
     outfile=f"{SCRIPT_NAME}-all.html")
 
@@ -94,7 +95,7 @@ for c1, c2 in [("A_1__chains_slf____rcpol-shr", "A_1__bdd_full-shr"),
             format="png",
             show_missing=True,
         ),
-        name=f"scatterplot-planner-time-{c1}-vs-{c2}",
+        name=f"ipc-scatterplot-planner-time-{c1}-vs-{c2}",
     )
     exp.add_report(
         ScatterPlotReport(
@@ -104,7 +105,28 @@ for c1, c2 in [("A_1__chains_slf____rcpol-shr", "A_1__bdd_full-shr"),
             format="png",
             show_missing=False,
         ),
-        name=f"scatterplot-step-clauses-{c1}-vs-{c2}",
+        name=f"ipc-scatterplot-step-clauses-{c1}-vs-{c2}",
+    )
+    exp.add_report(
+        ScatterPlotReport(
+            attributes=["solved_sat_clauses"],
+            filter_algorithm=[f"{REVISION}-{c1}", f"{REVISION}-{c2}"],
+            get_category=lambda x, y: x["domain"],
+            format="png",
+            show_missing=False,
+        ),
+        name=f"ipc-scatterplot-total-clauses-{c1}-vs-{c2}",
+    )
+
+    exp.add_report(
+        ScatterPlotReport(
+            attributes=["solved_sat_variables"],
+            filter_algorithm=[f"{REVISION}-{c1}", f"{REVISION}-{c2}"],
+            get_category=lambda x, y: x["domain"],
+            format="png",
+            show_missing=False,
+        ),
+        name=f"ipc-scatterplot-total-variables-{c1}-vs-{c2}",
     )
 
 exp.run_steps()
