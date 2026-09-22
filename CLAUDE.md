@@ -625,6 +625,57 @@ encoding, not just run it. Useful directions and where the hooks already are:
   variables) — handy for eyeballing small factors. Nothing calls it; add a call
   in `initialize()` while debugging.
 
+## How good could a label order be? (plan-optimal orders)
+
+Under `bdd_sat(one_step_only=false)` a plan `(a_1..a_m)` fits into
+`1 + #breaks` time steps, where a break is a consecutive pair that is not
+increasing in the label order, or two equal consecutive labels (a label fires
+at most once per step). The order minimising breaks for a given plan is the
+linear ordering problem on the multigraph of consecutive pairs -- NP-hard --
+and `experiments/optimal_label_order.py` solves it exactly (bef(x,y)
+variables, no-3-cycle hard clauses, totalizer over the break literals,
+descending bound, one kissat call per bound; brute-force verified). The
+tooling around it:
+
+* `--internal-fts-plan-file F` (planner flag, passes through the driver):
+  writes the plan as **transformed-task label ids** before plan
+  reconstruction. `sas_plan` is in original operator names and cannot be
+  mapped back to labels, so this is the only usable input. Label ids are
+  deterministic across runs with the same task and transform.
+* `label_order_file(filename=..., leftover=label_order_relaxed())`: feeds an
+  order back in; labels not in the file follow `leftover`. **The option parser
+  lower-cases the whole `--search` string, so the path must be lower-case.**
+* `experiments/compare_optimal_order.py INSTANCES --outdir DIR`: baseline run
+  -> inferrer -> run with the plan-optimal order, VAL-checked, CSV + table.
+  `--base-order` may repeat. Needs `--kissat`/`$KISSAT` pointing at a kissat
+  binary.
+
+The predicted horizon is an *upper bound*: the planner searches `one_by_one`
+and often finds a different plan at an even shorter horizon (8 of 17
+instances with the linear baseline). It is also tailored to one plan of one
+baseline run, not "the best order for the task".
+
+Results on the 17 instances of the 10-30s band (`-shr`, no h2, 600s limits,
+all plans VAL-valid):
+
+| baseline | sum of horizons base -> predicted -> achieved | search time | median search speedup |
+|---|---|---|---|
+| `label_order_linear` (17) | 121 -> 66 -> **56** | 117s -> 12s | x6.7 (min x0.94, max x78) |
+| `label_order_relaxed` (16) | 72 -> 57 -> **50** | 100s -> 12s | x6.7 (min x0.87, max x48) |
+
+Largest moves: airport p16/p17 17 -> 1 (search 9.4s -> 0.12s; every label in
+those plans is distinct, so the first-occurrence order is optimal and the
+inferrer is trivial), nomystery p08 11 -> 8, trucks p05 10 -> 6, storage p15
+4 -> 1 (23s -> 0.7s), openstacks p11 7 -> 4 (27s -> 0.56s under relaxed). No
+plan in the set had two equal *consecutive* labels (`fixed_breaks` = 0
+everywhere), though most repeat labels non-consecutively. The inferrer is
+instant except on pathways (166-184 distinct labels, 266-311 plan labels:
+18-48s, still proven optimal). Where total time barely moves (tpp, rovers,
+satellite) it is dominated by transform + BDD construction, not search --
+compare `base_search`/`opt_search` in the CSV, not `*_total`. One data point
+against the relaxed order: `pathways-noneg/p29` solves in 19s under linear
+but times out at 600s under relaxed.
+
 ## Instances that take 10-30 seconds
 
 Most of the IPC suite is useless for comparing encodings: it is either trivial
