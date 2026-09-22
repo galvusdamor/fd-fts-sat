@@ -88,13 +88,6 @@ def infer_order(fts_plan, order_file, args):
     return {k: (float(v) if k == "time" else int(v)) for k, v in st.items()}
 
 
-def evaluate(fts_plan, order_file, args):
-    cmd = [sys.executable, os.path.join(HERE, "optimal_label_order.py"), fts_plan, "--evaluate", order_file]
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    m = re.search(r"EVAL .* horizon (\d+)", res.stdout)
-    return int(m.group(1)) if m else None
-
-
 def one_instance(problem, base_order, args):
     name = "/".join(problem.split("/")[-2:]).replace(".pddl", "")
     tag = re.sub(r"\W+", "_", base_order).strip("_")
@@ -109,19 +102,43 @@ def one_instance(problem, base_order, args):
     if not base["fts_plan"] or base["trivial"]:
         row["note"] = "trivial" if base["trivial"] else "base unsolved"
         return row
-    order_file = os.path.join(rundir, "optimal.order")
-    st = infer_order(base["fts_plan"], order_file, args)
-    if "error" in st:
-        row["note"] = "infer failed: " + st["error"]
-        return row
-    row.update(plan_labels=st["plan_labels"], distinct=st["distinct"], fixed_breaks=st["fixed_breaks"],
-               predicted_horizon=st["predicted_horizon"], first_occ_horizon=st["first_occurrence_breaks"] + 1,
-               infer_optimal=st["optimal"], infer_time=st["time"])
-    opt = run_planner(problem, f"label_order_file(filename={order_file},leftover={args.leftover})",
-                      os.path.join(rundir, "opt"), args)
-    row.update(opt_horizon=opt["horizon"], opt_total=opt["total"], opt_search=opt["search"], opt_valid=opt["valid"])
-    if opt["fts_plan"]:
-        row["opt_plan_eval_horizon"] = evaluate(opt["fts_plan"], order_file, args)
+    # Re-infer whenever the planner beats the prediction: it then found a
+    # different plan at a shorter horizon, whose own optimal order may allow
+    # shorter still. Horizons are non-increasing along the chain, so this
+    # terminates; stop once achieved == predicted (nothing new to learn).
+    plan_file = base["fts_plan"]
+    chain = []
+    for it in range(args.max_iterations):
+        order_file = os.path.join(rundir, f"optimal.{it}.order")
+        st = infer_order(plan_file, order_file, args)
+        if "error" in st:
+            row["note"] = "infer failed: " + st["error"]
+            break
+        opt = run_planner(problem, f"label_order_file(filename={order_file},leftover={args.leftover})",
+                          os.path.join(rundir, f"opt{it}"), args)
+        chain.append(dict(st=st, run=opt))
+        if it == 0:
+            row.update(plan_labels=st["plan_labels"], distinct=st["distinct"], fixed_breaks=st["fixed_breaks"],
+                       predicted_horizon=st["predicted_horizon"],
+                       first_occ_horizon=st["first_occurrence_breaks"] + 1,
+                       infer_optimal=st["optimal"], infer_time=st["time"],
+                       opt_horizon=opt["horizon"], opt_total=opt["total"], opt_search=opt["search"],
+                       opt_valid=opt["valid"])
+        if opt["horizon"] is None or not opt["fts_plan"]:
+            row["note"] = f"opt run {it} unsolved"
+            break
+        if opt["horizon"] >= st["predicted_horizon"]:
+            break
+        plan_file = opt["fts_plan"]
+    if chain:
+        last = chain[-1]
+        row.update(iterations=len(chain),
+                   horizon_chain=">".join(f"{c['st']['predicted_horizon']}/{c['run']['horizon']}" for c in chain),
+                   final_predicted=last["st"]["predicted_horizon"], final_horizon=last["run"]["horizon"],
+                   final_total=last["run"]["total"], final_search=last["run"]["search"],
+                   final_valid=last["run"]["valid"],
+                   infer_time_total=round(sum(c["st"]["time"] for c in chain), 3),
+                   all_valid=all(c["run"]["valid"] for c in chain))
     return row
 
 
@@ -136,6 +153,7 @@ def main():
     ap.add_argument("--time-limit", type=int, default=600, help="per planner run, seconds")
     ap.add_argument("--memory-limit", type=int, default=3500, help="per planner run, MB")
     ap.add_argument("--infer-time-limit", type=float, default=300)
+    ap.add_argument("--max-iterations", type=int, default=6, help="re-inference rounds per instance")
     ap.add_argument("--kissat", default=os.environ.get("KISSAT", "kissat"))
     ap.add_argument("--val", default="/home/gregor/data/lisat/VAL/build/bin/Validate")
     ap.add_argument("--jobs", type=int, default=4)
@@ -156,7 +174,7 @@ def main():
         problems.append(p)
     os.makedirs(args.outdir, exist_ok=True)
 
-    jobs = [(p, o) for p in problems for o in args.base_order]
+    jobs = [(p, o) for o in args.base_order for p in problems]  # first baseline finishes first
     rows = []
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as ex:
         futs = {ex.submit(one_instance, p, o, args): (p, o) for p, o in jobs}
@@ -165,23 +183,25 @@ def main():
             rows.append(row)
             print(f"done {row['instance']:40s} {row['base_order'][:24]:24s} base h={row.get('base_horizon')} "
                   f"t={row.get('base_total')}  pred h={row.get('predicted_horizon')}  "
-                  f"opt h={row.get('opt_horizon')} t={row.get('opt_total')} valid={row.get('opt_valid')} "
-                  f"{row.get('note', '')}", flush=True)
+                  f"chain {row.get('horizon_chain')} final h={row.get('final_horizon')} "
+                  f"t={row.get('final_total')} valid={row.get('all_valid')} {row.get('note', '')}", flush=True)
     rows.sort(key=lambda r: (r["instance"], r["base_order"]))
     cols = ["instance", "base_order", "base_horizon", "base_total", "base_search", "base_valid",
             "plan_labels", "distinct", "fixed_breaks", "first_occ_horizon", "predicted_horizon",
-            "infer_optimal", "infer_time", "opt_horizon", "opt_plan_eval_horizon", "opt_total",
-            "opt_search", "opt_valid", "note"]
+            "infer_optimal", "infer_time", "opt_horizon", "opt_total", "opt_search", "opt_valid",
+            "iterations", "horizon_chain", "final_predicted", "final_horizon", "final_total",
+            "final_search", "final_valid", "infer_time_total", "all_valid", "note"]
     with open(os.path.join(args.outdir, "results.csv"), "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
     print()
-    print(f"{'instance':40s} {'base':>5s} {'t':>8s} | {'pred':>4s} {'labels':>6s} | {'opt':>4s} {'t':>8s} valid")
+    print(f"{'instance':40s} {'base':>5s} {'search':>8s} | {'labels':>6s} {'pred/achieved chain':>22s} | "
+          f"{'final':>5s} {'search':>8s} valid")
     for r in rows:
-        print(f"{r['instance']:40s} {str(r.get('base_horizon')):>5s} {str(r.get('base_total')):>8s} | "
-              f"{str(r.get('predicted_horizon')):>4s} {str(r.get('plan_labels')):>6s} | "
-              f"{str(r.get('opt_horizon')):>4s} {str(r.get('opt_total')):>8s} {r.get('opt_valid')} {r.get('note', '')}")
+        print(f"{r['instance']:40s} {str(r.get('base_horizon')):>5s} {str(r.get('base_search')):>8s} | "
+              f"{str(r.get('plan_labels')):>6s} {str(r.get('horizon_chain')):>22s} | "
+              f"{str(r.get('final_horizon')):>5s} {str(r.get('final_search')):>8s} {r.get('all_valid')} {r.get('note', '')}")
 
 
 if __name__ == "__main__":
