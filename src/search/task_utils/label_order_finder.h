@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <memory>
+#include <string>
 
 
 namespace task_representation {
@@ -89,6 +90,23 @@ namespace label_order_finder {
     class LabelOrderFinderCausal : public LabelOrderFinder{
         public:
         LabelOrderFinderCausal(const options::Options &opts);
+        std::vector<int> find_order(const task_representation::FTSTask &fts_task) override;
+    };
+
+    /*
+      Reads a (partial) label order from a file: one label id per line, lines
+      starting with ';' are comments. Labels not mentioned in the file are
+      appended in the order given by `leftover` (default: label_order_relaxed).
+
+      Meant for experiments/optimal_label_order.py, which computes the order
+      that packs a given plan into the fewest time steps; the labels that do
+      not occur in that plan are exactly the ones the file leaves out.
+    */
+    class LabelOrderFinderFile : public LabelOrderFinder{
+        std::string filename;
+        std::shared_ptr<LabelOrderFinder> leftover;
+        public:
+        LabelOrderFinderFile(const options::Options &opts);
         std::vector<int> find_order(const task_representation::FTSTask &fts_task) override;
     };
 

@@ -14,6 +14,7 @@
 #include "task_transformation/task_transformation.h"
 #include "task_transformation/plan_reconstruction.h"
 
+#include <fstream>
 #include <iostream>
 
 using namespace std;
@@ -121,6 +122,18 @@ int main(int argc, const char **argv) {
 
         plan.remove_redundant_actions();
         // cout << plan << endl;
+
+        if (!g_fts_plan_filename.empty()) {
+            // The plan in terms of the labels of the transformed task, which
+            // is what a label order is over. The plan file written below is
+            // in terms of the original operators and cannot be mapped back.
+            ofstream fts_plan(g_fts_plan_filename);
+            fts_plan << "; fts plan: " << plan.get_labels().size() << " labels, task has "
+                     << g_main_task->get_num_labels() << " labels" << endl;
+            for (int label : plan.get_labels())
+                fts_plan << label << endl;
+            cout << "FTS plan written to " << g_fts_plan_filename << endl;
+        }
 
         if (transformer) {
             utils::Timer reconstruct_timer;

@@ -66,6 +66,10 @@ extern int_packer::IntPacker *g_state_packer;
 /* extern AxiomEvaluator *g_axiom_evaluator; */
 /* extern successor_generator::SuccessorGenerator *g_successor_generator; */
 extern std::string g_plan_filename;
+// If non-empty, the plan on the *transformed* FTS task (label ids of
+// g_main_task, before plan reconstruction) is also written here, one
+// label id per line. Read by experiments/optimal_label_order.py.
+extern std::string g_fts_plan_filename;
 extern int g_num_previously_generated_plans;
 extern bool g_is_part_of_anytime_portfolio;
 

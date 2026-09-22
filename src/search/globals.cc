@@ -56,6 +56,7 @@ std::string get_next_plan_name(bool generates_multiple_plan_files) {
 // successor_generator::SuccessorGenerator *g_successor_generator;
 
 string g_plan_filename = "sas_plan";
+string g_fts_plan_filename;
 int g_num_previously_generated_plans = 0;
 bool g_is_part_of_anytime_portfolio = false;
 

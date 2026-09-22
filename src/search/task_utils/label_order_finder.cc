@@ -1,12 +1,15 @@
 #include "label_order_finder.h"
 
 #include <algorithm>
+#include <fstream>
 #include <iostream>
 #include <set>
+#include <sstream>
 
 #include "../task_representation/fts_task.h"
 #include "../task_representation/transition_system.h"
 #include "../utils/rng.h"
+#include "../utils/system.h"
 #include "../utils/rng_options.h"
 #include "../option_parser.h"
 #include "../plugin.h"
@@ -206,6 +209,55 @@ namespace  label_order_finder {
     }
 
 
+    LabelOrderFinderFile::LabelOrderFinderFile(const options::Options &opts)
+        : filename(opts.get<std::string>("filename")),
+          leftover(opts.get<std::shared_ptr<LabelOrderFinder>>("leftover")) {
+    }
+
+    std::vector<int> LabelOrderFinderFile::find_order(const task_representation::FTSTask &fts_task) {
+        const int num_labels = fts_task.get_num_labels();
+
+        std::ifstream in(filename);
+        if (!in) {
+            std::cerr << "label_order_file: cannot open " << filename << std::endl;
+            utils::exit_with(utils::ExitCode::INPUT_ERROR);
+        }
+
+        std::vector<int> order;
+        std::vector<char> placed(num_labels, 0);
+        std::string line;
+        while (std::getline(in, line)) {
+            if (line.empty() || line[0] == ';') continue;
+            std::istringstream iss(line);
+            int l;
+            if (!(iss >> l)) {
+                std::cerr << "label_order_file: cannot parse line '" << line << "'" << std::endl;
+                utils::exit_with(utils::ExitCode::INPUT_ERROR);
+            }
+            if (l < 0 || l >= num_labels) {
+                std::cerr << "label_order_file: label " << l << " out of range, task has "
+                          << num_labels << " labels -- was the file made for this task and transform?"
+                          << std::endl;
+                utils::exit_with(utils::ExitCode::INPUT_ERROR);
+            }
+            if (placed[l]) {
+                std::cerr << "label_order_file: label " << l << " listed twice" << std::endl;
+                utils::exit_with(utils::ExitCode::INPUT_ERROR);
+            }
+            placed[l] = 1;
+            order.push_back(l);
+        }
+        const int from_file = order.size();
+
+        for (int l : leftover->find_order(fts_task))
+            if (!placed[l]) order.push_back(l);
+
+        std::cout << "File label order: " << from_file << " labels from " << filename
+                  << ", " << (num_labels - from_file) << " appended from the leftover order." << std::endl;
+        return order;
+    }
+
+
     static options::PluginTypePlugin<LabelOrderFinder> _type_plugin(
         "LabeLOrderFinder",
         "This page describes the various label ordering strategies.");
@@ -251,6 +303,23 @@ namespace  label_order_finder {
             return make_shared<LabelOrderFinderCausal>(opts);
     }
 
+    static shared_ptr<LabelOrderFinder>_parse_file(OptionParser &parser) {
+        parser.document_synopsis("from file", "");
+        parser.add_option<std::string>("filename",
+            "label order, one label id of the transformed task per line; ';' starts a comment. "
+            "NOTE: the option parser lower-cases the whole --search string, so the path must be lower-case");
+        parser.add_option<shared_ptr<LabelOrderFinder>>("leftover",
+            "order for the labels the file does not mention", "label_order_relaxed()");
+        Options opts = parser.parse();
+        if (parser.help_mode())
+            return nullptr;
+
+        if (parser.dry_run())
+            return nullptr;
+        else
+            return make_shared<LabelOrderFinderFile>(opts);
+    }
+
     static shared_ptr<LabelOrderFinder>_parse_reverse(OptionParser &parser) {
         parser.document_synopsis("reverse", "");
         Options opts = parser.parse();
@@ -269,5 +338,6 @@ namespace  label_order_finder {
     static PluginShared<LabelOrderFinder> _plugin_reverse("label_order_reverse", _parse_reverse);
     static PluginShared<LabelOrderFinder> _plugin_causal("label_order_causal", _parse_causal);
     static PluginShared<LabelOrderFinder> _plugin_relaxed("label_order_relaxed", _parse_relaxed);
+    static PluginShared<LabelOrderFinder> _plugin_file("label_order_file", _parse_file);
 
 }

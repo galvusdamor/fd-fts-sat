@@ -186,6 +186,10 @@ void OptionParser::parse_plan_filename(int argc, const char **argv) {
             if (is_last)
                 throw ArgError("missing argument after --internal-plan-file");
             g_plan_filename = argv[++i];
+        } else if (arg == "--internal-fts-plan-file") {
+            if (is_last)
+                throw ArgError("missing argument after --internal-fts-plan-file");
+            g_fts_plan_filename = argv[++i];
         } else if (arg == "--internal-previous-portfolio-plans") {
             if (is_last)
                 throw ArgError("missing argument after --internal-previous-portfolio-plans");
@@ -312,6 +316,11 @@ shared_ptr<SearchEngine> OptionParser::parse_cmd_line_aux(
             if (is_last)
                 throw ArgError("missing argument after --internal-plan-file");
             ++i;
+        } else if (arg == "--internal-fts-plan-file") {
+            // likewise
+            if (is_last)
+                throw ArgError("missing argument after --internal-fts-plan-file");
+            ++i;
         } else if (arg == "--internal-previous-portfolio-plans") {
             // likewise
             if (is_last)
@@ -341,6 +350,9 @@ string OptionParser::usage(const string &progname) {
            "    by the name that is specified in the definition.\n"
            "--internal-plan-file FILENAME\n"
            "    Plan will be output to a file called FILENAME\n\n"
+           "--internal-fts-plan-file FILENAME\n"
+           "    Additionally write the plan on the transformed FTS task, as\n"
+           "    label ids (one per line, before plan reconstruction), to FILENAME\n\n"
            "--internal-previous-portfolio-plans COUNTER\n"
            "    This planner call is part of a portfolio which already created\n"
            "    plan files FILENAME.1 up to FILENAME.COUNTER.\n"
