@@ -1,6 +1,11 @@
 #include "label_order_finder.h"
 
+#include <algorithm>
+#include <iostream>
+#include <set>
+
 #include "../task_representation/fts_task.h"
+#include "../task_representation/transition_system.h"
 #include "../utils/rng.h"
 #include "../utils/rng_options.h"
 #include "../option_parser.h"
@@ -18,6 +23,12 @@ namespace  label_order_finder {
 
     LabelOrderFinderReverse::LabelOrderFinderReverse(const options::Options &) {
     }
+
+    LabelOrderFinderCausal::LabelOrderFinderCausal(const options::Options &) {
+    }
+
+    LabelOrderFinderRelaxed::LabelOrderFinderRelaxed(const options::Options &) {
+    }
     std::vector<int> LabelOrderFinderLinear::find_order(const task_representation::FTSTask &fts_task) {
         vector<int> order;
         order.reserve(fts_task.get_num_labels());
@@ -34,6 +45,152 @@ namespace  label_order_finder {
         for(int l = fts_task.get_num_labels() - 1; l >=0; --l) {
             order.push_back(l);
         }
+        return order;
+    }
+
+
+    std::vector<int> LabelOrderFinderRelaxed::find_order(const task_representation::FTSTask &fts_task) {
+        const int num_labels = fts_task.get_num_labels();
+        const int num_factors = fts_task.get_size();
+
+        // states reached so far, per factor; monotonically growing
+        std::vector<std::vector<char>> reached(num_factors);
+        for (int f = 0; f < num_factors; f++) {
+            const task_representation::TransitionSystem &factor = fts_task.get_ts(f);
+            reached[f].assign(factor.get_size(), 0);
+            reached[f][factor.get_init_state()] = 1;
+        }
+
+        std::vector<char> placed(num_labels, 0);
+        std::vector<char> applicable(num_labels, 0);   // once applicable, always applicable
+        std::vector<int> order;
+        order.reserve(num_labels);
+        int layer = 0;
+
+        while (true) {
+            // which labels have become applicable with what is reached now
+            std::vector<int> newly;
+            for (int l = 0; l < num_labels; l++) {
+                if (applicable[l]) continue;
+                bool ok = true;
+                for (int f = 0; f < num_factors && ok; f++) {
+                    ok = false;
+                    for (const task_representation::Transition &t :
+                            fts_task.get_ts(f).get_transitions_with_label(l))
+                        if (reached[f][t.src]) { ok = true; break; }
+                }
+                if (ok) { applicable[l] = 1; newly.push_back(l); }
+            }
+            for (int l : newly) { placed[l] = 1; order.push_back(l); }
+
+            // apply every applicable label; a label applied earlier can reach
+            // new targets once more of its sources have been reached
+            bool grew = false;
+            for (int l = 0; l < num_labels; l++) {
+                if (!applicable[l]) continue;
+                for (int f = 0; f < num_factors; f++)
+                    for (const task_representation::Transition &t :
+                            fts_task.get_ts(f).get_transitions_with_label(l))
+                        if (reached[f][t.src] && !reached[f][t.target]) {
+                            reached[f][t.target] = 1;
+                            grew = true;
+                        }
+            }
+            if (!newly.empty()) layer++;
+            if (newly.empty() && !grew) break;
+        }
+
+        int unreachable = 0;
+        for (int l = 0; l < num_labels; l++)
+            if (!placed[l]) { order.push_back(l); unreachable++; }
+
+        std::cout << "Relaxed-reachability label order: " << num_labels << " labels in "
+                  << layer << " layers, " << unreachable
+                  << " never applicable under the delete relaxation." << std::endl;
+        return order;
+    }
+
+    std::vector<int> LabelOrderFinderCausal::find_order(const task_representation::FTSTask &fts_task) {
+        const int num_labels = fts_task.get_num_labels();
+
+        /*
+          One group per (factor, state): the labels that move into that state
+          and the labels that can be applied there. Self-loops count as
+          neither. A label that does both is left out of the group's consumers,
+          because "it must come before itself" is not a constraint we can or
+          should honour.
+        */
+        std::vector<std::vector<int>> producers;   // per group
+        std::vector<std::vector<int>> consumers;   // per group, minus producers
+        std::vector<std::vector<int>> groups_produced_by(num_labels);
+
+        for (int fac = 0; fac < fts_task.get_size(); fac++) {
+            const task_representation::TransitionSystem &factor = fts_task.get_ts(fac);
+            const int num_states = factor.get_size();
+            std::vector<std::set<int>> into(num_states), outof(num_states);
+            for (int label = 0; label < num_labels; label++) {
+                for (const task_representation::Transition &t : factor.get_transitions_with_label(label)) {
+                    if (t.src == t.target) continue;          // a self loop moves nowhere
+                    into[t.target].insert(label);
+                    outof[t.src].insert(label);
+                }
+            }
+            for (int s = 0; s < num_states; s++) {
+                if (into[s].empty() || outof[s].empty()) continue;   // nothing to order
+                const int g = producers.size();
+                producers.emplace_back(into[s].begin(), into[s].end());
+                std::vector<int> cons;
+                for (int l : outof[s])
+                    if (!into[s].count(l)) cons.push_back(l);        // drop producer-consumers
+                if (cons.empty()) { producers.pop_back(); continue; }
+                consumers.push_back(std::move(cons));
+                for (int p : producers[g]) groups_produced_by[p].push_back(g);
+            }
+        }
+
+        // Kahn's algorithm: block_count[l] is how many groups still hold an
+        // unplaced producer of a state l wants to consume.
+        std::vector<int> unplaced_producers(producers.size());
+        for (size_t g = 0; g < producers.size(); g++)
+            unplaced_producers[g] = int(producers[g].size());
+        std::vector<int> block_count(num_labels, 0);
+        for (size_t g = 0; g < consumers.size(); g++)
+            for (int c : consumers[g]) block_count[c]++;
+
+        // ordered by (remaining unmet predecessors, label) so that both the
+        // ready labels and the cheapest cycle break are the front element
+        std::set<std::pair<int,int>> pending;
+        for (int l = 0; l < num_labels; l++) pending.insert({block_count[l], l});
+
+        std::vector<int> order;
+        order.reserve(num_labels);
+        std::vector<char> placed(num_labels, 0);
+        long violations = 0, forced = 0;
+
+        while (!pending.empty()) {
+            const auto it = pending.begin();
+            const int cost = it->first, label = it->second;
+            pending.erase(it);
+            if (cost > 0) { forced++; violations += cost; }   // no label was free: break the cycle
+            placed[label] = 1;
+            order.push_back(label);
+
+            for (int g : groups_produced_by[label]) {
+                if (--unplaced_producers[g] != 0) continue;
+                for (int c : consumers[g]) {
+                    if (placed[c]) continue;
+                    auto old = pending.find({block_count[c], c});
+                    if (old != pending.end()) pending.erase(old);
+                    block_count[c]--;
+                    pending.insert({block_count[c], c});
+                }
+            }
+        }
+
+        std::cout << "Causal label order: " << num_labels << " labels, "
+                  << producers.size() << " (factor,state) constraint groups, "
+                  << forced << " labels placed despite unmet predecessors, "
+                  << violations << " constraints violated." << std::endl;
         return order;
     }
 
@@ -78,6 +235,22 @@ namespace  label_order_finder {
             return make_shared<LabelOrderFinderLinear>(opts);
     }
 
+    static shared_ptr<LabelOrderFinder>_parse_relaxed(OptionParser &parser) {
+        options::Options opts = parser.parse();
+        if (parser.dry_run())
+            return nullptr;
+        else
+            return make_shared<LabelOrderFinderRelaxed>(opts);
+    }
+
+    static shared_ptr<LabelOrderFinder>_parse_causal(OptionParser &parser) {
+        options::Options opts = parser.parse();
+        if (parser.dry_run())
+            return nullptr;
+        else
+            return make_shared<LabelOrderFinderCausal>(opts);
+    }
+
     static shared_ptr<LabelOrderFinder>_parse_reverse(OptionParser &parser) {
         parser.document_synopsis("reverse", "");
         Options opts = parser.parse();
@@ -94,5 +267,7 @@ namespace  label_order_finder {
     static PluginShared<LabelOrderFinder> _plugin_random("label_order_random", _parse_random);
     static PluginShared<LabelOrderFinder> _plugin_linear("label_order_linear", _parse_linear);
     static PluginShared<LabelOrderFinder> _plugin_reverse("label_order_reverse", _parse_reverse);
+    static PluginShared<LabelOrderFinder> _plugin_causal("label_order_causal", _parse_causal);
+    static PluginShared<LabelOrderFinder> _plugin_relaxed("label_order_relaxed", _parse_relaxed);
 
 }
