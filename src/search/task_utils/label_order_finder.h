@@ -94,6 +94,44 @@ namespace label_order_finder {
     };
 
     /*
+      Approximates the plan-optimal order (experiments/optimal_label_order.py)
+      without a plan.
+
+      For every goal-relevant factor g, take g together with its direct
+      causal ancestors -- factors on which a label that moves g has a
+      precondition -- build their explicit product and find a shortest path
+      to g's goal (and the goals of the other included factors) by BFS. Every
+      such abstract plan is a chain of labels. Ancestors are added strongest
+      first (most shared labels) and dropped again from the weakest end
+      whenever the product exceeds max_states reachable states.
+
+      The chains are then merged into one order by minimising the number of
+      consecutive chain pairs (a,b) with b before a -- the same linear
+      ordering problem the plan-optimal inferrer solves, on the multigraph of
+      all chains together. The precedence graph is split into strongly
+      connected components, which are ordered topologically at no cost; each
+      component is ordered by exact MaxSAT (kissat, bef(x,y) variables,
+      no-3-cycle clauses, bounded totalizer, descending bound) when it has at
+      most exact_max_size labels, otherwise and as the MaxSAT's starting
+      bound by the Eades-Lin-Smyth heuristic plus insertion local search.
+      Labels in no chain follow `leftover`.
+
+      The chains from different goals ignore each other, so unlike a
+      plan-derived order this gives no horizon guarantee.
+    */
+    class LabelOrderFinderGoalChains : public LabelOrderFinder{
+        int max_states;
+        int exact_max_size;
+        int exact_conflicts;
+        double exact_time_limit;
+        std::shared_ptr<LabelOrderFinder> leftover;
+        bool verbose;
+        public:
+        LabelOrderFinderGoalChains(const options::Options &opts);
+        std::vector<int> find_order(const task_representation::FTSTask &fts_task) override;
+    };
+
+    /*
       Reads a (partial) label order from a file: one label id per line, lines
       starting with ';' are comments. Labels not mentioned in the file are
       appended in the order given by `leftover` (default: label_order_relaxed).
