@@ -209,6 +209,76 @@ namespace  label_order_finder {
     }
 
 
+    LabelOrderFinderTSort::LabelOrderFinderTSort(const options::Options &opts)
+        : goal_first(opts.get<bool>("goal_first")) {
+    }
+
+    std::vector<int> LabelOrderFinderTSort::find_order(const task_representation::FTSTask &fts_task) {
+        const int num_labels = fts_task.get_num_labels();
+        const int num_factors = fts_task.get_size();
+        // producers[f][s]: labels with a non-self-loop transition into s in f
+        std::vector<std::vector<std::vector<int>>> producers(num_factors);
+        std::vector<std::vector<int>> pre_factors(num_labels);
+        for (int f = 0; f < num_factors; f++) {
+            const task_representation::TransitionSystem &ts = fts_task.get_ts(f);
+            producers[f].assign(ts.get_size(), {});
+            for (int l = 0; l < num_labels; l++) {
+                if (ts.has_precondition_on(task_representation::LabelID(l))) pre_factors[l].push_back(f);
+                int last = -1;
+                for (const auto &t : ts.get_transitions_with_label(l))
+                    if (t.src != t.target && t.target != last) { producers[f][t.target].push_back(l); last = t.target; }
+            }
+            for (auto &v : producers[f]) { std::sort(v.begin(), v.end()); v.erase(std::unique(v.begin(), v.end()), v.end()); }
+        }
+        std::vector<int> roots;
+        std::vector<char> is_root(num_labels, 0);
+        if (goal_first) {
+            for (int f = 0; f < num_factors; f++) {
+                const task_representation::TransitionSystem &ts = fts_task.get_ts(f);
+                if (!ts.is_goal_relevant()) continue;
+                for (int l = 0; l < num_labels; l++)
+                    for (const auto &t : ts.get_transitions_with_label(l))
+                        if (!ts.is_goal_state(t.src) && ts.is_goal_state(t.target)) { is_root[l] = 1; break; }
+            }
+            for (int l = 0; l < num_labels; l++) if (is_root[l]) roots.push_back(l);
+        }
+        for (int l = 0; l < num_labels; l++) if (!is_root[l]) roots.push_back(l);
+
+        // iterative DFS; a label's supporters are generated when it is entered
+        std::vector<char> state(num_labels, 0);   // 0 new, 1 on stack, 2 done
+        std::vector<int> order;
+        order.reserve(num_labels);
+        std::vector<int> stamp(num_labels, -1);
+        for (int r : roots) {
+            if (state[r]) continue;
+            std::vector<std::pair<int, std::vector<int>>> stack;
+            auto enter = [&](int l) {
+                state[l] = 1;
+                std::vector<int> sup;
+                for (int f : pre_factors[l])
+                    for (int s : fts_task.get_ts(f).get_label_precondition(task_representation::LabelID(l)))
+                        for (int p : producers[f][s])
+                            if (p != l && stamp[p] != l) { stamp[p] = l; sup.push_back(p); }
+                std::reverse(sup.begin(), sup.end());   // pop from the back = ascending label order
+                stack.push_back({l, std::move(sup)});
+            };
+            enter(r);
+            while (!stack.empty()) {
+                auto &top = stack.back();
+                if (!top.second.empty()) {
+                    const int p = top.second.back(); top.second.pop_back();
+                    if (!state[p]) enter(p);        // back edges (state 1) are ignored
+                } else {
+                    state[top.first] = 2;
+                    order.push_back(top.first);
+                    stack.pop_back();
+                }
+            }
+        }
+        std::cout << "TSort label order: " << num_labels << " labels" << (goal_first ? ", goal-achieving labels as first roots" : "") << std::endl;
+        return order;
+    }
+
     LabelOrderFinderFile::LabelOrderFinderFile(const options::Options &opts)
         : filename(opts.get<std::string>("filename")),
           leftover(opts.get<std::shared_ptr<LabelOrderFinder>>("leftover")) {
@@ -303,6 +373,16 @@ namespace  label_order_finder {
             return make_shared<LabelOrderFinderCausal>(opts);
     }
 
+    static shared_ptr<LabelOrderFinder>_parse_tsort(OptionParser &parser) {
+        parser.document_synopsis("Balyo's topological ranking", "");
+        parser.add_option<bool>("goal_first",
+            "start the depth-first search from the labels that move a goal factor into a goal state", "false");
+        Options opts = parser.parse();
+        if (parser.help_mode() || parser.dry_run())
+            return nullptr;
+        return make_shared<LabelOrderFinderTSort>(opts);
+    }
+
     static shared_ptr<LabelOrderFinder>_parse_file(OptionParser &parser) {
         parser.document_synopsis("from file", "");
         parser.add_option<std::string>("filename",
@@ -339,5 +419,6 @@ namespace  label_order_finder {
     static PluginShared<LabelOrderFinder> _plugin_causal("label_order_causal", _parse_causal);
     static PluginShared<LabelOrderFinder> _plugin_relaxed("label_order_relaxed", _parse_relaxed);
     static PluginShared<LabelOrderFinder> _plugin_file("label_order_file", _parse_file);
+    static PluginShared<LabelOrderFinder> _plugin_tsort("label_order_tsort", _parse_tsort);
 
 }

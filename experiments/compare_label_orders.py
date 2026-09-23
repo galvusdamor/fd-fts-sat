@@ -34,7 +34,7 @@ def run(problem, order_name, args):
     rundir = os.path.join(args.outdir, name.replace("/", "__"), order_name)
     os.makedirs(rundir, exist_ok=True)
     plan = os.path.join(rundir, "plan")
-    enc = B.bdd(label_order=ORDERS[order_name])
+    enc = B.bdd(label_order=args.specs[order_name])
     cmd = [sys.executable, os.path.join(REPO, "fast-downward.py"), "--build", args.build,
            "--plan-file", plan, "--overall-time-limit", f"{args.time_limit}s",
            "--overall-memory-limit", f"{args.memory_limit}m", problem,
@@ -68,7 +68,10 @@ def main():
     ap.add_argument("instances", help="file with domain/problem per line")
     ap.add_argument("--benchmarks", default="/home/gregor/data/lisat/classical-domains/classical")
     ap.add_argument("--outdir", required=True)
-    ap.add_argument("--orders", default=",".join(ORDERS))
+    ap.add_argument("--orders", default=",".join(ORDERS), help="names from ORDERS")
+    ap.add_argument("--config", action="append", default=[], metavar="NAME=LABEL_ORDER",
+                    help="extra configuration, e.g. gc_d2=label_order_goal_chains(ancestor_depth=2); "
+                         "when given, only these (and --orders if set explicitly) run")
     ap.add_argument("--build", default="release64")
     ap.add_argument("--time-limit", type=int, default=600)
     ap.add_argument("--memory-limit", type=int, default=1500)
@@ -83,7 +86,13 @@ def main():
         if line and not line.startswith("#"):
             p = os.path.join(args.benchmarks, line)
             probs.append(p if p.endswith(".pddl") else p + ".pddl")
-    jobs = [(p, o) for o in args.orders.split(",") for p in probs]
+    args.specs = dict(ORDERS)
+    names = [] if args.config and "--orders" not in sys.argv else args.orders.split(",")
+    for c in args.config:
+        name, spec = c.split("=", 1)
+        args.specs[name] = spec
+        names.append(name)
+    jobs = [(p, o) for o in names for p in probs]
     rows = []
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as ex:
         for f in concurrent.futures.as_completed([ex.submit(run, p, o, args) for p, o in jobs]):

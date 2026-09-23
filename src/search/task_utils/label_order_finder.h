@@ -94,6 +94,24 @@ namespace label_order_finder {
     };
 
     /*
+      Balyo's "Topological Ranking" (PhD thesis, 2013, sec. 3.4.2): depth-first
+      post-order over the enabling graph, so that every label comes after the
+      labels supporting it, and back edges (cycles) are ignored. A label l'
+      supports l if in some factor l has a precondition on, l' has a
+      non-self-loop transition into one of l's source states there. Roots are
+      taken in label order; with goal_first, the labels that move a goal
+      factor into a goal state are taken first, which addresses Balyo's own
+      caveat that the ranking ignores the goal. Being depth-first, it keeps a
+      label's supporter chain contiguous, which layering does not.
+    */
+    class LabelOrderFinderTSort : public LabelOrderFinder{
+        bool goal_first;
+        public:
+        LabelOrderFinderTSort(const options::Options &opts);
+        std::vector<int> find_order(const task_representation::FTSTask &fts_task) override;
+    };
+
+    /*
       Approximates the plan-optimal order (experiments/optimal_label_order.py)
       without a plan.
 
@@ -126,6 +144,12 @@ namespace label_order_finder {
         double exact_time_limit;
         std::shared_ptr<LabelOrderFinder> leftover;
         bool verbose;
+        int ancestor_depth;
+        int subgoal_depth;
+        int plans_per_goal;
+        int plan_slack;
+        int selection_rounds;
+        bool leftover_support;
         public:
         LabelOrderFinderGoalChains(const options::Options &opts);
         std::vector<int> find_order(const task_representation::FTSTask &fts_task) override;
