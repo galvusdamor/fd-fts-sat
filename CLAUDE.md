@@ -700,6 +700,45 @@ became solvable through the order alone, since the baseline must solve them
 first; the three that did solve at 600s (driverlog/pfile18 459s -> 110s,
 nomystery p19 112s -> 6s, pipesworld p11 15s -> 2.6s) gained like the rest.
 
+### Approximating it without a plan: `label_order_goal_chains`
+
+`label_order_goal_chains()` (`task_utils/label_order_goal_chains.cc`): per
+goal-relevant factor, BFS in the explicit product of the factor and its
+direct causal ancestors (capped at `max_states`, ancestors dropped weakest
+first); each abstract plan is a label chain, and the chains are merged by the
+same MaxSAT as above over all their consecutive pairs (SCCs ordered by Kahn,
+ties by chain index then position so chains stay contiguous; exact per SCC up
+to `exact_max_size`). Two traps found while building it:
+
+* `TransitionSystem::is_selfloop_everywhere(l)` means *has a self-loop at every
+  state*, not *has only self-loops*; such a label can still move the factor
+  (schedule). "Leaves the factor unchanged" is `isIrrelevantLabel(l)`.
+* Breaking ties between independent components by chain *position* alone puts
+  every chain's first label first, every second label second, ... -- which is
+  layering again, and put elevators p20 back from horizon 1 to 5.
+
+2026-09-23, 218 instances (`experiments/instances-goalchains.txt`: the
+overnight set plus the cluster instances where relaxed needed more steps than
+linear and 30 where it needed fewer), 600s/1500MB, all 654 plans VAL-valid;
+raw data `experiments/2026-09-23-goalchains-results.csv`:
+
+| order | coverage | Σ horizon (193 common) | Σ search | Σ total |
+|---|---:|---:|---:|---:|
+| linear | 199 | 917 | 2846s | 4714s |
+| relaxed | 194 | 770 | 3389s | 5323s |
+| goal_chains | **202** | **619** | **1981s** | **3759s** |
+
+goal_chains is <= min(linear, relaxed) on 150/193; vs relaxed 93 fewer steps /
+73 same / 27 more. On the 109 instances with an overnight plan-optimal
+reference: linear 593, relaxed 420, goal_chains 379, plan-optimal 269 -- about
+a quarter of the relaxed-to-optimal gap closed. It fixes the domains relaxed
+broke (elevators-sat08/11 17/16 = linear, relaxed 57/54) and keeps relaxed's
+airport gains (Σ 117 / 31 / 14). Still bad: schedule (24, as relaxed; linear
+14), psr-small, trucks, blocks. Order computation: median 6ms, but 30-55s on
+floortile-sat14 p03/p04 (large products) -- `max_states` is the knob. The
+chains often do not conflict at all (violated = 0 on 156/208), so the
+component tie-break matters as much as the MaxSAT.
+
 ## Instances that take 10-30 seconds
 
 Most of the IPC suite is useless for comparing encodings: it is either trivial
