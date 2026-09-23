@@ -213,8 +213,8 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 	parser.add_option<string>(
 		"dump_label_order",
 		"write the (primary) label order to this file, one label id per line; "
-		"empty = do not. The option parser lower-cases the path.",
-		"");
+		"'none' = do not. The option parser lower-cases the path.",
+		"none");
 
 	options::Options opts = parser.parse();
 	if (parser.dry_run())
@@ -939,7 +939,8 @@ void BDDSATEncodingFactory::initialize() {
 		assert(int(primary.size()) == fts->get_num_labels());
 		data->orderings.resize(alternateLabelOrders ? 2 : 1);
 		data->orderings[0].labelOrder = primary;
-		if (!dumpLabelOrderFile.empty()) {
+		// FD's option parser rejects an empty string as a default, hence 'none'
+		if (dumpLabelOrderFile != "none") {
 			// same format label_order_file reads and optimal_label_order.py --evaluate takes
 			ofstream out(dumpLabelOrderFile);
 			out << "; label order used by bdd_sat, " << primary.size() << " labels" << endl;
