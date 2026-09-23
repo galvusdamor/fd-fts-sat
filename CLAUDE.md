@@ -676,6 +676,30 @@ compare `base_search`/`opt_search` in the CSV, not `*_total`. One data point
 against the relaxed order: `pathways-noneg/p29` solves in 19s under linear
 but times out at 600s under relaxed.
 
+Overnight run of 2026-09-22/23 (`experiments/instances-optorder-overnight.txt`,
+125 instances / 31 domains, 600s limits, re-inference until achieved ==
+predicted; raw data in `experiments/2026-09-23-optorder-overnight-results.csv`):
+110 instances per baseline yielded a result (5 trivially solved, 10 unsolved by
+the baseline itself), every one of the 440 plans VAL-valid, every inference
+proven optimal.
+
+| baseline | Σ horizon base -> 1st predicted -> final | improved / same | Σ search | median speedup (base search >= 1s) |
+|---|---|---|---|---|
+| linear (110) | 602 -> 333 -> **275** | 106 / 4 | 1647s -> 235s | x10.4 (n=52, min x1.3, max x806) |
+| relaxed (110) | 425 -> 300 -> **263** | 75 / 35 | 2506s -> 505s | x8.3 (n=50, min x0.74) |
+
+Re-inference paid off: 40 (linear) / 25 (relaxed) instances beat their first
+prediction and 5 needed three rounds (e.g. mystery/prob20 3 -> 2 -> 1). Only 2
+plans in 220 had two equal consecutive labels, so `fixed_breaks` is almost
+never the binding constraint; nearly half the instances end at horizon 1. The
+horizon never got worse; search got slower on 4 relaxed-baseline instances,
+worst pathways-noneg/p14 205s -> 255s at unchanged horizon 5. Inference cost is
+negligible except pathways (270-310 plan labels, 170-200 distinct: 1-3.5 min
+per chain). None of the 13 instances that timed out at 70s in the screen
+became solvable through the order alone, since the baseline must solve them
+first; the three that did solve at 600s (driverlog/pfile18 459s -> 110s,
+nomystery p19 112s -> 6s, pipesworld p11 15s -> 2.6s) gained like the rest.
+
 ## Instances that take 10-30 seconds
 
 Most of the IPC suite is useless for comparing encodings: it is either trivial
