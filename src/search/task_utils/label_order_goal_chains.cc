@@ -48,6 +48,42 @@ namespace label_order_finder {
         enum class BFSResult { FOUND, NO_PLAN, TOO_BIG };
 
         /*
+          Candidate labels per product state without testing every label: each
+          label gets a pivot, the first included factor it is constrained in,
+          and is listed under the pivot's states it has transitions from. The
+          candidates of a state are the union over its components, sorted, so
+          they are tried in label order exactly as a full scan would.
+        */
+        struct CandidateIndex {
+            vector<vector<vector<int>>> at;   // at[i][s] = label positions with pivot i, source s
+            vector<int> stamp;
+            int tick = 0;
+            vector<int> buf;
+            void build(const vector<vector<vector<vector<int>>>> &succ,
+                       const vector<vector<char>> &unconstrained, int k,
+                       const vector<int> &sizes) {
+                const int L = succ.size();
+                at.assign(k, {});
+                for (int i = 0; i < k; i++) at[i].assign(sizes[i], {});
+                for (int li = 0; li < L; li++) {
+                    int pivot = -1;
+                    for (int i = 0; i < k && pivot < 0; i++) if (!unconstrained[li][i]) pivot = i;
+                    if (pivot < 0) continue;   // moves nothing here: never useful
+                    for (int s = 0; s < sizes[pivot]; s++)
+                        if (!succ[li][pivot][s].empty()) at[pivot][s].push_back(li);
+                }
+                stamp.assign(L, -1);
+            }
+            const vector<int> &candidates(const vector<int> &st) {
+                buf.clear(); tick++;
+                for (size_t i = 0; i < at.size(); i++)
+                    for (int li : at[i][st[i]]) if (stamp[li] != tick) { stamp[li] = tick; buf.push_back(li); }
+                sort(buf.begin(), buf.end());
+                return buf;
+            }
+        };
+
+        /*
           Shortest label sequence in the product of `factors` from the initial
           state to a state where every goal-relevant included factor is in a
           goal state. Labels that move none of the factors are useless here and
@@ -105,10 +141,15 @@ namespace label_order_finder {
                 for (int i = k - 1; i >= 0; i--) { st[i] = c / radix[i]; c %= radix[i]; }
             };
 
-            vector<int> init(k);
-            for (int i = 0; i < k; i++) init[i] = task.get_ts(factors[i]).get_init_state();
+            vector<int> init(k), sizes(k);
+            for (int i = 0; i < k; i++) {
+                init[i] = task.get_ts(factors[i]).get_init_state();
+                sizes[i] = task.get_ts(factors[i]).get_size();
+            }
             plan.clear();
             if (is_goal(init)) return BFSResult::FOUND;
+            CandidateIndex cand;
+            cand.build(succ, unconstrained, k, sizes);
 
             unordered_map<uint64_t, pair<uint64_t, int>> parent;   // state -> (parent, label)
             deque<uint64_t> queue;
@@ -119,7 +160,7 @@ namespace label_order_finder {
             while (!queue.empty()) {
                 const uint64_t c = queue.front(); queue.pop_front();
                 decode(c, st);
-                for (int li = 0; li < L; li++) {
+                for (int li : cand.candidates(st)) {
                     bool applicable = true;
                     for (int i = 0; i < k && applicable; i++)
                         if (!unconstrained[li][i] && succ[li][i][st[i]].empty()) applicable = false;
@@ -207,9 +248,14 @@ namespace label_order_finder {
             auto decode = [&](uint64_t c, vector<int> &st) {
                 for (int i = k - 1; i >= 0; i--) { st[i] = c / radix[i]; c %= radix[i]; }
             };
-            vector<int> init(k);
-            for (int i = 0; i < k; i++) init[i] = task.get_ts(factors[i]).get_init_state();
+            vector<int> init(k), sizes(k);
+            for (int i = 0; i < k; i++) {
+                init[i] = task.get_ts(factors[i]).get_init_state();
+                sizes[i] = task.get_ts(factors[i]).get_size();
+            }
             if (is_goal(init)) { plans.push_back({}); return BFSResult::FOUND; }
+            CandidateIndex cand;
+            cand.build(succ, unconstrained, k, sizes);
 
             // forward BFS, keeping all edges between explored states
             unordered_map<uint64_t, int> id;              // state -> index
@@ -232,7 +278,7 @@ namespace label_order_finder {
                 if (depth[qi] >= bound) break;
                 if (goal[qi]) continue;          // paths end at the first goal state
                 decode(code[qi], st);
-                for (int li = 0; li < L; li++) {
+                for (int li : cand.candidates(st)) {
                     bool applicable = true;
                     for (int i = 0; i < k && applicable; i++)
                         if (!unconstrained[li][i] && succ[li][i][st[i]].empty()) applicable = false;
@@ -545,7 +591,8 @@ namespace label_order_finder {
           leftover_support(opts.get<bool>("leftover_support")),
           leftover_layer(opts.get<bool>("leftover_layer")),
           goal_pairs(opts.get<int>("goal_pairs")),
-          state_budget(opts.get<int>("state_budget")) {
+          state_budget(opts.get<int>("state_budget")),
+          all_plans(opts.get<bool>("all_plans")) {
         if (leftover_support && leftover_layer) {
             cerr << "label_order_goal_chains: leftover_support and leftover_layer exclude each other" << endl;
             utils::exit_with(utils::ExitCode::INPUT_ERROR);
@@ -838,7 +885,14 @@ namespace label_order_finder {
         // ---- merge, then choose among alternative plans ----
         auto selected_chains = [&]() {
             vector<vector<int>> sel;
-            for (const auto &c : chains) sel.push_back(c.alternatives[c.selected]);
+            for (const auto &c : chains) {
+                if (all_plans) {
+                    // every candidate votes: its consecutive pairs all count
+                    for (const auto &a : c.alternatives) if (!a.empty()) sel.push_back(a);
+                } else {
+                    sel.push_back(c.alternatives[c.selected]);
+                }
+            }
             return sel;
         };
         vector<int> leftover_order = leftover->find_order(task);
@@ -908,7 +962,7 @@ namespace label_order_finder {
         int rounds = 0, switches = 0;
         long alternatives = 0;
         for (const auto &c : chains) alternatives += c.alternatives.size();
-        if (multi) {
+        if (multi && !all_plans) {
             for (; rounds < selection_rounds; rounds++) {
                 vector<int> pos(num_labels);
                 for (size_t i = 0; i < order.size(); i++) pos[order[i]] = i;
@@ -982,6 +1036,9 @@ namespace label_order_finder {
             "and selects one per chain jointly", "1");
         parser.add_option<int>("plan_slack",
             "candidate plans may be this much longer than the shortest", "0");
+        parser.add_option<bool>("all_plans",
+            "with plans_per_goal/plan_slack: merge all candidate plans as separate chains "
+            "(each votes with its consecutive pairs) instead of selecting one per chain", "false");
         parser.add_option<int>("selection_rounds",
             "rounds of choosing each chain's best candidate under the current order and re-merging", "5");
         parser.add_option<bool>("leftover_layer",
