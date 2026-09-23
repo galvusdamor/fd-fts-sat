@@ -79,11 +79,38 @@ def add_bdd_construction(content, props):
                 props[f"bdd_failure_{key}"] = int(float(fields[key]))
 
 
+GOALCHAINS_FIELDS = {
+    # GOALCHAINS key -> property
+    "total_time": "lo_time",
+    "chains": "lo_chains",
+    "pair_chains": "lo_pair_chains",
+    "subgoal_chains": "lo_subgoal_chains",
+    "leftover": "lo_leftover",
+    "violated": "lo_violated",
+    "explored_states": "lo_explored_states",
+    "skipped_budget": "lo_skipped_budget",
+    "deep_fallbacks": "lo_deep_fallbacks",
+}
+
+
+def add_label_order(content, props):
+    """GOALCHAINS statistics of label_order_goal_chains (one line per run)."""
+    lines = re.findall(r"GOALCHAINS goal_factors (.+)", content)
+    if not lines:
+        return
+    fields = dict(re.findall(rf"(\w+) ({NUMBER})", lines[-1]))
+    for key, prop in GOALCHAINS_FIELDS.items():
+        if key in fields:
+            v = float(fields[key])
+            props[prop] = v if key == "total_time" else int(v)
+
+
 class EncodingSizeParser(Parser):
     def __init__(self):
         Parser.__init__(self)
         self.add_function(add_encoding_size)
         self.add_function(add_bdd_construction)
+        self.add_function(add_label_order)
 
 
 if __name__ == "__main__":
