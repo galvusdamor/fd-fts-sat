@@ -711,12 +711,12 @@ namespace label_order_finder {
         // Ancestors of `root`: level 1 are the factors a label moving root has
         // a precondition on, strongest (most such labels) first; level d+1 the
         // same for the labels moving any level-d factor. Up to ancestor_depth.
-        auto ancestors_of = [&](const vector<int> &roots) {
+        auto ancestors_of = [&](const vector<int> &roots, int depth) {
             vector<int> anc;
             vector<char> in(num_factors, 0);
             for (int r : roots) in[r] = 1;
             vector<int> frontier = roots;
-            for (int d = 0; d < ancestor_depth && !frontier.empty(); d++) {
+            for (int d = 0; d < depth && !frontier.empty(); d++) {
                 map<int, int> strength;
                 for (int a : frontier)
                     for (int l : moving[a])
@@ -743,12 +743,12 @@ namespace label_order_finder {
           factors of the product actually used.
         */
         long explored_states = 0;
-        int skipped_budget = 0;
+        int skipped_budget = 0, deep_fallbacks = 0;
         auto solve = [&](const vector<int> &roots, const vector<char> &root_ok, bool other_goals,
-                         vector<vector<int>> &plans, vector<int> &used) {
+                         vector<vector<int>> &plans, vector<int> &used, int depth, bool budgeted) {
             plans.clear(); used.clear();
-            if (state_budget >= 0 && explored_states >= state_budget) { skipped_budget++; return false; }
-            const vector<int> anc = ancestors_of(roots);
+            if (budgeted && state_budget >= 0 && explored_states >= state_budget) { skipped_budget++; return false; }
+            const vector<int> anc = ancestors_of(roots, depth);
             const int nr = roots.size();
             auto goal_sets = [&](const vector<int> &factors) {
                 vector<vector<char>> gs(factors.size());
@@ -825,7 +825,7 @@ namespace label_order_finder {
                     for (int s : pre) ok[s] = 1;
                     if (ok[ts.get_init_state()]) continue;
                     vector<vector<int>> sp; vector<int> su;
-                    if (!solve({f}, ok, false, sp, su) || sp[0].empty()) continue;
+                    if (!solve({f}, ok, false, sp, su, ancestor_depth, true) || sp[0].empty()) continue;
                     add_subgoals(sp[0], su, depth + 1);
                     chains.push_back({sp, 0});
                     subgoal_chains++;
@@ -836,7 +836,19 @@ namespace label_order_finder {
             if (!tg.is_goal_relevant()) continue;
             goal_factors++;
             vector<vector<int>> plans; vector<int> used;
-            if (!solve({g}, {}, true, plans, used)) {
+            /*
+              Deeper ancestors only within the state budget; if that is used
+              up (or the deeper product fails), fall back to the unbudgeted
+              depth-1 computation of the default, so running out of budget can
+              never leave a goal without the chain the default would give it.
+            */
+            bool ok = false;
+            if (ancestor_depth > 1) {
+                ok = solve({g}, {}, true, plans, used, ancestor_depth, true);
+                if (!ok) deep_fallbacks++;
+            }
+            if (!ok) ok = solve({g}, {}, true, plans, used, 1, false);
+            if (!ok) {
                 if (verbose)
                     cout << "GOALCHAINS no abstract plan for factor " << g << " (" << tg.get_size()
                          << " states, " << tg.get_goal_states().size() << " goal states)" << endl;
@@ -858,7 +870,7 @@ namespace label_order_finder {
             vector<int> goals;
             for (int g = 0; g < num_factors; g++) if (task.get_ts(g).is_goal_relevant()) goals.push_back(g);
             vector<vector<char>> anc_set(goals.size(), vector<char>(num_factors, 0));
-            for (size_t i = 0; i < goals.size(); i++) for (int f : ancestors_of({goals[i]})) anc_set[i][f] = 1;
+            for (size_t i = 0; i < goals.size(); i++) for (int f : ancestors_of({goals[i]}, ancestor_depth)) anc_set[i][f] = 1;
             set<pair<int, int>> done;
             for (size_t i = 0; i < goals.size(); i++) {
                 vector<pair<int, int>> partners;   // (-shared, j)
@@ -873,7 +885,7 @@ namespace label_order_finder {
                     const int j = partners[n].second;
                     if (!done.insert({min<int>(i, j), max<int>(i, j)}).second) continue;
                     vector<vector<int>> plans; vector<int> used;
-                    if (!solve({goals[min<int>(i, j)], goals[max<int>(i, j)]}, {}, true, plans, used) || plans[0].empty())
+                    if (!solve({goals[min<int>(i, j)], goals[max<int>(i, j)]}, {}, true, plans, used, ancestor_depth, true) || plans[0].empty())
                         continue;
                     chains.push_back({plans, 0});
                     pair_chains++;
@@ -1008,6 +1020,7 @@ namespace label_order_finder {
              << " alternatives " << alternatives
              << " selection_rounds " << rounds << " switches " << switches
              << " explored_states " << explored_states << " skipped_budget " << skipped_budget
+             << " deep_fallbacks " << deep_fallbacks
              << " factors_covered " << factors_covered << " factors_with_moves " << factors_with_moves
              << " chain_time " << chain_time << " total_time " << total_time << endl;
         return order;
@@ -1045,9 +1058,11 @@ namespace label_order_finder {
             "insert leftover labels between the chain labels by relaxed-reachability layer "
             "instead of appending them", "false");
         parser.add_option<int>("state_budget",
-            "total number of product states all searches may explore; once used up, no "
-            "further chains are computed, in the order they are generated (per goal factor "
-            "its subgoal chains and its goal chain, then the pair chains); -1 = unlimited", "-1");
+            "product states the searches beyond the default may explore: goal chains with "
+            "ancestor_depth > 1, subgoal chains and pair chains, in that order of generation. "
+            "Once used up, goal chains fall back to the default depth-1 computation (which "
+            "is never budgeted) and no further subgoal or pair chains are computed; "
+            "-1 = unlimited", "-1");
         parser.add_option<int>("goal_pairs",
             "also plan jointly for each goal factor and up to this many other goal factors "
             "sharing most ancestors with it, adding those chains; 0 = off", "0");
