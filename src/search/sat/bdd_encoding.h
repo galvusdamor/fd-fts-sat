@@ -152,6 +152,7 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const long bddNodeLimit;
 
 	std::shared_ptr<label_order_finder::LabelOrderFinder> label_order_finder;
+	const std::string dumpLabelOrderFile;
 
 	// One per transition system, same objects the label-based encoding uses;
 	// holds the per-state self-loop sets the one-step construction needs.

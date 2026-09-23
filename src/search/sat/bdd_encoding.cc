@@ -1,3 +1,4 @@
+#include <fstream>
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -75,6 +76,7 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	bddInitTimeLimit(opts.get<int>("bdd_init_time_limit")),
 	bddNodeLimit(long(opts.get<int>("bdd_node_limit"))),
 	label_order_finder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order")),
+	dumpLabelOrderFile(opts.get<string>("dump_label_order")),
 	cudd_init_nodes(long(opts.get<int>("cudd_init_nodes"))),
 	cudd_init_cache_size(long(opts.get<int>("cudd_cache_size"))),
 	cudd_init_available_memory(long(opts.get<int>("cudd_max_memory_mb")) * 1024L * 1024L)
@@ -207,6 +209,12 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 		"order in which labels may be applied within one time step. This is also the "
 		"BDD variable order",
 		"label_order_linear()");
+
+	parser.add_option<string>(
+		"dump_label_order",
+		"write the (primary) label order to this file, one label id per line; "
+		"empty = do not. The option parser lower-cases the path.",
+		"");
 
 	options::Options opts = parser.parse();
 	if (parser.dry_run())
@@ -931,6 +939,12 @@ void BDDSATEncodingFactory::initialize() {
 		assert(int(primary.size()) == fts->get_num_labels());
 		data->orderings.resize(alternateLabelOrders ? 2 : 1);
 		data->orderings[0].labelOrder = primary;
+		if (!dumpLabelOrderFile.empty()) {
+			// same format label_order_file reads and optimal_label_order.py --evaluate takes
+			ofstream out(dumpLabelOrderFile);
+			out << "; label order used by bdd_sat, " << primary.size() << " labels" << endl;
+			for (int l : primary) out << l << endl;
+		}
 		if (alternateLabelOrders){
 			// the reverse of the primary order, for the even-numbered steps
 			data->orderings[1].labelOrder.assign(primary.rbegin(), primary.rend());
