@@ -60,7 +60,7 @@ namespace label_order_finder {
         BFSResult product_bfs(const FTSTask &task, const vector<int> &factors,
                               const vector<vector<int>> &moving, int max_states,
                               const vector<vector<char>> &goal_ok,
-                              vector<int> &plan) {
+                              vector<int> &plan, long &explored) {
             const int k = factors.size();
             vector<uint64_t> radix(k);
             uint64_t mult = 1;
@@ -136,9 +136,10 @@ namespace label_order_finder {
                                 for (uint64_t x = cn; x != c0; x = parent[x].first)
                                     plan.push_back(parent[x].second);
                                 reverse(plan.begin(), plan.end());
+                                explored += parent.size();
                                 return BFSResult::FOUND;
                             }
-                            if ((int)parent.size() > max_states) return BFSResult::TOO_BIG;
+                            if ((int)parent.size() > max_states) { explored += parent.size(); return BFSResult::TOO_BIG; }
                             queue.push_back(cn);
                         }
                         int i = 0;
@@ -151,6 +152,7 @@ namespace label_order_finder {
                     }
                 }
             }
+            explored += parent.size();
             return BFSResult::NO_PLAN;
         }
 
@@ -166,7 +168,7 @@ namespace label_order_finder {
         BFSResult product_plans(const FTSTask &task, const vector<int> &factors,
                                 const vector<vector<int>> &moving, int max_states,
                                 const vector<vector<char>> &goal_ok, int max_plans, int slack,
-                                vector<vector<int>> &plans) {
+                                vector<vector<int>> &plans, long &explored) {
             plans.clear();
             const int k = factors.size();
             vector<uint64_t> radix(k);
@@ -257,6 +259,7 @@ namespace label_order_finder {
                 }
                 if ((int)code.size() > max_states) { truncated = true; break; }
             }
+            explored += code.size();
             if (bound == INT_MAX) return truncated ? BFSResult::TOO_BIG : BFSResult::NO_PLAN;
 
             // backward goal distances over the explored edges
@@ -539,7 +542,14 @@ namespace label_order_finder {
           plans_per_goal(opts.get<int>("plans_per_goal")),
           plan_slack(opts.get<int>("plan_slack")),
           selection_rounds(opts.get<int>("selection_rounds")),
-          leftover_support(opts.get<bool>("leftover_support")) {
+          leftover_support(opts.get<bool>("leftover_support")),
+          leftover_layer(opts.get<bool>("leftover_layer")),
+          goal_pairs(opts.get<int>("goal_pairs")),
+          state_budget(opts.get<int>("state_budget")) {
+        if (leftover_support && leftover_layer) {
+            cerr << "label_order_goal_chains: leftover_support and leftover_layer exclude each other" << endl;
+            utils::exit_with(utils::ExitCode::INPUT_ERROR);
+        }
         if (plans_per_goal < 1) {
             cerr << "label_order_goal_chains: plans_per_goal must be >= 1" << endl;
             utils::exit_with(utils::ExitCode::INPUT_ERROR);
@@ -654,11 +664,11 @@ namespace label_order_finder {
         // Ancestors of `root`: level 1 are the factors a label moving root has
         // a precondition on, strongest (most such labels) first; level d+1 the
         // same for the labels moving any level-d factor. Up to ancestor_depth.
-        auto ancestors_of = [&](int root) {
+        auto ancestors_of = [&](const vector<int> &roots) {
             vector<int> anc;
             vector<char> in(num_factors, 0);
-            in[root] = 1;
-            vector<int> frontier = {root};
+            for (int r : roots) in[r] = 1;
+            vector<int> frontier = roots;
             for (int d = 0; d < ancestor_depth && !frontier.empty(); d++) {
                 map<int, int> strength;
                 for (int a : frontier)
@@ -685,15 +695,20 @@ namespace label_order_finder {
           Returns the candidate plans (empty vector = nothing found) and the
           factors of the product actually used.
         */
-        auto solve = [&](int root, const vector<char> &root_ok, bool other_goals,
+        long explored_states = 0;
+        int skipped_budget = 0;
+        auto solve = [&](const vector<int> &roots, const vector<char> &root_ok, bool other_goals,
                          vector<vector<int>> &plans, vector<int> &used) {
-            const vector<int> anc = ancestors_of(root);
+            plans.clear(); used.clear();
+            if (state_budget >= 0 && explored_states >= state_budget) { skipped_budget++; return false; }
+            const vector<int> anc = ancestors_of(roots);
+            const int nr = roots.size();
             auto goal_sets = [&](const vector<int> &factors) {
                 vector<vector<char>> gs(factors.size());
                 for (size_t i = 0; i < factors.size(); i++) {
                     const TransitionSystem &ts = task.get_ts(factors[i]);
                     if (i == 0 && !root_ok.empty()) { gs[i] = root_ok; continue; }
-                    if (i == 0 || other_goals) {
+                    if ((int)i < nr || other_goals) {
                         gs[i].assign(ts.get_size(), 0);
                         for (int s = 0; s < ts.get_size(); s++) gs[i][s] = ts.is_goal_state(s);
                     }
@@ -701,13 +716,14 @@ namespace label_order_finder {
                 return gs;
             };
             auto attempt = [&](int n, vector<vector<int>> &out_plans) {
-                vector<int> factors = {root};
+                vector<int> factors = roots;
                 factors.insert(factors.end(), anc.begin(), anc.begin() + n);
                 const vector<vector<char>> gs = goal_sets(factors);
                 if (multi)
-                    return product_plans(task, factors, moving, max_states, gs, plans_per_goal, plan_slack, out_plans);
+                    return product_plans(task, factors, moving, max_states, gs, plans_per_goal, plan_slack,
+                                         out_plans, explored_states);
                 vector<int> plan;
-                const BFSResult r = product_bfs(task, factors, moving, max_states, gs, plan);
+                const BFSResult r = product_bfs(task, factors, moving, max_states, gs, plan, explored_states);
                 out_plans.clear();
                 if (r == BFSResult::FOUND) out_plans.push_back(plan);
                 return r;
@@ -730,9 +746,9 @@ namespace label_order_finder {
             plans.clear(); used.clear();
             if (best_n >= 0) {
                 plans = best;
-                used = {root};
+                used = roots;
                 used.insert(used.end(), anc.begin(), anc.begin() + best_n);
-                product_factors += best_n + 1;
+                product_factors += best_n + nr;
                 for (int f : used) covered[f] = 1;
                 return true;
             }
@@ -762,7 +778,7 @@ namespace label_order_finder {
                     for (int s : pre) ok[s] = 1;
                     if (ok[ts.get_init_state()]) continue;
                     vector<vector<int>> sp; vector<int> su;
-                    if (!solve(f, ok, false, sp, su) || sp[0].empty()) continue;
+                    if (!solve({f}, ok, false, sp, su) || sp[0].empty()) continue;
                     add_subgoals(sp[0], su, depth + 1);
                     chains.push_back({sp, 0});
                     subgoal_chains++;
@@ -773,7 +789,7 @@ namespace label_order_finder {
             if (!tg.is_goal_relevant()) continue;
             goal_factors++;
             vector<vector<int>> plans; vector<int> used;
-            if (!solve(g, {}, true, plans, used)) {
+            if (!solve({g}, {}, true, plans, used)) {
                 if (verbose)
                     cout << "GOALCHAINS no abstract plan for factor " << g << " (" << tg.get_size()
                          << " states, " << tg.get_goal_states().size() << " goal states)" << endl;
@@ -782,6 +798,40 @@ namespace label_order_finder {
             if (plans[0].empty()) continue;
             add_subgoals(plans[0], used, 0);
             chains.push_back({plans, 0});
+        }
+        /*
+          Pair chains: a joint abstract plan for two goal factors shows how
+          their chains interleave (a shared lift serialises two passengers, a
+          pipeline of machines interleaves two sheets), which single-goal
+          chains cannot tell. Each goal factor is paired with the goal_pairs
+          others sharing most ancestors with it.
+        */
+        int pair_chains = 0;
+        if (goal_pairs > 0) {
+            vector<int> goals;
+            for (int g = 0; g < num_factors; g++) if (task.get_ts(g).is_goal_relevant()) goals.push_back(g);
+            vector<vector<char>> anc_set(goals.size(), vector<char>(num_factors, 0));
+            for (size_t i = 0; i < goals.size(); i++) for (int f : ancestors_of({goals[i]})) anc_set[i][f] = 1;
+            set<pair<int, int>> done;
+            for (size_t i = 0; i < goals.size(); i++) {
+                vector<pair<int, int>> partners;   // (-shared, j)
+                for (size_t j = 0; j < goals.size(); j++) {
+                    if (j == i) continue;
+                    int shared = 0;
+                    for (int f = 0; f < num_factors; f++) shared += anc_set[i][f] && anc_set[j][f];
+                    if (shared > 0) partners.push_back({-shared, j});
+                }
+                sort(partners.begin(), partners.end());
+                for (int n = 0; n < goal_pairs && n < (int)partners.size(); n++) {
+                    const int j = partners[n].second;
+                    if (!done.insert({min<int>(i, j), max<int>(i, j)}).second) continue;
+                    vector<vector<int>> plans; vector<int> used;
+                    if (!solve({goals[min<int>(i, j)], goals[max<int>(i, j)]}, {}, true, plans, used) || plans[0].empty())
+                        continue;
+                    chains.push_back({plans, 0});
+                    pair_chains++;
+                }
+            }
         }
         const double chain_time = chrono::duration<double>(chrono::steady_clock::now() - start).count();
 
@@ -792,6 +842,7 @@ namespace label_order_finder {
             return sel;
         };
         vector<int> leftover_order = leftover->find_order(task);
+        const vector<int> relaxed = leftover_layer ? relaxed_layers(task) : vector<int>();
         auto complete = [&](vector<int> order) {
             vector<char> placed(num_labels, 0);
             for (int l : order) placed[l] = 1;
@@ -824,6 +875,27 @@ namespace label_order_finder {
                 for (int l : order) { visit(l); result.push_back(l); }
                 for (int l : result) placed[l] = 1;
                 order = result;
+            }
+            if (leftover_layer) {
+                /*
+                  Insert each leftover label before the first chain label of a
+                  later relaxed layer; the chain labels keep their order. Never
+                  applicable labels go last.
+                */
+                const int INF = INT_MAX;
+                auto lay = [&](int l) { return relaxed[l] < 0 ? INF : relaxed[l]; };
+                map<int, vector<int>> pending;   // layer -> leftover labels in leftover order
+                for (int l : leftover_order) if (!placed[l]) pending[lay(l)].push_back(l);
+                vector<int> result;
+                for (int c : order) {
+                    while (!pending.empty() && pending.begin()->first < lay(c) && pending.begin()->first != INF) {
+                        for (int l : pending.begin()->second) result.push_back(l);
+                        pending.erase(pending.begin());
+                    }
+                    result.push_back(c);
+                }
+                for (auto &[d, ls] : pending) for (int l : ls) result.push_back(l);
+                return result;
             }
             for (int l : leftover_order) if (!placed[l]) order.push_back(l);
             return order;
@@ -878,8 +950,10 @@ namespace label_order_finder {
              << " sccs " << ms.sccs << " largest_scc " << ms.largest
              << " exact_sccs " << ms.exact_comps << " proven " << ms.proven << " heuristic_sccs " << ms.heuristic_comps
              << " leftover " << (num_labels - (int)merged.size())
-             << " subgoal_chains " << subgoal_chains << " alternatives " << alternatives
+             << " subgoal_chains " << subgoal_chains << " pair_chains " << pair_chains
+             << " alternatives " << alternatives
              << " selection_rounds " << rounds << " switches " << switches
+             << " explored_states " << explored_states << " skipped_budget " << skipped_budget
              << " factors_covered " << factors_covered << " factors_with_moves " << factors_with_moves
              << " chain_time " << chain_time << " total_time " << total_time << endl;
         return order;
@@ -910,6 +984,16 @@ namespace label_order_finder {
             "candidate plans may be this much longer than the shortest", "0");
         parser.add_option<int>("selection_rounds",
             "rounds of choosing each chain's best candidate under the current order and re-merging", "5");
+        parser.add_option<bool>("leftover_layer",
+            "insert leftover labels between the chain labels by relaxed-reachability layer "
+            "instead of appending them", "false");
+        parser.add_option<int>("state_budget",
+            "total number of product states all searches may explore; once used up, no "
+            "further chains are computed, in the order they are generated (per goal factor "
+            "its subgoal chains and its goal chain, then the pair chains); -1 = unlimited", "-1");
+        parser.add_option<int>("goal_pairs",
+            "also plan jointly for each goal factor and up to this many other goal factors "
+            "sharing most ancestors with it, adding those chains; 0 = off", "0");
         parser.add_option<bool>("leftover_support",
             "place leftover labels depth-first before the chain labels they support "
             "(Balyo's topological ranking seeded with the chain order) instead of at the end", "false");

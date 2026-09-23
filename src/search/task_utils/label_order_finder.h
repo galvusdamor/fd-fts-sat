@@ -19,6 +19,13 @@ namespace utils {
 }
 
 namespace label_order_finder {
+    /*
+      Relaxed-reachability layer of every label (see LabelOrderFinderRelaxed),
+      -1 for labels never applicable under the delete relaxation. Writes the
+      number of non-empty layers to *num_layers if given.
+    */
+    std::vector<int> relaxed_layers(const task_representation::FTSTask &fts_task, int *num_layers = nullptr);
+
     class LabelOrderFinder {
     public:
         virtual std::vector<int> find_order(const task_representation::FTSTask &fts_task) = 0;
@@ -150,6 +157,9 @@ namespace label_order_finder {
         int plan_slack;
         int selection_rounds;
         bool leftover_support;
+        bool leftover_layer;
+        int goal_pairs;
+        int state_budget;
         public:
         LabelOrderFinderGoalChains(const options::Options &opts);
         std::vector<int> find_order(const task_representation::FTSTask &fts_task) override;

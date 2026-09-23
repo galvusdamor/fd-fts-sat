@@ -52,7 +52,7 @@ namespace  label_order_finder {
     }
 
 
-    std::vector<int> LabelOrderFinderRelaxed::find_order(const task_representation::FTSTask &fts_task) {
+    std::vector<int> relaxed_layers(const task_representation::FTSTask &fts_task, int *num_layers) {
         const int num_labels = fts_task.get_num_labels();
         const int num_factors = fts_task.get_size();
 
@@ -64,10 +64,8 @@ namespace  label_order_finder {
             reached[f][factor.get_init_state()] = 1;
         }
 
-        std::vector<char> placed(num_labels, 0);
+        std::vector<int> layer_of(num_labels, -1);
         std::vector<char> applicable(num_labels, 0);   // once applicable, always applicable
-        std::vector<int> order;
-        order.reserve(num_labels);
         int layer = 0;
 
         while (true) {
@@ -84,7 +82,7 @@ namespace  label_order_finder {
                 }
                 if (ok) { applicable[l] = 1; newly.push_back(l); }
             }
-            for (int l : newly) { placed[l] = 1; order.push_back(l); }
+            for (int l : newly) layer_of[l] = layer;
 
             // apply every applicable label; a label applied earlier can reach
             // new targets once more of its sources have been reached
@@ -102,13 +100,26 @@ namespace  label_order_finder {
             if (!newly.empty()) layer++;
             if (newly.empty() && !grew) break;
         }
+        if (num_layers) *num_layers = layer;
+        return layer_of;
+    }
 
+    std::vector<int> LabelOrderFinderRelaxed::find_order(const task_representation::FTSTask &fts_task) {
+        const int num_labels = fts_task.get_num_labels();
+        int layers = 0;
+        const std::vector<int> layer_of = relaxed_layers(fts_task, &layers);
+        std::vector<int> order;
+        order.reserve(num_labels);
+        // by layer, within a layer by index; never applicable labels last
+        for (int d = 0; d < layers; d++)
+            for (int l = 0; l < num_labels; l++)
+                if (layer_of[l] == d) order.push_back(l);
         int unreachable = 0;
         for (int l = 0; l < num_labels; l++)
-            if (!placed[l]) { order.push_back(l); unreachable++; }
+            if (layer_of[l] < 0) { order.push_back(l); unreachable++; }
 
         std::cout << "Relaxed-reachability label order: " << num_labels << " labels in "
-                  << layer << " layers, " << unreachable
+                  << layers << " layers, " << unreachable
                   << " never applicable under the delete relaxation." << std::endl;
         return order;
     }
