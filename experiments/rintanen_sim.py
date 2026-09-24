@@ -22,8 +22,16 @@ Scheduling reproduced from the code (schedule_formula_as_one=true):
     strategy has one) and runs, otherwise the smallest open call runs;
   * UNSAT at step s closes every open call with step <= s;
   * SAT ends the run.
-Not modelled: the memory limit (formula generation pauses near it), kissat's
-callback granularity, and cache effects of interleaving.
+  * memory (optional, memory_limit_mb given): a call allocates
+    bytes_per_clause * clauses(k) while its formula is generated, one time step
+    at a time; after each step, if base + allocated + leeway > limit and other
+    calls are open, generation pauses and the smallest open call runs (the
+    scheduler's forcePause path, which never opens a new length); memory is
+    freed when a call is closed. Measured on depot/pfile7: ~140-155 B/clause,
+    formula plus solver, nothing freed while calls are open.
+Not modelled: kissat's callback granularity and cache effects of
+interleaving. Timings must come from runs under the same machine load: on the
+4-core/8-thread dev machine, 6 parallel jobs cost 1.6-2x the CPU time of 4.
 
 A result is "uncertain" if it depends on something the profile does not know:
 a call that timed out in the profile (S > C) receiving more than C of solve
@@ -79,7 +87,8 @@ def lengths_of(strategy, n):
     return out
 
 
-def simulate(profile, strategy, interval=1.0, gamma=1.0, max_parallel=20, time_limit=1800.0):
+def simulate(profile, strategy, interval=1.0, gamma=1.0, max_parallel=20, time_limit=1800.0,
+             memory_limit_mb=None, bytes_per_clause=150.0, base_mb=120.0, leeway_mb=1000.0):
     """
     profile: {length: {"status": "SAT"|"UNSAT"|"TIMEOUT", "encode": G, "solve": S}}
     Returns dict(solved, time, length, uncertain, created, reason).
@@ -102,11 +111,13 @@ def simulate(profile, strategy, interval=1.0, gamma=1.0, max_parallel=20, time_l
                 return None
         p = profile.get(L)
         if p is None:
-            call = dict(step=next_step, L=L, G=None, S=None, status=None, done_gen=False, used=0.0)
+            call = dict(step=next_step, L=L, G=None, S=None, status=None, done_gen=False, used=0.0,
+                        gen_steps=0, mem=0.0, mem_total=0.0)
         else:
             S = p["solve"] if p["status"] in ("SAT", "UNSAT") else INF
             call = dict(step=next_step, L=L, G=p["encode"], S=S, cap=p["solve"], status=p["status"],
-                        done_gen=False, used=0.0)
+                        done_gen=False, used=0.0, gen_steps=0, mem=0.0,
+                        mem_total=bytes_per_clause * p.get("clauses", 0) / 2**20)
         open_calls[next_step] = call
         created.append(L)
         next_step += 1
@@ -119,7 +130,13 @@ def simulate(profile, strategy, interval=1.0, gamma=1.0, max_parallel=20, time_l
         pos = sorted(open_calls).index(step)
         return max(0.001, lround(interval * 1000 * gamma ** pos) / 1000.0)
 
-    def pick_after(step):
+    def memory_in_use():
+        return base_mb + sum(c["mem"] for c in open_calls.values())
+
+    def pick_after(step, force_pause=False):
+        if force_pause:
+            # generation paused for memory: never opens a new length, goes to the smallest
+            return open_calls[min(open_calls)]
         larger = [s for s in open_calls if s > step]
         if larger:
             return open_calls[min(larger)]
@@ -143,9 +160,39 @@ def simulate(profile, strategy, interval=1.0, gamma=1.0, max_parallel=20, time_l
                 uncertain.append(("unprofiled", cur["L"]))
                 return dict(solved=None, time=t, length=None, uncertain=uncertain, created=created,
                             reason=f"length {cur['L']} not profiled")
-            t += cur["G"]
-            cur["done_gen"] = True
-            quantum = max(0.0, budget - cur["G"])
+            if memory_limit_mb is None:
+                t += cur["G"]
+                cur["done_gen"] = True
+                quantum = max(0.0, budget - cur["G"])
+            else:
+                spent = 0.0
+                paused = False
+                # a paused call re-checks memory before encoding its next step
+                while cur["gen_steps"] < cur["L"]:
+                    if (cur["gen_steps"] > 0 and memory_in_use() + leeway_mb > memory_limit_mb
+                            and len(open_calls) > 1):
+                        paused = True
+                        break
+                    dt = cur["G"] / cur["L"]
+                    t += dt; spent += dt
+                    cur["gen_steps"] += 1
+                    cur["mem"] = cur["mem_total"] * cur["gen_steps"] / cur["L"]
+                    if (memory_in_use() + leeway_mb > memory_limit_mb and len(open_calls) > 1
+                            and cur["gen_steps"] < cur["L"]):
+                        paused = True
+                        break
+                if paused:
+                    if t > time_limit:
+                        return dict(solved=False, time=time_limit, length=None, uncertain=uncertain,
+                                    created=created, reason="time limit")
+                    if spent == 0.0:
+                        # nothing can progress until memory is freed; the paused
+                        # call is skipped, which costs nothing in the real scheduler
+                        t += 1e-6
+                    cur = pick_after(cur["step"], force_pause=True)
+                    continue
+                cur["done_gen"] = True
+                quantum = max(0.0, budget - spent)
         remaining = cur["S"] - cur["used"]
         if remaining <= quantum:
             t += remaining
@@ -175,8 +222,10 @@ def parse_profile(log_text):
     """STEP lines of a profiling run -> profile dict"""
     import re
     prof = {}
-    for m in re.finditer(r"STEP \d+ length (\d+) (SAT|UNSAT|TIMEOUT) time \S+ .*?encode_time (\S+) solve_time (\S+)", log_text):
-        prof[int(m.group(1))] = dict(status=m.group(2), encode=float(m.group(3)), solve=float(m.group(4)))
+    for m in re.finditer(r"STEP \d+ length (\d+) (SAT|UNSAT|TIMEOUT) time \S+ clauses (\d+) vars (\d+).*?"
+                         r"encode_time (\S+) solve_time (\S+)", log_text):
+        prof[int(m.group(1))] = dict(status=m.group(2), encode=float(m.group(5)), solve=float(m.group(6)),
+                                     clauses=int(m.group(3)), vars=int(m.group(4)))
     return prof
 
 

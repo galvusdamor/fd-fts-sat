@@ -47,10 +47,11 @@ CONFIGS = {
 }
 
 
-def fd(problem, search, rundir, args, plan=True):
+def fd(problem, search, rundir, args, plan=True, overall=None):
     os.makedirs(rundir, exist_ok=True)
+    overall = args.time_limit + 60 if overall is None else overall
     cmd = [sys.executable, os.path.join(REPO, "fast-downward.py"), "--build", args.build,
-           "--overall-time-limit", f"{args.time_limit + 60}s", "--overall-memory-limit", f"{args.memory_limit}m"]
+           "--overall-time-limit", f"{overall}s", "--overall-memory-limit", f"{args.memory_limit}m"]
     if plan:
         cmd += ["--plan-file", os.path.join(rundir, "plan")]
     cmd += [problem, "--transform", TRANSFORM, "--search", search]
@@ -86,7 +87,8 @@ def run_profile(problem, lengths, args):
     rundir = os.path.join(args.outdir, inst.replace("/", "__"), "profile")
     search = (f"sat(encoder={ENC},solver_quiet=true,continue_after_first_plan=true,"
               f"step_time_limit={args.time_limit},length_strategy=length_list(lengths=[{','.join(map(str, lengths))}]))")
-    log = fd(problem, search, rundir, args, plan=False)
+    # a profile covers many lengths, each capped at time_limit: give it its own budget
+    log = fd(problem, search, rundir, args, plan=False, overall=args.profile_time_limit)
     prof = R.parse_profile(log)
     json.dump(prof, open(os.path.join(rundir, "profile.json"), "w"), indent=0)
     return inst, prof
@@ -105,25 +107,41 @@ def main():
     # their solve times are not comparable (measured: ~1.2-1.3x at 5 vs 2 jobs)
     ap.add_argument("--jobs-real", type=int, default=4)
     ap.add_argument("--jobs-profile", type=int, default=4)
+    ap.add_argument("--profile-time-limit", type=int, default=3600, help="overall limit of one profiling run")
+    ap.add_argument("--reuse-real", action="store_true", help="load real.json instead of rerunning rintanen")
+    ap.add_argument("--reuse-profiles", action="store_true",
+                    help="keep profiles that already cover every needed length")
     ap.add_argument("--val", default="/home/gregor/data/lisat/VAL/build/bin/Validate")
     args = ap.parse_args()
     probs = [os.path.join(args.benchmarks, l.strip() + ".pddl") for l in open(args.instances) if l.strip() and not l.startswith("#")]
 
     real = []
-    with concurrent.futures.ThreadPoolExecutor(args.jobs_real) as ex:
+    if args.reuse_real:
+        real = json.load(open(os.path.join(args.outdir, "real.json")))
+    else:
+      with concurrent.futures.ThreadPoolExecutor(args.jobs_real) as ex:
         for f in concurrent.futures.as_completed([ex.submit(run_real, p, c, args) for p in probs for c in CONFIGS]):
             r = f.result(); real.append(r)
             print(f"real {r['instance']:40s} {r['config']:22s} solved={r['solved']} t={r['time']} len={r['length']} "
                   f"valid={r['valid']} lengths={len(r['lengths'])}", flush=True)
-    json.dump(real, open(os.path.join(args.outdir, "real.json"), "w"), indent=1)
+      json.dump(real, open(os.path.join(args.outdir, "real.json"), "w"), indent=1)
 
     need = {}
     for r in real:
         need.setdefault(r["instance"], set()).update(r["lengths"])
     profiles = {}
+    todo = probs
+    if args.reuse_profiles and os.path.exists(os.path.join(args.outdir, "profiles.json")):
+        old = {k: {int(a): b for a, b in v.items()} for k, v in json.load(open(os.path.join(args.outdir, "profiles.json"))).items()}
+        name = lambda p: "/".join(p.split("/")[-2:]).replace(".pddl", "")
+        for p in probs:
+            if name(p) in old and need.get(name(p), set()) <= set(old[name(p)]):
+                profiles[name(p)] = old[name(p)]
+        todo = [p for p in probs if name(p) not in profiles]
+        print(f"reusing {len(profiles)} complete profiles, profiling {len(todo)}", flush=True)
     with concurrent.futures.ThreadPoolExecutor(args.jobs_profile) as ex:
         futs = [ex.submit(run_profile, p, sorted(need["/".join(p.split("/")[-2:]).replace(".pddl", "")]), args)
-                for p in probs if need.get("/".join(p.split("/")[-2:]).replace(".pddl", ""))]
+                for p in todo if need.get("/".join(p.split("/")[-2:]).replace(".pddl", ""))]
         for f in concurrent.futures.as_completed(futs):
             inst, prof = f.result(); profiles[inst] = prof
             print(f"profile {inst:40s} {len(prof)} lengths", flush=True)
