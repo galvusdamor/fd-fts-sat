@@ -25,6 +25,13 @@ transition relation:
                   leftover_layer=true, state_budget=200000, max_states=20000,
                   exact_time_limit=1)             -- version 2
 
+Only bdd_full_gc and bdd_full_gc2 are run here. The other four were run
+already and are fetched instead, to save cluster budget: chains_slf____rcpol,
+fulltransitions_slf_transeff and bdd_full from 2026-09-21-*-bdd-A1 (revision
+f27d8458), bdd_full_relax from 2026-09-22-*-bdd-A1 (revision 3b070a3d). Their
+algorithm names therefore carry those revisions; ALGORITHM_REVISION maps each
+configuration to the revision its data comes from.
+
 The other bdd_full variants of B.ENCODINGS (comb, cut, rev, rnd, noomit,
 omit2) do not vary the order and are left out; add them back from
 _bdd_common if needed. lo_* attributes come from the GOALCHAINS line
@@ -56,17 +63,30 @@ REVISION = "33f1372499709accb2cd41ceea8a4f65a9f5c469"
 REVISIONS = [REVISION]
 
 
-# Only order-related configurations; see the docstring.
+# Only the new configurations are run; the baselines are fetched, see below.
 ENCODINGS = {
-    "chains_slf____rcpol": B.ENCODINGS["chains_slf____rcpol"],
-    "fulltransitions_slf_transeff": B.ENCODINGS["fulltransitions_slf_transeff"],
-    "bdd_full": B.bdd(),
-    "bdd_full_relax": B.bdd(label_order="label_order_relaxed()"),
     "bdd_full_gc": B.bdd(label_order="label_order_goal_chains()"),
     "bdd_full_gc2": B.bdd(label_order="label_order_goal_chains(ancestor_depth=2,goal_pairs=2,"
                           "leftover_layer=true,state_budget=200000,max_states=20000,"
                           "exact_time_limit=1)"),
 }
+
+# revision each configuration's data comes from (run here or fetched)
+REVISION_0921 = "f27d845858ae0001bfb375289e6b5b72a7b70b11"
+REVISION_0922 = "3b070a3dc0a72e301419d8d894836608c1d52695"
+ALGORITHM_REVISION = {
+    "A_1__chains_slf____rcpol-shr": REVISION_0921,
+    "A_1__fulltransitions_slf_transeff-shr": REVISION_0921,
+    "A_1__bdd_full-shr": REVISION_0921,
+    "A_1__bdd_full_relax-shr": REVISION_0922,
+    "A_1__bdd_full_gc-shr": REVISION,
+    "A_1__bdd_full_gc2-shr": REVISION,
+}
+
+
+def algo(config):
+    return f"{ALGORITHM_REVISION[config]}-{config}"
+
 
 SEARCHES = [(f"A_1__{name}",
              f"sat(encoder={enc},solver_quiet=true,length_strategy=one_by_one())")
@@ -108,6 +128,23 @@ exp.add_parser(encoding_size_parser.EncodingSizeParser())
 
 exp.add_fetcher(name="fetch")
 
+# already-run baselines, merged into this experiment's eval directory
+tofetch = [
+    ("2026-09-21-ipc-bdd-A1", [algo("A_1__chains_slf____rcpol-shr"),
+                                 algo("A_1__bdd_full-shr"),
+                                 algo("A_1__fulltransitions_slf_transeff-shr")]),
+    ("2026-09-22-ipc-bdd-A1", [algo("A_1__bdd_full_relax-shr")]),
+]
+
+for (idd, (expname, algos)) in enumerate(tofetch):
+    exp.add_fetcher(
+        f"data/{expname}-eval",
+        filter=[],
+        filter_algorithm=algos,
+        name=f"fetch-{expname}-{idd}",
+        merge=True,
+    )
+
 LABEL_ORDER_ATTRIBUTES = ["lo_time", "lo_chains", "lo_pair_chains", "lo_leftover",
                           "lo_violated", "lo_explored_states", "lo_skipped_budget",
                           "lo_deep_fallbacks"]
@@ -131,7 +168,7 @@ for c1, c2 in [("A_1__bdd_full_gc-shr", "A_1__bdd_full_gc2-shr"),
     exp.add_report(
         ScatterPlotReport(
             attributes=["planner_time"],
-            filter_algorithm=[f"{REVISION}-{c1}", f"{REVISION}-{c2}"],
+            filter_algorithm=[algo(c1), algo(c2)],
             get_category=lambda x, y: x["domain"],
             format="png",
             show_missing=True,
@@ -141,7 +178,7 @@ for c1, c2 in [("A_1__bdd_full_gc-shr", "A_1__bdd_full_gc2-shr"),
     exp.add_report(
         ScatterPlotReport(
             attributes=["time_steps_with_label"],
-            filter_algorithm=[f"{REVISION}-{c1}", f"{REVISION}-{c2}"],
+            filter_algorithm=[algo(c1), algo(c2)],
             get_category=lambda x, y: x["domain"],
             format="png",
             show_missing=True,
@@ -151,7 +188,7 @@ for c1, c2 in [("A_1__bdd_full_gc-shr", "A_1__bdd_full_gc2-shr"),
     exp.add_report(
         ScatterPlotReport(
             attributes=["enc_step_clauses_last"],
-            filter_algorithm=[f"{REVISION}-{c1}", f"{REVISION}-{c2}"],
+            filter_algorithm=[algo(c1), algo(c2)],
             get_category=lambda x, y: x["domain"],
             format="png",
             show_missing=False,
@@ -161,7 +198,7 @@ for c1, c2 in [("A_1__bdd_full_gc-shr", "A_1__bdd_full_gc2-shr"),
     exp.add_report(
         ScatterPlotReport(
             attributes=["solved_sat_clauses"],
-            filter_algorithm=[f"{REVISION}-{c1}", f"{REVISION}-{c2}"],
+            filter_algorithm=[algo(c1), algo(c2)],
             get_category=lambda x, y: x["domain"],
             format="png",
             show_missing=False,
@@ -172,7 +209,7 @@ for c1, c2 in [("A_1__bdd_full_gc-shr", "A_1__bdd_full_gc2-shr"),
     exp.add_report(
         ScatterPlotReport(
             attributes=["solved_sat_variables"],
-            filter_algorithm=[f"{REVISION}-{c1}", f"{REVISION}-{c2}"],
+            filter_algorithm=[algo(c1), algo(c2)],
             get_category=lambda x, y: x["domain"],
             format="png",
             show_missing=False,
