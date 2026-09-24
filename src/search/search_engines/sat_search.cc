@@ -26,6 +26,7 @@ extern "C"{
 namespace sat_search {
 SATSearch::SATSearch(const options::Options &opts): SearchEngine(opts),
 	stepTimeLimit(opts.get<int>("step_time_limit")),
+	stepTimeLimits(opts.get_list<int>("step_time_limits")),
 	continueAfterFirstPlan(opts.get<bool>("continue_after_first_plan")),
 	length_strategy(opts.get<shared_ptr<LengthStrategy>>("length_strategy")),
 	encoding_factory(opts.get<shared_ptr<SATEncodingFactory>>("encoder")),
@@ -136,11 +137,12 @@ SearchStatus SATSearch::step() {
 	int solverState;
 	utils::Timer solve_timer;
 
-	if (stepTimeLimit == -1){
+	const int thisTimeLimit = stepNumber < (int)stepTimeLimits.size() ? stepTimeLimits[stepNumber] : stepTimeLimit;
+	if (thisTimeLimit == -1){
 		solverState = ipasir_solve(solver);
 	} else {
 		std::atomic_bool stop(false);
-		solver_timer timer(solver,stepTimeLimit * 1000,stop,t_start);
+		solver_timer timer(solver,thisTimeLimit * 1000,stop,t_start);
 	    std::thread thread_for_timer(timer);
 		
 		solverState = ipasir_solve(solver);

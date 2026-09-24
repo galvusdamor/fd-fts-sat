@@ -88,7 +88,8 @@ def lengths_of(strategy, n):
 
 
 def simulate(profile, strategy, interval=1.0, gamma=1.0, max_parallel=20, time_limit=1800.0,
-             memory_limit_mb=None, bytes_per_clause=150.0, base_mb=120.0, leeway_mb=1000.0):
+             memory_limit_mb=None, bytes_per_clause=150.0, base_mb=120.0, leeway_mb=1000.0,
+             received=None):
     """
     profile: {length: {"status": "SAT"|"UNSAT"|"TIMEOUT", "encode": G, "solve": S}}
     Returns dict(solved, time, length, uncertain, created, reason).
@@ -111,9 +112,15 @@ def simulate(profile, strategy, interval=1.0, gamma=1.0, max_parallel=20, time_l
                 return None
         p = profile.get(L)
         if p is None:
+            failed = [k for k, v in profile.items() if v.get("status") == "FAILED" and k < L]
+            if failed:
+                p = dict(profile[min(failed)])
+        if p is None:
             call = dict(step=next_step, L=L, G=None, S=None, status=None, done_gen=False, used=0.0,
                         gen_steps=0, mem=0.0, mem_total=0.0)
         else:
+            # FAILED: the formula could not be handled within the memory limit
+            # (profiling died on it); like rintanen, the call never finishes
             S = p["solve"] if p["status"] in ("SAT", "UNSAT") else INF
             call = dict(step=next_step, L=L, G=p["encode"], S=S, cap=p["solve"], status=p["status"],
                         done_gen=False, used=0.0, gen_steps=0, mem=0.0,
@@ -194,6 +201,8 @@ def simulate(profile, strategy, interval=1.0, gamma=1.0, max_parallel=20, time_l
                 cur["done_gen"] = True
                 quantum = max(0.0, budget - spent)
         remaining = cur["S"] - cur["used"]
+        if received is not None:
+            received[cur["L"]] = received.get(cur["L"], 0.0) + min(quantum, remaining, max(0.0, time_limit - t))
         if remaining <= quantum:
             t += remaining
             cur["used"] = cur["S"]
