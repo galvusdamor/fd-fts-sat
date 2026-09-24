@@ -96,7 +96,7 @@ namespace label_order_finder {
         BFSResult product_bfs(const FTSTask &task, const vector<int> &factors,
                               const vector<vector<int>> &moving, int max_states,
                               const vector<vector<char>> &goal_ok,
-                              vector<int> &plan, long &explored) {
+                              vector<int> &plan, long &explored, long &work) {
             const int k = factors.size();
             vector<uint64_t> radix(k);
             uint64_t mult = 1;
@@ -160,7 +160,9 @@ namespace label_order_finder {
             while (!queue.empty()) {
                 const uint64_t c = queue.front(); queue.pop_front();
                 decode(c, st);
-                for (int li : cand.candidates(st)) {
+                const vector<int> &cands = cand.candidates(st);
+                work += 1 + cands.size();
+                for (int li : cands) {
                     bool applicable = true;
                     for (int i = 0; i < k && applicable; i++)
                         if (!unconstrained[li][i] && succ[li][i][st[i]].empty()) applicable = false;
@@ -209,7 +211,7 @@ namespace label_order_finder {
         BFSResult product_plans(const FTSTask &task, const vector<int> &factors,
                                 const vector<vector<int>> &moving, int max_states,
                                 const vector<vector<char>> &goal_ok, int max_plans, int slack,
-                                vector<vector<int>> &plans, long &explored) {
+                                vector<vector<int>> &plans, long &explored, long &work) {
             plans.clear();
             const int k = factors.size();
             vector<uint64_t> radix(k);
@@ -278,7 +280,9 @@ namespace label_order_finder {
                 if (depth[qi] >= bound) break;
                 if (goal[qi]) continue;          // paths end at the first goal state
                 decode(code[qi], st);
-                for (int li : cand.candidates(st)) {
+                const vector<int> &cands = cand.candidates(st);
+                work += 1 + cands.size();
+                for (int li : cands) {
                     bool applicable = true;
                     for (int i = 0; i < k && applicable; i++)
                         if (!unconstrained[li][i] && succ[li][i][st[i]].empty()) applicable = false;
@@ -592,7 +596,9 @@ namespace label_order_finder {
           leftover_layer(opts.get<bool>("leftover_layer")),
           goal_pairs(opts.get<int>("goal_pairs")),
           state_budget(opts.get<int>("state_budget")),
-          all_plans(opts.get<bool>("all_plans")) {
+          all_plans(opts.get<bool>("all_plans")),
+          deep_giveup(opts.get<int>("deep_giveup")),
+          work_budget(opts.get<int>("work_budget")) {
         if (leftover_support && leftover_layer) {
             cerr << "label_order_goal_chains: leftover_support and leftover_layer exclude each other" << endl;
             utils::exit_with(utils::ExitCode::INPUT_ERROR);
@@ -742,12 +748,13 @@ namespace label_order_finder {
           Returns the candidate plans (empty vector = nothing found) and the
           factors of the product actually used.
         */
-        long explored_states = 0;
-        int skipped_budget = 0, deep_fallbacks = 0;
+        long explored_states = 0, work_done = 0;
+        int skipped_budget = 0, deep_fallbacks = 0, consecutive_fallbacks = 0;
         auto solve = [&](const vector<int> &roots, const vector<char> &root_ok, bool other_goals,
                          vector<vector<int>> &plans, vector<int> &used, int depth, bool budgeted) {
             plans.clear(); used.clear();
-            if (budgeted && state_budget >= 0 && explored_states >= state_budget) { skipped_budget++; return false; }
+            if (budgeted && ((state_budget >= 0 && explored_states >= state_budget) ||
+                             (work_budget >= 0 && work_done >= work_budget))) { skipped_budget++; return false; }
             const vector<int> anc = ancestors_of(roots, depth);
             const int nr = roots.size();
             auto goal_sets = [&](const vector<int> &factors) {
@@ -768,9 +775,9 @@ namespace label_order_finder {
                 const vector<vector<char>> gs = goal_sets(factors);
                 if (multi)
                     return product_plans(task, factors, moving, max_states, gs, plans_per_goal, plan_slack,
-                                         out_plans, explored_states);
+                                         out_plans, explored_states, work_done);
                 vector<int> plan;
-                const BFSResult r = product_bfs(task, factors, moving, max_states, gs, plan, explored_states);
+                const BFSResult r = product_bfs(task, factors, moving, max_states, gs, plan, explored_states, work_done);
                 out_plans.clear();
                 if (r == BFSResult::FOUND) out_plans.push_back(plan);
                 return r;
@@ -843,9 +850,10 @@ namespace label_order_finder {
               never leave a goal without the chain the default would give it.
             */
             bool ok = false;
-            if (ancestor_depth > 1) {
+            if (ancestor_depth > 1 && !(deep_giveup > 0 && consecutive_fallbacks >= deep_giveup)) {
                 ok = solve({g}, {}, true, plans, used, ancestor_depth, true);
-                if (!ok) deep_fallbacks++;
+                if (!ok) { deep_fallbacks++; consecutive_fallbacks++; }
+                else consecutive_fallbacks = 0;
             }
             if (!ok) ok = solve({g}, {}, true, plans, used, 1, false);
             if (!ok) {
@@ -1020,7 +1028,7 @@ namespace label_order_finder {
              << " alternatives " << alternatives
              << " selection_rounds " << rounds << " switches " << switches
              << " explored_states " << explored_states << " skipped_budget " << skipped_budget
-             << " deep_fallbacks " << deep_fallbacks
+             << " deep_fallbacks " << deep_fallbacks << " work " << work_done
              << " factors_covered " << factors_covered << " factors_with_moves " << factors_with_moves
              << " chain_time " << chain_time << " total_time " << total_time << endl;
         return order;
@@ -1063,6 +1071,14 @@ namespace label_order_finder {
             "Once used up, goal chains fall back to the default depth-1 computation (which "
             "is never budgeted) and no further subgoal or pair chains are computed; "
             "-1 = unlimited", "-1");
+        parser.add_option<int>("work_budget",
+            "like state_budget, but counted in expanded states plus candidate labels tested, "
+            "which tracks the actual cost where states have many applicable labels; "
+            "-1 = unlimited", "-1");
+        parser.add_option<int>("deep_giveup",
+            "with ancestor_depth > 1: stop trying deep ancestors for the remaining goals after "
+            "this many consecutive goals fell back to depth 1 (where deep products are too big, "
+            "every attempt is wasted budget); 0 = never", "0");
         parser.add_option<int>("goal_pairs",
             "also plan jointly for each goal factor and up to this many other goal factors "
             "sharing most ancestors with it, adding those chains; 0 = off", "0");

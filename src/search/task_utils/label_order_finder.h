@@ -161,6 +161,8 @@ namespace label_order_finder {
         int goal_pairs;
         int state_budget;
         bool all_plans;
+        int deep_giveup;
+        int work_budget;
         public:
         LabelOrderFinderGoalChains(const options::Options &opts);
         std::vector<int> find_order(const task_representation::FTSTask &fts_task) override;
