@@ -64,7 +64,9 @@ struct solver_timer {
 	void operator() () {
 	    std::chrono::milliseconds delay(time_in_ms);
 	    while(!stop) {
-	      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+	      // short sleeps: the caller joins this thread after every SAT call, so
+	      // a 1s sleep added up to a second of wall time per call
+	      std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	      auto t_now = std::chrono::system_clock::now();
 	      std::chrono::milliseconds elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_start);
 	      if (stop) break;
