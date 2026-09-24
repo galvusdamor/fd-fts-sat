@@ -96,6 +96,7 @@ SearchStatus SATSearch::step() {
 	// creates the state variables for both of its end points, while every later
 	// step only adds the ones for its successor. So report the steady-state
 	// step (the last one) alongside the mean.
+	utils::Timer encode_timer;
 	int clausesBeforeSteps = capsule->get_number_of_clauses();
 	int varsBeforeSteps = capsule->number_of_variables;
 	int lastStepClauses = 0, lastStepVars = 0;
@@ -112,6 +113,7 @@ SearchStatus SATSearch::step() {
 
 	thisEncoding->encodeInit(1,false);
 	thisEncoding->encodeGoal(currentLength + 1,false);
+	const double encode_time = encode_timer.stop();
 
 	if (currentLength > 0)
 		cout << "ENCSTAT length " << currentLength
@@ -130,6 +132,7 @@ SearchStatus SATSearch::step() {
 
 	// start calling the solver	
 	int solverState;
+	utils::Timer solve_timer;
 
 	if (stepTimeLimit == -1){
 		solverState = ipasir_solve(solver);
@@ -145,6 +148,7 @@ SearchStatus SATSearch::step() {
 		thread_for_timer.join();
 	}
  
+	const double solve_time = solve_timer.stop();
 	cout << "SAT solver state: " << solverState << endl;
 
 	if (solverState == 10){
@@ -160,13 +164,17 @@ SearchStatus SATSearch::step() {
 				<< " clauses " << capsule->get_number_of_clauses() << " vars " << capsule->number_of_variables
 				<< " labels " << labels.size() << " timesteps with label " << timesteps_with_labels.size()
 				<< " compression " << double(labels.size()) / timesteps_with_labels.size()
+				<< " encode_time " << encode_time << " solve_time " << solve_time
 				<< endl;
 		if (!continueAfterFirstPlan)
 			return SOLVED;
 	} else {
+		// 20 is UNSAT; 0 means the solver was interrupted by step_time_limit,
+		// which is not a proof of anything and must not be reported as UNSAT
 		cout << "STEP " << stepNumber << " length " << currentLength
-				<< " UNSAT time " << step_timer
+				<< (solverState == 20 ? " UNSAT" : " TIMEOUT") << " time " << step_timer
 				<< " clauses " << capsule->get_number_of_clauses() << " vars " << capsule->number_of_variables
+				<< " encode_time " << encode_time << " solve_time " << solve_time
 				<< endl;
 		ipasir_release(solver);
 	}

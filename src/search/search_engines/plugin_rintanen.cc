@@ -20,6 +20,14 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
 	parser.add_option<int> (
 		"scheduler_interval","interval for the schedule in seconds", "1");
 	parser.add_option<int> (
+		"scheduler_interval_ms","interval for the schedule in milliseconds; overrides "
+		"scheduler_interval when >= 0", "-1");
+	parser.add_option<double> (
+		"gamma","geometric time share: the i-th open length (0 = shortest) gets turns of "
+		"interval * gamma^i; 1 = round-robin", "1.0");
+	parser.add_option<bool> (
+		"trace_schedule","print one RSCHED line per scheduling event (turn, encoded, sat, unsat)", "false");
+	parser.add_option<int> (
 		"memory_limit_mb","memory limit in MBs", "3500");
 	parser.add_option<bool> (
 		"schedule_formula_as_one","schedule the creation of a formula as one item (helps keeping to the memory limit)", "true");
