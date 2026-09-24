@@ -743,7 +743,7 @@ component tie-break matters as much as the MaxSAT.
 
 v1 (`label_order_goal_chains()` with defaults) is kept bit-identical -- every
 new behaviour is an option, and the default order was re-checked against the
-v1 binary (worktree build of `126cede72`) after every change: identical on
+v1 binary (worktree build of `0720c78de`) after every change: identical on
 all 205 non-trivial instances. The recommended v2 is
 
 ```
@@ -813,7 +813,7 @@ milliseconds (cavediving 1-2.5s).
 
 Cluster scripts: `experiments/2026-09-24-{ipc,fts}-bdd-A1-orders.py` (linear,
 relaxed, v1, v2, the two reference configs; `lo_*` attributes parsed from
-the GOALCHAINS line). They pin revision `33f137249`, which is **not pushed**.
+the GOALCHAINS line). They pin revision `2f1c9b269`, which is **not pushed**.
 
 ## Instances that take 10-30 seconds
 

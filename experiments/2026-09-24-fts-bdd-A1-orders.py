@@ -71,7 +71,7 @@ import _bdd_common as B
 DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
 BENCHMARKS_FTS_DIR = os.environ["FTS_BENCHMARKS"]
-REVISION = "33f1372499709accb2cd41ceea8a4f65a9f5c469"
+REVISION = "2f1c9b269709923afeace631cd1082ed85278cb7"
 REVISIONS = [REVISION]
 
 
