@@ -34,7 +34,7 @@ import _bdd_common as B
 DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
 BENCHMARKS_DIR = os.environ["DOWNWARD_BENCHMARKS"]
-REVISION = "21c5d9ad758cf622e280297061088c159329eaa4"
+REVISION = "3b070a3dc0a72e301419d8d894836608c1d52695"
 REVISIONS = [REVISION]
 
 
@@ -42,7 +42,7 @@ REVISIONS = [REVISION]
 # label sequences a factor may run inside one time step. B.ENCODINGS is left
 # alone: the 2026-09-21 scripts are the record of what was already run, and
 # adding configurations there would change them retroactively.
-ENCODINGS = dict(B.ENCODINGS)
+ENCODINGS = dict() #dict(B.ENCODINGS)
 ENCODINGS["bdd_full_relax"] = B.bdd(label_order="label_order_relaxed()")
 
 SEARCHES = [(f"A_1__{name}",
@@ -85,13 +85,30 @@ exp.add_parser(encoding_size_parser.EncodingSizeParser())
 
 exp.add_fetcher(name="fetch")
 
+
+
+tofetch = [
+        ("2026-09-21-ipc-bdd-A1", ["f27d845858ae0001bfb375289e6b5b72a7b70b11-A_1__chains_slf____rcpol-shr", "f27d845858ae0001bfb375289e6b5b72a7b70b11-A_1__bdd_full-shr","f27d845858ae0001bfb375289e6b5b72a7b70b11-A_1__fulltransitions_slf_transeff-shr"])
+        ]
+
+for (idd,(expname,algos)) in enumerate(tofetch):
+    exp.add_fetcher(
+        f"data/{expname}-eval",  # (folder with the old experiments)
+        filter=[],  # unnecessary but you can provide a function that will get rid of things that you don't need
+        filter_algorithm=algos,   # This just tells which algorithms you want to fetch the data for
+        name=f"fetch-{expname}-{idd}", # some name for the step I think this is optional
+        merge=True,  # Whether you want to overricde the results.
+    )
+
+
+
 ATTRIBUTES = common_setup.ATTRIBUTES + [
     Attribute(a, min_wins=True, function=arithmetic_mean, absolute=False)
     for a in B.ENCODING_ATTRIBUTES if a != "bdd_failure_reason"
 ] + ["bdd_failure_reason"]
 
 exp.add_report(
-    AbsoluteReport(attributes=ATTRIBUTES,
+    AbsoluteReport(attributes=ATTRIBUTES + ["solved_sat_variables","solved_sat_clauses"],
                    filter=[filters.remove_revision,
                            filters.filter_bdd_known_unexplained_errors,
                            filters.filter_kissat_known_unexplained_errors]),
@@ -99,11 +116,25 @@ exp.add_report(
 
 for c1, c2 in [("A_1__chains_slf____rcpol-shr", "A_1__bdd_full-shr"),
                ("A_1__fulltransitions_slf_transeff-shr", "A_1__bdd_full-shr"),
+               ("A_1__chains_slf____rcpol-shr", "A_1__bdd_full_relax-shr"),
+               ("A_1__fulltransitions_slf_transeff-shr", "A_1__bdd_full_relax-shr"),
                ("A_1__bdd_full-shr", "A_1__bdd_full_relax-shr")]:
+
+    REVISION_BEF="f27d845858ae0001bfb375289e6b5b72a7b70b11"
+    if "relax" in c1:
+        x1 = f"{REVISION}-{c1}"
+    else:
+        x1 = f"{REVISION_BEF}-{c1}"
+    if "relax" in c2:
+        x2 = f"{REVISION}-{c2}"
+    else:
+        x2 = f"{REVISION_BEF}-{c2}"
+
+
     exp.add_report(
         ScatterPlotReport(
             attributes=["planner_time"],
-            filter_algorithm=[f"{REVISION}-{c1}", f"{REVISION}-{c2}"],
+            filter_algorithm=[f"{x1}", f"{x2}"],
             get_category=lambda x, y: x["domain"],
             format="png",
             show_missing=True,
@@ -113,7 +144,7 @@ for c1, c2 in [("A_1__chains_slf____rcpol-shr", "A_1__bdd_full-shr"),
     exp.add_report(
         ScatterPlotReport(
             attributes=["enc_step_clauses_last"],
-            filter_algorithm=[f"{REVISION}-{c1}", f"{REVISION}-{c2}"],
+            filter_algorithm=[f"{x1}", f"{x2}"],
             get_category=lambda x, y: x["domain"],
             format="png",
             show_missing=False,
@@ -123,7 +154,7 @@ for c1, c2 in [("A_1__chains_slf____rcpol-shr", "A_1__bdd_full-shr"),
     exp.add_report(
         ScatterPlotReport(
             attributes=["solved_sat_clauses"],
-            filter_algorithm=[f"{REVISION}-{c1}", f"{REVISION}-{c2}"],
+            filter_algorithm=[f"{x1}", f"{x2}"],
             get_category=lambda x, y: x["domain"],
             format="png",
             show_missing=False,
@@ -134,12 +165,26 @@ for c1, c2 in [("A_1__chains_slf____rcpol-shr", "A_1__bdd_full-shr"),
     exp.add_report(
         ScatterPlotReport(
             attributes=["solved_sat_variables"],
-            filter_algorithm=[f"{REVISION}-{c1}", f"{REVISION}-{c2}"],
+            filter_algorithm=[f"{x1}", f"{x2}"],
             get_category=lambda x, y: x["domain"],
             format="png",
             show_missing=False,
         ),
         name=f"ipc-scatterplot-total-variables-{c1}-vs-{c2}",
     )
+
+    exp.add_report(
+        ScatterPlotReport(
+            attributes=["time_steps_with_label"],
+            filter_algorithm=[f"{x1}", f"{x2}"],
+            get_category=lambda x, y: x["domain"],
+            format="png",
+            show_missing=False,
+        ),
+        name=f"ipc-scatterplot-time-steps-{c1}-vs-{c2}",
+    )
+
+
+
 
 exp.run_steps()
