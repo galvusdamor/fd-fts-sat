@@ -739,6 +739,82 @@ floortile-sat14 p03/p04 (large products) -- `max_states` is the knob. The
 chains often do not conflict at all (violated = 0 on 156/208), so the
 component tie-break matters as much as the MaxSAT.
 
+### `label_order_goal_chains` v2 (2026-09-24)
+
+v1 (`label_order_goal_chains()` with defaults) is kept bit-identical -- every
+new behaviour is an option, and the default order was re-checked against the
+v1 binary (worktree build of `126cede72`) after every change: identical on
+all 205 non-trivial instances. The recommended v2 is
+
+```
+label_order_goal_chains(ancestor_depth=2, goal_pairs=2, leftover_layer=true,
+                        state_budget=200000, max_states=20000, exact_time_limit=1)
+```
+
+Why each part (diagnosis on the 43 instances where v1 was worse than
+min(linear, relaxed); best plan of linear/relaxed scored under v1's order):
+
+* v1's chains covered only **47%** of the best plan's labels and 58% of its
+  breaks involved a leftover label -> `ancestor_depth=2` (transitive
+  ancestors join the product; factors never merged with a goal factor get in)
+  and `leftover_layer` (leftovers inserted between chain labels by relaxed
+  layer instead of appended).
+* parcprinter had 100% coverage and still 11-24 chain-chain breaks: its plans
+  *interleave* chains (sheets through a machine pipeline) while elevators'
+  *serialise* them (one lift). Single-goal chains cannot tell which ->
+  `goal_pairs=2` adds a joint abstract plan for each goal and the two goals
+  sharing most ancestors with it.
+* The budget must never cost information: with `ancestor_depth>1` a goal
+  chain is tried deep within `state_budget` and otherwise falls back to the
+  unbudgeted depth-1 chain v1 computes; only subgoal/pair chains are dropped.
+  (Before that fix, an exhausted budget left elevators goals without chains.)
+* `exact_time_limit=1`: MaxSAT components of 80+ labels (floortile) are never
+  proven anyway and burned 10s each.
+
+Options tried and not recommended: `subgoal_depth` (regression subgoals, CG-
+heuristic-like: barely moves anything), `plans_per_goal`/`plan_slack` with
+selection (candidates never beat the shortest one) or `all_plans` (slightly
+fewer steps, 2-3x order time), `leftover_support` (Balyo-style supporters
+before the chain label; smaller gain than `leftover_layer`), `work_budget`,
+`deep_giveup` (no better than the state budget), and `label_order_tsort` --
+Balyo's topological ranking (thesis sec. 3.4.2), as order or as leftover order
+it is worse than relaxed on the controls.
+
+Results on the 218 instances (600s/1500MB, all plans VAL-valid, raw data
+`experiments/2026-09-24-goalchains-v2-results.csv`, screening runs
+`experiments/2026-09-24-goalchains-screening.csv`), 192 solved by all:
+
+| order | Σ steps | Σ total | <= min(linear, relaxed) | coverage |
+|---|---:|---:|---:|---:|
+| linear | 910 | 4289s | 85 | 199 |
+| relaxed | 764 | 4929s | 132 | 194 |
+| goal_chains v1 | 613 | 3379s | 149 | 202 |
+| **v2** (200k) | **503** | **2972s** | **181** | 202 |
+| v2 with 500k budget | 502 | 3262s | 181 | 202 |
+
+Weak domains (Σ steps linear / relaxed / v1 / v2): psr-small 95/110/101/58,
+trucks 57/48/56/36, blocks 9/4/8/1, schedule 14/24/24/17 (still behind linear),
+freecell 9/4/7/4, parcprinter 35/17/22/16. Small regressions vs v1:
+openstacks-opt08 25 -> 27, thoughtful 3 -> 4, scanalyzer 5 -> 6. Against the
+plan-optimal reference (108 instances): v1 373, v2 319, optimum 265 -- half
+of v1's gap closed.
+
+Time is a smaller win than steps. Rerunning v1 and v2 on the 52 instances
+taking >= 20s: per-instance noise up to +-20-47%, sums within 3%, horizons
+identical. Same batch, v2 is Σ 3461s vs 4423s (-22%) but the median
+instance is unchanged (17 faster, 15 slower by >10%); the gain comes from a
+few big wins (pathways-noneg p29 480s -> 47s, depot pfile4 297 -> 115). Some
+losses are reproducible at the *same* horizon -- rovers p30 26s -> 70s, grid
+prob01 64 -> 90, driverlog pfile18 380 -> 505 -- so the order also changes
+how hard each step's formula is, not only how many steps are needed. Order
+computation: Σ 173s over 192 instances, max 11.5s (airport p36,
+elevators-sat11 p19/p20, childsnack pfile10). On the FTS benchmarks it is
+milliseconds (cavediving 1-2.5s).
+
+Cluster scripts: `experiments/2026-09-24-{ipc,fts}-bdd-A1-orders.py` (linear,
+relaxed, v1, v2, the two reference configs; `lo_*` attributes parsed from
+the GOALCHAINS line). They pin revision `33f137249`, which is **not pushed**.
+
 ## Instances that take 10-30 seconds
 
 Most of the IPC suite is useless for comparing encodings: it is either trivial

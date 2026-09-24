@@ -34,7 +34,7 @@ transition relation:
   bdd_full_relax  label_order_relaxed()
   bdd_full_gc     label_order_goal_chains()       -- version 1, defaults
   bdd_full_gc2    label_order_goal_chains(ancestor_depth=2, goal_pairs=2,
-                  leftover_layer=true, state_budget=500000, max_states=20000,
+                  leftover_layer=true, state_budget=200000, max_states=20000,
                   exact_time_limit=1)             -- version 2
 
 The other bdd_full variants of B.ENCODINGS (comb, cut, rev, rnd, noomit,
@@ -64,7 +64,7 @@ import _bdd_common as B
 DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
 BENCHMARKS_FTS_DIR = os.environ["FTS_BENCHMARKS"]
-REVISION = "1e1457245c8050da0ca9b0ed5ef9db38cc04a08a"
+REVISION = "33f1372499709accb2cd41ceea8a4f65a9f5c469"
 REVISIONS = [REVISION]
 
 
@@ -76,7 +76,7 @@ ENCODINGS = {
     "bdd_full_relax": B.bdd(label_order="label_order_relaxed()"),
     "bdd_full_gc": B.bdd(label_order="label_order_goal_chains()"),
     "bdd_full_gc2": B.bdd(label_order="label_order_goal_chains(ancestor_depth=2,goal_pairs=2,"
-                          "leftover_layer=true,state_budget=500000,max_states=20000,"
+                          "leftover_layer=true,state_budget=200000,max_states=20000,"
                           "exact_time_limit=1)"),
 }
 
