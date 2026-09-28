@@ -66,6 +66,18 @@ def add_bdd_construction(content, props):
             if key in fields:
                 props[f"bdd_{key}"] = cast(float(fields[key]))
         props["bdd_construction_failed"] = 0
+        # bdd_reorder: nodes_sum_all_factors is from before reordering, and
+        # what gets Tseitin-translated is nodes_sum_after
+        reorder = re.findall(r"BDDSTAT reorder (.+)", content)
+        if reorder:
+            fields = dict(re.findall(rf"(\w+) ({NUMBER})", reorder[-1]))
+            for key, prop, cast in [
+                ("time", "bdd_reorder_time", float),
+                ("nodes_sum_after", "bdd_nodes_sum_reordered", int),
+                ("reorderings", "bdd_reorderings", int),
+            ]:
+                if key in fields:
+                    props[prop] = cast(float(fields[key]))
         return
     failed = re.findall(r"BDDSTAT construction_failed (.+)", content)
     if failed:

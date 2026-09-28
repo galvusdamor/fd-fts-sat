@@ -41,7 +41,7 @@ struct BDDEncodingData {
 
 	// --- BDD variable layout ---
 	// Variables 0 .. num_factor_vars-1 encode (factor state | factor next state),
-	// variables num_factor_vars .. bdd_num_vars-1 encode the labels, in labelOrder.
+	// variables num_factor_vars .. bdd_num_vars-1 encode the labels.
 	// num_factor_vars is 0 unless combineAllBDDsIntoOne is set.
 	int bdd_num_vars = 0;
 	int num_factor_vars = 0;
@@ -49,14 +49,22 @@ struct BDDEncodingData {
 	/*
 	  One label ordering together with the BDDs built under it.
 
-	  The label order *is* the BDD variable order: label labelOrder[i] is BDD
-	  variable num_factor_vars + i, and labelToBDDVar is the inverse. Two
-	  orderings therefore mean two sets of BDDs, built over the same Cudd
-	  variables but mapping labels onto them differently.
+	  The label order is the semantics: the order in which the labels of one
+	  time step are applied. Which BDD variable a label gets is a separate
+	  choice and only affects how compactly the BDDs represent that semantics.
+	  By default the two coincide (label labelOrder[i] is BDD variable
+	  num_factor_vars + i); bdd_variable_order assigns the variables
+	  differently, and reordering by Cudd moves them afterwards. The variable
+	  *index* of a label never changes, only its level, so labelToBDDVar and
+	  bddVarToLabel stay valid under reordering.
+
+	  Two orderings mean two sets of BDDs, built over the same Cudd variables.
 	*/
 	struct Ordering {
 		std::vector<int> labelOrder;
-		std::vector<int> labelToBDDVar;
+		std::vector<int> labelPosition;   // label -> its index in labelOrder
+		std::vector<int> labelToBDDVar;   // label -> BDD variable index
+		std::vector<int> bddVarToLabel;   // BDD variable index - num_factor_vars -> label
 		// exactly one of the two is populated, depending on combineAllBDDsIntoOne
 		std::vector<BDD> transition_BDDs_per_factor;
 		std::vector<std::vector<std::vector<BDD>>> transition_BDDs_per_factor_per_state_pair;
@@ -153,6 +161,13 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 
 	std::shared_ptr<label_order_finder::LabelOrderFinder> label_order_finder;
 	const std::string dumpLabelOrderFile;
+	// nullptr: the BDD variable order is the label order
+	std::shared_ptr<label_order_finder::LabelOrderFinder> bdd_variable_order_finder;
+	// Cudd reordering: 0 none, otherwise a Cudd_ReorderingType, applied once
+	// after construction and, with bddReorderDynamic, also during it
+	const int bddReorderMethod;
+	const bool bddReorderDynamic;
+	const std::string dumpBDDVariableOrderFile;
 
 	// One per transition system, same objects the label-based encoding uses;
 	// holds the per-state self-loop sets the one-step construction needs.
@@ -211,6 +226,8 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	void build_bdds_for_ordering(BDDEncodingData::Ordering & ord,
 		long & total_nodes_sum, long & total_nodes_after_limit,
 		int & overall_max_pair_nodes);
+	/// summed nodeCount() of the BDDs that get encoded, as in nodes_sum_all_factors
+	long encoded_nodes_sum(const BDDEncodingData::Ordering & ord) const;
 	void cut_bdds_to_fixpoint(BDDEncodingData::Ordering & ord);
 	void report_covering_implications(const BDDEncodingData::Ordering & ord) const;
 	/// mine the per-factor label BDDs for unit and binary label dependencies

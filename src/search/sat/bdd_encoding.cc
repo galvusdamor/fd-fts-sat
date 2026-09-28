@@ -77,6 +77,12 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	bddNodeLimit(long(opts.get<int>("bdd_node_limit"))),
 	label_order_finder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order")),
 	dumpLabelOrderFile(opts.get<string>("dump_label_order")),
+	bdd_variable_order_finder(opts.contains("bdd_variable_order")
+		? opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("bdd_variable_order")
+		: nullptr),
+	bddReorderMethod(opts.get_enum("bdd_reorder")),
+	bddReorderDynamic(opts.get<bool>("bdd_reorder_dynamic")),
+	dumpBDDVariableOrderFile(opts.get<string>("dump_bdd_variable_order")),
 	cudd_init_nodes(long(opts.get<int>("cudd_init_nodes"))),
 	cudd_init_cache_size(long(opts.get<int>("cudd_cache_size"))),
 	cudd_init_available_memory(long(opts.get<int>("cudd_max_memory_mb")) * 1024L * 1024L)
@@ -84,6 +90,10 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	if (oneStepOnly && bddEncodingSizeLimit != -1){
 		cerr << "bdd_size_limit only has an effect if one_step_only=false: it interpolates "
 			 << "between the full reachability BDDs and the one-step BDDs." << endl;
+		utils::exit_with(utils::ExitCode::INPUT_ERROR);
+	}
+	if (bddReorderDynamic && bddReorderMethod == 0){
+		cerr << "bdd_reorder_dynamic needs a bdd_reorder method." << endl;
 		utils::exit_with(utils::ExitCode::INPUT_ERROR);
 	}
 	if (bddCovering && (oneStepOnly || combineAllBDDsIntoOne)){
@@ -206,9 +216,43 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 
 	parser.add_option<shared_ptr<label_order_finder::LabelOrderFinder>>(
 		"label_order",
-		"order in which labels may be applied within one time step. This is also the "
-		"BDD variable order",
+		"order in which labels may be applied within one time step. Unless "
+		"bdd_variable_order is given, this is also the BDD variable order",
 		"label_order_linear()");
+
+	parser.add_option<shared_ptr<label_order_finder::LabelOrderFinder>>(
+		"bdd_variable_order",
+		"order of the label variables in the BDDs, independently of label_order. "
+		"It changes only the size of the BDDs, not which label sets they allow. "
+		"Omitted: the label order",
+		options::OptionParser::NONE);
+
+	vector<string> reorder_methods {"NONE", "SIFT", "SIFT_CONVERGE", "SYMM_SIFT", "GROUP_SIFT"};
+	vector<string> reorder_methods_doc {
+		"keep the initial variable order",
+		"Cudd's sifting (Rudell), one pass",
+		"sifting repeated until no improvement",
+		"symmetric sifting",
+		"group sifting"};
+	parser.add_enum_option("bdd_reorder", reorder_methods,
+		"Cudd variable reordering, applied once after the BDDs are built (and "
+		"after cutbdds), before they are Tseitin-translated. The labels keep "
+		"their meaning; only the variable levels change",
+		"NONE", reorder_methods_doc);
+
+	parser.add_option<bool>(
+		"bdd_reorder_dynamic",
+		"also let Cudd reorder automatically during construction, with the "
+		"bdd_reorder method",
+		"false");
+
+	parser.add_option<string>(
+		"dump_bdd_variable_order",
+		"write the final BDD variable order of the labels (after reordering, "
+		"top level first) to this file, one label id per line, in the format "
+		"label_order_file reads; 'none' = do not. The option parser lower-cases "
+		"the path.",
+		"none");
 
 	parser.add_option<string>(
 		"dump_label_order",
@@ -235,7 +279,7 @@ void BDDSATEncodingFactory::bdd_to_dot(const BDD &bdd, const std::string &file_n
 			var_names[f] = "factor_next_state_" + to_string(f - (data->num_factor_vars/2));
 	}
 	for(int i = 0; i < fts->get_num_labels(); i++)
-		var_names[data->num_factor_vars + i] = "label_" + to_string(data->orderings[0].labelOrder[i]);
+		var_names[data->num_factor_vars + i] = "label_" + to_string(data->orderings[0].bddVarToLabel[i]);
 
 	std::vector<char *> names(var_names.size());
 	for (size_t i = 0; i < var_names.size(); ++i)
@@ -562,11 +606,12 @@ vector<vector<BDD>> BDDSATEncodingFactory::build_one_step_bdds(
 	// Per state, the labels that must be false while the factor sits there,
 	// i.e. everything that cannot self-loop in it. Usually a small set, and
 	// it is the only thing the inner loop below needs.
-	// Built in *label order*, i.e. BDD variable order. That matters: the BDDs
-	// below are products over these labels, and conjoining them in variable
-	// order keeps the intermediate results a chain. Walking them in label-id
-	// order instead builds the same BDD but roughly twice as slowly on the
-	// label-rich instances.
+	// Built in *label order*, which is the BDD variable order unless
+	// bdd_variable_order says otherwise. That matters: the BDDs below are
+	// products over these labels, and conjoining them in variable order keeps
+	// the intermediate results a chain. Walking them in label-id order instead
+	// builds the same BDD but roughly twice as slowly on the label-rich
+	// instances.
 	vector<vector<int>> mustBeFalseAt(numStates);
 	for (int s = 0; s < numStates; s++){
 		const set<int> & loops = matrix.get_self_loop_labels_for_state(s);
@@ -578,8 +623,7 @@ vector<vector<BDD>> BDDSATEncodingFactory::build_one_step_bdds(
 		}
 	}
 
-	// position in the label order, which is also the BDD variable order
-	auto orderOf = [&](int label){ return ord.labelToBDDVar[label] - data->num_factor_vars; };
+	auto orderOf = [&](int label){ return ord.labelPosition[label]; };
 
 	/*
 	  Per state, the running conjunctions of "this label is false" over a
@@ -674,8 +718,7 @@ void BDDSATEncodingFactory::report_label_implications(const BDDEncodingData::Ord
 	BDD stateCube = _manager->bddOne();
 	for (int i = 0; i < nfv; i++) stateCube *= _manager->bddVar(i);
 
-	// BDD variable index -> label (the variable order is the label order)
-	auto labelOfVar = [&](int v){ return ord.labelOrder[v - nfv]; };
+	auto labelOfVar = [&](int v){ return ord.bddVarToLabel[v - nfv]; };
 
 	long units = 0, implications = 0, mutexes = 0;
 	int trivial_one = 0, trivial_zero = 0, nontrivial = 0;
@@ -963,11 +1006,22 @@ void BDDSATEncodingFactory::initialize() {
 	}
 	data->bdd_num_vars = data->num_factor_vars + fts->get_num_labels();
 
-	// The BDD variable order *is* the label order, once per ordering.
+	// Label variables in BDD variable order: bdd_variable_order if given,
+	// shared by all orderings, and otherwise each ordering's label order.
+	vector<int> variableOrder;
+	if (bdd_variable_order_finder){
+		variableOrder = bdd_variable_order_finder->find_order(*fts);
+		assert(int(variableOrder.size()) == fts->get_num_labels());
+	}
 	for (auto & ord : data->orderings){
+		const vector<int> & byVariable = bdd_variable_order_finder ? variableOrder : ord.labelOrder;
+		ord.labelPosition.resize(fts->get_num_labels());
 		ord.labelToBDDVar.resize(fts->get_num_labels());
-		for (int i = 0; i < fts->get_num_labels(); i++)
-			ord.labelToBDDVar[ord.labelOrder[i]] = data->num_factor_vars + i;
+		ord.bddVarToLabel = byVariable;
+		for (int i = 0; i < fts->get_num_labels(); i++){
+			ord.labelPosition[ord.labelOrder[i]] = i;
+			ord.labelToBDDVar[byVariable[i]] = data->num_factor_vars + i;
+		}
 	}
 
 	cout << "Number BDD vars: " << data->bdd_num_vars << " of that "
@@ -987,6 +1041,12 @@ void BDDSATEncodingFactory::initialize() {
 	_manager->setNodesExceededHandler(exceptionError);
 	_manager->RegisterOutOfMemoryCallback(exitOutOfMemory);
 
+	static const Cudd_ReorderingType reorderTypes[] = {CUDD_REORDER_NONE,
+		CUDD_REORDER_SIFT, CUDD_REORDER_SIFT_CONVERGE, CUDD_REORDER_SYMM_SIFT,
+		CUDD_REORDER_GROUP_SIFT};
+	const Cudd_ReorderingType reorderType = reorderTypes[bddReorderMethod];
+	if (bddReorderDynamic) _manager->AutodynEnable(reorderType);
+
 	long total_nodes_sum = 0;
 	long total_nodes_after_limit = 0;
 	int overall_max_pair_nodes = 0;
@@ -1004,7 +1064,40 @@ void BDDSATEncodingFactory::initialize() {
 		if (bddCutting)
 			for (auto & o : data->orderings) cut_bdds_to_fixpoint(o);
 
+		// Reordering is part of building the BDDs that get encoded, so it is
+		// charged to construction_time, and reported on its own as well.
+		if (bddReorderMethod != 0){
+			if (bddReorderDynamic) _manager->AutodynDisable();
+			long nodesBefore = 0, nodesAfter = 0;
+			for (const auto & o : data->orderings) nodesBefore += encoded_nodes_sum(o);
+			const long liveBefore = _manager->ReadNodeCount();
+			const double reorderStart = bdd_construction_timer();
+			_manager->ReduceHeap(reorderType, 0);
+			const double reorderSeconds = bdd_construction_timer() - reorderStart;
+			for (const auto & o : data->orderings) nodesAfter += encoded_nodes_sum(o);
+			cout << "BDDSTAT reorder method " << bddReorderMethod
+				 << " dynamic " << (bddReorderDynamic ? 1 : 0)
+				 << " reorderings " << _manager->ReadReorderings()
+				 << " time " << reorderSeconds
+				 << " nodes_sum_before " << nodesBefore
+				 << " nodes_sum_after " << nodesAfter
+				 << " live_nodes_before " << liveBefore
+				 << " live_nodes_after " << _manager->ReadNodeCount()
+				 << endl;
+		}
+
 		construction_seconds = bdd_construction_timer();
+
+		if (dumpBDDVariableOrderFile != "none") {
+			// label variables by level, top first; same format as dump_label_order
+			ofstream out(dumpBDDVariableOrderFile);
+			out << "; BDD variable order used by bdd_sat, " << fts->get_num_labels() << " labels" << endl;
+			for (int level = 0; level < data->bdd_num_vars; level++){
+				const int index = Cudd_ReadInvPerm(_manager->getManager(), level);
+				if (index >= data->num_factor_vars)
+					out << data->orderings[0].bddVarToLabel[index - data->num_factor_vars] << endl;
+			}
+		}
 
 		if (bddCovering)
 			for (const auto & o : data->orderings) report_covering_implications(o);
@@ -1075,6 +1168,20 @@ void BDDSATEncodingFactory::initialize() {
 }
 
 
+long BDDSATEncodingFactory::encoded_nodes_sum(const BDDEncodingData::Ordering & ord) const {
+	long sum = 0;
+	if (combineAllBDDsIntoOne){
+		for (const BDD & bdd : ord.transition_BDDs_per_factor) sum += bdd.nodeCount();
+	} else {
+		for (const auto & per_source : ord.transition_BDDs_per_factor_per_state_pair)
+			for (const auto & per_target : per_source)
+				for (const BDD & bdd : per_target)
+					if (bdd != _manager->bddZero()) sum += bdd.nodeCount();
+	}
+	return sum;
+}
+
+
 unique_ptr<SATEncoding> BDDSATEncodingFactory::createEncodingInstance(std::shared_ptr<sat_capsule> capsule){
 	return make_unique<BDDSATEncoding>(capsule, fts, forceAtLeastOneAction, data);
 }
@@ -1102,8 +1209,7 @@ int BDDSATEncoding::givevar(int bddvar,
 		const vector<int> & nextFactorVars) const {
 	const int nfv = data->num_factor_vars;
 	if (bddvar >= nfv){
-		// the BDD variable order is the label order
-		return labelVars[ord.labelOrder[bddvar - nfv]];
+		return labelVars[ord.bddVarToLabel[bddvar - nfv]];
 	}
 	if (bddvar < nfv / 2) {
 		assert(factorVars.size() > size_t(bddvar));
