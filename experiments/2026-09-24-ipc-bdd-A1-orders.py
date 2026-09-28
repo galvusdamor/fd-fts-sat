@@ -44,7 +44,7 @@ import os
 from lab.environments import LocalEnvironment
 from lab.reports import Attribute, geometric_mean, arithmetic_mean
 
-from downward.reports.absolute import AbsoluteReport
+from score_report import AbsoluteReport
 from downward.reports.scatter import ScatterPlotReport
 
 import common_setup

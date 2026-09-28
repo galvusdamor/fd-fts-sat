@@ -13,7 +13,7 @@ from lab import tools
 from lab.parser import Parser
 from lab.experiment import Experiment
 
-from downward.reports.absolute import AbsoluteReport
+from score_report import AbsoluteReport
 from downward.reports.compare import ComparativeReport
 from downward.reports.scatter import ScatterPlotReport
 

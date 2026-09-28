@@ -12,7 +12,7 @@ from lab.reports import Attribute, geometric_mean, arithmetic_mean
 from lab import tools
 from lab.parser import Parser
 
-from downward.reports.absolute import AbsoluteReport
+from score_report import AbsoluteReport
 from downward.reports.compare import ComparativeReport
 from downward.reports.scatter import ScatterPlotReport
 from report.report_utils.domain_coverage_table import DomainCoverageTable 
