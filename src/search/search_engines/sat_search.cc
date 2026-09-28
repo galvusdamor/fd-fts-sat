@@ -26,6 +26,7 @@ extern "C"{
 namespace sat_search {
 SATSearch::SATSearch(const options::Options &opts): SearchEngine(opts),
 	stepTimeLimit(opts.get<int>("step_time_limit")),
+	stepTimeLimits(opts.get_list<int>("step_time_limits")),
 	continueAfterFirstPlan(opts.get<bool>("continue_after_first_plan")),
 	length_strategy(opts.get<shared_ptr<LengthStrategy>>("length_strategy")),
 	encoding_factory(opts.get<shared_ptr<SATEncodingFactory>>("encoder")),
@@ -64,7 +65,9 @@ struct solver_timer {
 	void operator() () {
 	    std::chrono::milliseconds delay(time_in_ms);
 	    while(!stop) {
-	      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+	      // short sleeps: the caller joins this thread after every SAT call, so
+	      // a 1s sleep added up to a second of wall time per call
+	      std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	      auto t_now = std::chrono::system_clock::now();
 	      std::chrono::milliseconds elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_start);
 	      if (stop) break;
@@ -96,6 +99,7 @@ SearchStatus SATSearch::step() {
 	// creates the state variables for both of its end points, while every later
 	// step only adds the ones for its successor. So report the steady-state
 	// step (the last one) alongside the mean.
+	utils::Timer encode_timer;
 	int clausesBeforeSteps = capsule->get_number_of_clauses();
 	int varsBeforeSteps = capsule->number_of_variables;
 	int lastStepClauses = 0, lastStepVars = 0;
@@ -112,6 +116,7 @@ SearchStatus SATSearch::step() {
 
 	thisEncoding->encodeInit(1,false);
 	thisEncoding->encodeGoal(currentLength + 1,false);
+	const double encode_time = encode_timer.stop();
 
 	if (currentLength > 0)
 		cout << "ENCSTAT length " << currentLength
@@ -130,12 +135,14 @@ SearchStatus SATSearch::step() {
 
 	// start calling the solver	
 	int solverState;
+	utils::Timer solve_timer;
 
-	if (stepTimeLimit == -1){
+	const int thisTimeLimit = stepNumber < (int)stepTimeLimits.size() ? stepTimeLimits[stepNumber] : stepTimeLimit;
+	if (thisTimeLimit == -1){
 		solverState = ipasir_solve(solver);
 	} else {
 		std::atomic_bool stop(false);
-		solver_timer timer(solver,stepTimeLimit * 1000,stop,t_start);
+		solver_timer timer(solver,thisTimeLimit * 1000,stop,t_start);
 	    std::thread thread_for_timer(timer);
 		
 		solverState = ipasir_solve(solver);
@@ -145,6 +152,7 @@ SearchStatus SATSearch::step() {
 		thread_for_timer.join();
 	}
  
+	const double solve_time = solve_timer.stop();
 	cout << "SAT solver state: " << solverState << endl;
 
 	if (solverState == 10){
@@ -160,13 +168,17 @@ SearchStatus SATSearch::step() {
 				<< " clauses " << capsule->get_number_of_clauses() << " vars " << capsule->number_of_variables
 				<< " labels " << labels.size() << " timesteps with label " << timesteps_with_labels.size()
 				<< " compression " << double(labels.size()) / timesteps_with_labels.size()
+				<< " encode_time " << encode_time << " solve_time " << solve_time
 				<< endl;
 		if (!continueAfterFirstPlan)
 			return SOLVED;
 	} else {
+		// 20 is UNSAT; 0 means the solver was interrupted by step_time_limit,
+		// which is not a proof of anything and must not be reported as UNSAT
 		cout << "STEP " << stepNumber << " length " << currentLength
-				<< " UNSAT time " << step_timer
+				<< (solverState == 20 ? " UNSAT" : " TIMEOUT") << " time " << step_timer
 				<< " clauses " << capsule->get_number_of_clauses() << " vars " << capsule->number_of_variables
+				<< " encode_time " << encode_time << " solve_time " << solve_time
 				<< endl;
 		ipasir_release(solver);
 	}

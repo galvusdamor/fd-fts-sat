@@ -815,6 +815,70 @@ Cluster scripts: `experiments/2026-09-24-{ipc,fts}-bdd-A1-orders.py` (linear,
 relaxed, v1, v2, the two reference configs; `lo_*` attributes parsed from
 the GOALCHAINS line). They pin revision `2f1c9b269`, which is **not pushed**.
 
+## Tuning Algorithm C (rintanen), phase 0 (2026-09-24)
+
+Plan: measure per-length runtime profiles with algorithm A once, then tune
+rintanen's parameters **offline** with a simulator, and validate only the
+winners with real runs. Phase 0 built and validated the pieces.
+
+**Engine changes (all defaults unchanged):**
+
+* `sat()`: `STEP` lines carry `encode_time` and `solve_time` (process CPU) --
+  rintanen generates a formula uninterruptibly, so the two must be separate.
+  A call cut off by `step_time_limit` used to print `UNSAT`; it prints
+  `TIMEOUT` now. With the existing `continue_after_first_plan=true` plus
+  `one_by_one(maximum_length=K)` or `length_list(lengths=[...])`, A profiles
+  any set of lengths, including those after the first plan.
+* Length strategies: `by_iteration(strictly_increasing=true)` (small
+  multipliers otherwise repeat lengths: start 1, x1.2 gives 1,2,2,2,3,3,3,...),
+  `by_increment(start_length, increment)`. The default `by_iteration()` is
+  **5, 8, 10, 15, 20, 28, 40, 56, 79, 111, ...** (`get_first_length` returns
+  `start_length`, then `lround(0.5 + 5*1.41^i)`).
+* `rintanen()`: `scheduler_interval_ms` (the old option is whole seconds),
+  `gamma` (the i-th open length gets turns of interval*gamma^i, Rintanen's
+  geometric share; 1 = the old round-robin), `trace_schedule` (`RSCHED t ...
+  turn|encoded|sat|unsat step N length L` lines).
+
+**Scheduler semantics** (what the simulator reproduces): turns are
+round-robin over the open lengths, one `scheduler_interval` each; a call's
+first turn generates its whole formula without interruption; a new length is
+opened only when the round reaches the largest open call and fewer than
+`max_parallel_calls` are open; UNSAT at step s closes every step <= s; SAT
+ends the run. With the default (1 s, 20 calls, x1.41) a task whose first
+satisfiable horizon is 5 still visits 5, 8, ..., 156 for a second each before
+horizon 5 gets its second turn: depot/pfile7 took 12.4s that way.
+
+**Memory** (`memory_limit_mb`, default 3500; formula generation pauses at
+limit - 1000 MB): process memory grows by ~140-155 bytes per clause over all
+open calls, nothing is released while they are open, and while the largest
+call is paused no new lengths are opened -- so the limit effectively caps the
+number of parallel calls. 38 of 160 validation runs hit it, all with the fast
+geometric sequences.
+
+**Simulator** `experiments/rintanen_sim.py` (+ `rintanen_validate.py`,
+`rintanen_validate_report.py`). Validated on 32 instances x 5 configurations
+(default; start 1 x1.41; start 1 x1.2 100ms 8 calls; start 2 x1.41 250ms
+gamma 0.8; increment 1 500ms 4 calls), 60s limit, all 160 plans VAL-valid,
+data in `experiments/2026-09-24-rintanen-sim-validation.json`. With the
+memory model: 153/160 runs comparable (the rest need a length the real run
+never reached), solved/unsolved agrees on 150, **same solving length on
+139/143**, time within x1.5 on 98/106 (sim/real median 0.95; scaling the
+profile by 1.1 gives 1.02). Without the memory model only 122/160 are
+comparable. Remaining misses are memory-heavy default runs where reality is
+slower than the model (openstacks p16: 13.6s real vs 1.9s simulated).
+
+**Measurement caveat: the dev machine has 4 physical cores with
+hyperthreading** (i7-4790K). Profiles taken with 6 parallel jobs were
+1.6-2x slower than the same formulas with 4 jobs. Timing runs must use at most
+4 jobs, and profiles and real runs the same number. All earlier local timing
+experiments ran 8 jobs: consistent within a batch, inflated in absolute terms.
+The campaign uses kissat-p (2.0.0, `/home/gregor/data/lisat/kissat-p`), stock
+kissat for earlier runs was 3.1.1.
+
+First hint from the real runs (not a tuning result, 32 instances A solves in
+<= 40s): increment 1 / 500ms / 4 calls solved 32/32 with sum 69.5s on the 28
+solved by all, the default 29/32 with 339.6s.
+
 ## Instances that take 10-30 seconds
 
 Most of the IPC suite is useless for comparing encodings: it is either trivial

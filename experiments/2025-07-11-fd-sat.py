@@ -7,7 +7,7 @@ from lab.reports import Attribute, geometric_mean, arithmetic_mean
 
 from downward.experiment import FastDownwardExperiment
 
-from downward.reports.absolute import AbsoluteReport
+from score_report import AbsoluteReport
 from downward.reports.compare import ComparativeReport
 from downward.reports.scatter import ScatterPlotReport
 

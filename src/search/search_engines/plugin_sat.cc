@@ -25,6 +25,12 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
 		"time limit for each step of the SAT run. Defaults to -1, which means no limit",
 		"-1");
 
+	parser.add_list_option<int>(
+		"step_time_limits",
+		"per-call time limits in seconds: the i-th SAT call (i-th length of the strategy) "
+		"gets the i-th entry, later calls step_time_limit. Empty = step_time_limit for all",
+		"[]");
+
 	parser.add_option<bool>(
 		"solver_quiet",
 		"if possible try to put the SAT solver into quiet mode (less output to parse for experiments)",

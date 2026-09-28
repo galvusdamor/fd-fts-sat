@@ -1,3 +1,4 @@
+#include <vector>
 #ifndef SEARCH_ALGORITHMS_SAT_SEARCH
 #define SEARCH_ALGORITHMS_SAT_SEARCH
 
@@ -19,6 +20,7 @@ class LengthStrategy;
 
 class SATSearch : public SearchEngine {
 	const int stepTimeLimit;
+	const std::vector<int> stepTimeLimits;   // per call; empty = stepTimeLimit for all
 	bool continueAfterFirstPlan;
 	const std::shared_ptr<LengthStrategy> length_strategy;
 	const std::shared_ptr<SATEncodingFactory> encoding_factory;

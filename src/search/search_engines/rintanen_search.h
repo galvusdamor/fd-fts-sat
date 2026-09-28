@@ -28,7 +28,9 @@ enum encoding_type {
 class RintanenSATSearch : public SearchEngine, std::enable_shared_from_this<RintanenSATSearch>{
 	const std::shared_ptr<SATEncodingFactory> encoding_factory;
 	const size_t max_parallel_calls;
-	const int scheduler_interval_seconds;
+	const int scheduler_interval_ms;
+	const double gamma;
+	const bool trace_schedule;
 	const bool dont_schedule_formula_generation;
 	const int memory_limit_mbs;
 

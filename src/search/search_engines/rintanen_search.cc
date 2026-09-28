@@ -1,4 +1,6 @@
 #include <chrono>
+#include <cmath>
+#include <sstream>
 #include <thread>
 #include <atomic>
 #include <semaphore>
@@ -62,6 +64,11 @@ std::map<void*, std::shared_ptr<SAT_Call_Data>> sat_solver_to_data;
 struct SAT_Scheduler{
 	const size_t maximum_number_of_parallel_calls;
 	std::chrono::milliseconds schedule_interval;
+	// turn length of the open call at position p (0 = shortest length) is
+	// schedule_interval * gamma^p; gamma = 1 is plain round-robin
+	const double gamma;
+	const bool trace;
+	std::chrono::steady_clock::time_point t_start;
 	const bool dont_schedule_formula_generation;
 	const int memory_limit_mbs;
 
@@ -81,10 +88,11 @@ struct SAT_Scheduler{
 	int reserved_memory_in_mb;
 	
 
-	SAT_Scheduler(size_t max_parallel_calls, int scheduler_interval_seconds,
+	SAT_Scheduler(size_t max_parallel_calls, int scheduler_interval_ms, double _gamma, bool _trace,
 			bool _dont_schedule_formula_generation, int _memory_limit_mbs) :
 		maximum_number_of_parallel_calls(max_parallel_calls),
-		schedule_interval(scheduler_interval_seconds * 1000),
+		schedule_interval(scheduler_interval_ms),
+		gamma(_gamma), trace(_trace), t_start(std::chrono::steady_clock::now()),
 		dont_schedule_formula_generation(_dont_schedule_formula_generation),
 		memory_limit_mbs(_memory_limit_mbs),
 		nextStepNumber(0), previousLength(-1), done_mutex(0), shutdown_handshake(0), plannerTerminated(false), planFound(false) {
@@ -96,6 +104,30 @@ struct SAT_Scheduler{
 		//utils::reserve_extra_memory_padding(educated_guess_memory_in_mb);
 	}
 	
+	double seconds_since_start() const {
+		return std::chrono::duration<double>(std::chrono::steady_clock::now() - t_start).count();
+	}
+
+	// one line per scheduling event, only with trace_schedule=true
+	void trace_event(const char *event, const SAT_Call_Data &call) const {
+		if (!trace) return;
+		// one write: a newly created thread prints "started" concurrently
+		std::ostringstream line;
+		line << "RSCHED t " << seconds_since_start() << " " << event
+			 << " step " << call.iterationNr << " length " << call.timesteps << "\n";
+		cout << line.str() << std::flush;
+	}
+
+	std::chrono::milliseconds turn_length(int step_number) const {
+		if (gamma == 1.0) return schedule_interval;
+		int position = 0;
+		for (const auto &[nr, instance] : currentInstances) {
+			if (nr == step_number) break;
+			position++;
+		}
+		return std::chrono::milliseconds(std::max<long>(1, std::lround(schedule_interval.count() * std::pow(gamma, position))));
+	}
+
 	void terminate_planner(int currentNr){
 		plannerTerminated = true; // planner will terminate		
 		// wake up any running instance, they will terminate immediately
@@ -123,18 +155,19 @@ struct SAT_Scheduler{
 		}
 		
 
+		// the call that is currently active
+		std::shared_ptr<SAT_Call_Data> current_call = sat_solver_to_data[solver];
+		const int current_call_step = current_call->iterationNr;
+
 		// check whether my time has elapsed; but ignore if thread has finished or wants to be paused for memory
 		if (! finished && !forcePauseForMemory){
 			auto t_now = std::chrono::system_clock::now();
 			std::chrono::milliseconds elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last_schedule);
 		
 			// my time has not elapsed yet.
-			if (elapsed < schedule_interval) return plannerTerminated;
+			if (elapsed < turn_length(current_call_step)) return plannerTerminated;
 		}
-
-		// the call that is currently active
-		std::shared_ptr<SAT_Call_Data> current_call = sat_solver_to_data[solver];
-		const int current_call_step = current_call->iterationNr;
+		if (finished) trace_event(foundPlans ? "sat" : "unsat", *current_call);
 
 		//cout << "Hi Scheduler! I " << solver << " am " << (finished?"":"not ") << "finished." <<
 		//	(finished? (foundPlans?" I found a plan." : " I did not find a plan.") : "") << 
@@ -227,6 +260,7 @@ struct SAT_Scheduler{
 
 		// set the time the scheduler was invoked last to now
 		t_last_schedule = std::chrono::system_clock::now();
+		trace_event("turn", *next_call);
 		// wake the next call up
 		next_call->run_mutex.release();	
 
@@ -276,7 +310,10 @@ namespace sat_search {
 RintanenSATSearch::RintanenSATSearch(const options::Options &opts): SearchEngine(opts),
 	encoding_factory(opts.get<shared_ptr<SATEncodingFactory>>("encoder")),
 	max_parallel_calls(size_t(opts.get<int>("max_parallel_calls"))),
-	scheduler_interval_seconds(opts.get<int>("scheduler_interval")),
+	scheduler_interval_ms(opts.get<int>("scheduler_interval_ms") >= 0
+			? opts.get<int>("scheduler_interval_ms") : 1000 * opts.get<int>("scheduler_interval")),
+	gamma(opts.get<double>("gamma")),
+	trace_schedule(opts.get<bool>("trace_schedule")),
 	dont_schedule_formula_generation(opts.get<bool>("schedule_formula_as_one")),
 	memory_limit_mbs(opts.get<int>("memory_limit_mb")),
 	fts(g_main_task),
@@ -306,7 +343,7 @@ struct length_runner {
 
 	void operator() () {
 		if (!call->scheduler->plannerTerminated && !call->terminated)
-			cout << call->identifier << "started" << endl;
+			cout << (call->identifier + "started\n") << std::flush;   // one write, see trace_event
 		// try to acquire the mutex. Will cause this thread to wait until it is allowed to run
 		call->run_mutex.acquire();
 
@@ -376,6 +413,7 @@ struct length_runner {
 		}
 		call->encoding->encodeInit(1,false);
 		call->encoding->encodeGoal(call->timesteps + 1,false);
+		call->scheduler->trace_event("encoded", *call);
 		
 		int memory_after_formula = utils::get_current_memory_in_kb();
 		
@@ -548,7 +586,8 @@ SearchStatus RintanenSATSearch::step() {
     utils::Timer step_timer;
 	cout << "Starting Rintanen's algorithms C with SAT solver " << ipasir_signature() << endl;
 
-	std::shared_ptr<SAT_Scheduler> global_scheduler = make_shared<SAT_Scheduler>(max_parallel_calls,scheduler_interval_seconds, dont_schedule_formula_generation, memory_limit_mbs);
+	std::shared_ptr<SAT_Scheduler> global_scheduler = make_shared<SAT_Scheduler>(max_parallel_calls, scheduler_interval_ms,
+			gamma, trace_schedule, dont_schedule_formula_generation, memory_limit_mbs);
 
 	// create the first length run of the SAT planner and start it!
 	// it will wait immediately as the mutex starts in locked state
@@ -556,6 +595,7 @@ SearchStatus RintanenSATSearch::step() {
 
 	// start the first run
 	assert(global_scheduler->currentInstances.size() == 1);
+	global_scheduler->trace_event("turn", *global_scheduler->currentInstances.begin()->second);
 	global_scheduler->currentInstances.begin()->second->run_mutex.release();
 
 	// now wait until the global scheduler has finished its work

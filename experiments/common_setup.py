@@ -16,7 +16,7 @@ from lab.experiment import ARGPARSER
 from lab.steps import Step, get_step, get_steps_text
 
 from downward.experiment import FastDownwardExperiment
-from downward.reports.absolute import AbsoluteReport
+from score_report import AbsoluteReport
 from downward.reports.compare import ComparativeReport
 from downward.reports.scatter import ScatterPlotReport
 
