@@ -182,6 +182,10 @@ namespace label_order_finder {
         int pair_slack;
         int pair_weight;
         int chain_weight;
+        // 0 ALL: state pairs go into the MaxSAT; 1 LEFTOVER: the MaxSAT sees the
+        // chains only, and the state pairs only move labels no chain mentions
+        int pair_scope;
+        bool pair_uncovered;
         public:
         LabelOrderFinderGoalChains(const options::Options &opts);
         std::vector<int> find_order(const task_representation::FTSTask &fts_task) override;

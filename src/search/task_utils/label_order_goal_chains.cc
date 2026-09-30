@@ -638,7 +638,9 @@ namespace label_order_finder {
           pair_source(opts.get_enum("pair_source")),
           pair_slack(opts.get<int>("pair_slack")),
           pair_weight(opts.get<int>("pair_weight")),
-          chain_weight(opts.get<int>("chain_weight")) {
+          chain_weight(opts.get<int>("chain_weight")),
+          pair_scope(opts.get_enum("pair_scope")),
+          pair_uncovered(opts.get<bool>("pair_uncovered")) {
         if (pair_source != 0 && opts.get_enum("merge_strategy") == 0) {
             cerr << "label_order_goal_chains: pair_source needs a merge_strategy (explicit products)" << endl;
             utils::exit_with(utils::ExitCode::INPUT_ERROR);
@@ -1164,6 +1166,63 @@ namespace label_order_finder {
             distinct += count.size();
         }
 
+        /*
+          pair_scope=LEFTOVER: keep the order of the chain labels and move each
+          movable (leftover) label to the position where the fewest weighted
+          pairs involving it are backwards. Only pairs with at least one
+          movable label count. Insertion local search, as in heuristic_order,
+          starting from the given order (relaxed-layer insertion).
+        */
+        vector<int> place_leftovers(vector<int> order, const vector<char> &movable,
+                                    const map<pair<int, int>, int> &pairs, int passes, long &moves) {
+            const int n = order.size();
+            const int L = movable.size();
+            vector<vector<pair<int, int>>> out(L), in(L);
+            for (const auto &[e, wt] : pairs) {
+                if (!movable[e.first] && !movable[e.second]) continue;
+                out[e.first].push_back({e.second, wt});
+                in[e.second].push_back({e.first, wt});
+            }
+            vector<int> pos(L, -1);
+            for (int pass = 0; pass < passes && !deadline.passed(); pass++) {
+                bool improved = false;
+                for (int idx = 0; idx < n; idx++) {
+                    const int v = order[idx];
+                    if (!movable[v] || (out[v].empty() && in[v].empty())) continue;
+                    for (int i = 0; i < n; i++) pos[order[i]] = i;
+                    const int p = pos[v];
+                    vector<long> delta_at(n + 1, 0);
+                    long base = 0;
+                    auto add_range = [&](int lo, int hi, long val) {
+                        if (lo >= hi) return;
+                        delta_at[lo] += val; delta_at[hi] -= val;
+                    };
+                    for (auto [u, wt] : out[v]) {   // v->u backwards iff v after u
+                        const int q = pos[u], qq = q < p ? q : q - 1;
+                        add_range(qq + 1, n, wt);
+                        if (q < p) base += wt;
+                    }
+                    for (auto [u, wt] : in[v]) {    // u->v backwards iff v before u
+                        const int q = pos[u], qq = q < p ? q : q - 1;
+                        add_range(0, qq + 1, wt);
+                        if (q > p) base += wt;
+                    }
+                    long run = 0, bestc = base; int bestpos = -1;
+                    for (int i = 0; i < n; i++) {
+                        run += delta_at[i];
+                        if (run < bestc) { bestc = run; bestpos = i; }
+                    }
+                    if (bestpos >= 0 && bestpos != p) {
+                        order.erase(order.begin() + p);
+                        order.insert(order.begin() + bestpos, v);
+                        improved = true; moves++;
+                    }
+                }
+                if (!improved) break;
+            }
+            return order;
+        }
+
         // Goal distances in a base factor (all states are goals if it has
         // no goal of its own).
         vector<int> factor_goal_distances(const TransitionSystem &tf, const FactorTable &F) {
@@ -1647,9 +1706,13 @@ namespace label_order_finder {
         };
 
         MergeStats ms;
+        const map<pair<int, int>, int> no_pairs;
+        const vector<long> no_first;
+        const bool pairs_in_maxsat = pair_scope == 0;
         vector<int> merged = merge_chains(selected_chains(), num_labels, exact_max_size,
                                           exact_conflicts, exact_time_limit, ms, exact_max_weight, chain_weight,
-                                          extra_pairs, extra_first);
+                                          pairs_in_maxsat ? extra_pairs : no_pairs,
+                                          pairs_in_maxsat ? extra_first : no_first);
         vector<int> order = complete(merged);
         int rounds = 0, switches = 0;
         long alternatives = 0;
@@ -1672,9 +1735,35 @@ namespace label_order_finder {
                 ms = MergeStats();
                 merged = merge_chains(selected_chains(), num_labels, exact_max_size,
                                       exact_conflicts, exact_time_limit, ms, exact_max_weight, chain_weight,
-                                      extra_pairs, extra_first);
+                                      pairs_in_maxsat ? extra_pairs : no_pairs,
+                                      pairs_in_maxsat ? extra_first : no_first);
                 order = complete(merged);
             }
+        }
+        long leftover_moves = 0;
+        int uncovered_pair_factors = 0;
+        if (pair_scope == 1 && pair_uncovered) {
+            /*
+              Factors in no goal product: their labels would get no pairs at
+              all. Take the pairs of all paths through the factor itself
+              (ALL: such factors usually have no goal, so every state is one).
+            */
+            DeadlineOff off;   // atomic factors are small, and without this step their labels get no pairs
+            for (int f = 0; f < num_factors; f++) {
+                if (covered[f] || moving[f].empty()) continue;
+                Product fp;
+                if (root_product(task, f, table(f), moving, num_labels, fp, explored_states) != MergeResult::OK)
+                    continue;
+                state_pairs(fp, 3, 0, pair_weight, extra_pairs, extra_first,
+                            long(pair_products++) * 2, extra_distinct);
+                uncovered_pair_factors++;
+            }
+        }
+        if (pair_scope == 1 && !extra_pairs.empty()) {
+            vector<char> movable(num_labels, 1);
+            for (const auto &c : chains) for (int l : c.alternatives[c.selected]) movable[l] = 0;
+            DeadlineOff off;   // cheap and bounded by its passes; the order must be complete
+            order = place_leftovers(order, movable, extra_pairs, 5, leftover_moves);
         }
         assert((int)order.size() == num_labels);
         if (verbose)
@@ -1712,7 +1801,8 @@ namespace label_order_finder {
              << " spurious_plans " << spurious_plans << " spurious_final " << spurious_final
              << " time_budget_hits " << time_budget_hits
              << " pair_source " << pair_source << " pair_products " << pair_products
-             << " state_pairs " << extra_distinct
+             << " state_pairs " << extra_distinct << " leftover_moves " << leftover_moves
+             << " uncovered_pair_factors " << uncovered_pair_factors
              << " chain_time " << chain_time << " total_time " << total_time << endl;
         return order;
     }
@@ -1824,6 +1914,16 @@ namespace label_order_finder {
             "which consecutive label pairs of the goal products the MaxSAT sees; needs a "
             "merge_strategy", "PLAN", pair_sources_doc);
         parser.add_option<int>("pair_slack", "with pair_source=SLACK", "1");
+        vector<string> pair_scopes {"ALL", "LEFTOVER"};
+        vector<string> pair_scopes_doc {
+            "the state-induced pairs go into the MaxSAT with the chain pairs",
+            "the MaxSAT sees the chains only; the state-induced pairs then move only the labels "
+            "no chain mentions (starting from the relaxed-layer insertion)"};
+        parser.add_enum_option("pair_scope", pair_scopes,
+            "with pair_source: where the state-induced pairs are used", "ALL", pair_scopes_doc);
+        parser.add_option<bool>("pair_uncovered",
+            "with pair_scope=LEFTOVER: also take the pairs of all paths of every factor that no "
+            "goal product contains", "false");
         parser.add_option<int>("chain_weight",
             "weight of one occurrence of a chain pair (state-induced pairs: 1..pair_weight); "
             "large values keep the chains' order and let the state pairs place the rest", "1");
