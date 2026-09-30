@@ -163,6 +163,25 @@ namespace label_order_finder {
         bool all_plans;
         int deep_giveup;
         int work_budget;
+        // Incremental products per goal factor (merge one factor at a time,
+        // prune unreachable and dead-end states after every merge):
+        // 0 NONE (the product_bfs above), 1 RANKED, 2 CEGAR, 3 DFP_ROOT, 4 DFP
+        int merge_strategy;
+        bool merge_other_goals;
+        bool merge_until_covered;
+        int max_merges;
+        bool merge_skip_too_big;
+        double merge_build_factor;
+        // Variant D: 0 NONE, 1 EXACT, 2 PRUNE, 3 PAIRS, 4 GREEDY
+        int shrink;
+        int prune_slack;
+        double time_budget;
+        // pairs for the MaxSAT: 0 PLAN (the chains only), 1 OPTIMAL, 2 SLACK, 3 ALL
+        int exact_max_weight;
+        int pair_source;
+        int pair_slack;
+        int pair_weight;
+        int chain_weight;
         public:
         LabelOrderFinderGoalChains(const options::Options &opts);
         std::vector<int> find_order(const task_representation::FTSTask &fts_task) override;
