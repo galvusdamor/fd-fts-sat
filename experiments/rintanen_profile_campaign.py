@@ -101,6 +101,7 @@ def profile_instance(path, lengths, args):
             "--overall-time-limit", f"{overall}s", "--overall-memory-limit", f"{args.memory_limit}m"]
            + h2_without_limits() + [path] + TRANSFORM + ["--search", search])
     t0 = time.time()
+    started = time.strftime("%Y-%m-%d %H:%M:%S")
     res = subprocess.run(cmd, cwd=rundir, capture_output=True, text=True)
     log = res.stdout + res.stderr
     tag = f"round{len(old['rounds']) + 1 if old else 1}"
@@ -118,7 +119,9 @@ def profile_instance(path, lengths, args):
         # the length being encoded/solved when memory ran out: its formula cannot
         # be handled within the limit, neither here nor in rintanen
         prof[missing[0]] = dict(status="FAILED", encode=0.0, solve=0.0, clauses=0, vars=0, reason="memory")
+    # measurement conditions: parallel jobs and the CPUs the campaign is pinned to
     meta = dict(round=tag, requested=todo, exit=res.returncode, wall=round(time.time() - t0, 2),
+                jobs=args.jobs, cpus=sorted(os.sched_getaffinity(0)), started=started,
                 trivial="Task solved without search" in log,
                 last_requested_done=bool(todo) and max(todo) in prof)
     for key, pat in (("transform_time", rf"Transform time: ({FLOAT})s"), ("init_time", rf"SAT init time: ({FLOAT})s"),
