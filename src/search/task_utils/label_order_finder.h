@@ -186,6 +186,10 @@ namespace label_order_finder {
         // chains only, and the state pairs only move labels no chain mentions
         int pair_scope;
         bool pair_uncovered;
+        bool report_flaws;
+        // ties between independent components: 0 CHAIN (chain index, then position: chains
+        // stay contiguous), 1 POSITION (relative position within the chain: chains interleave)
+        int chain_tiebreak;
         public:
         LabelOrderFinderGoalChains(const options::Options &opts);
         std::vector<int> find_order(const task_representation::FTSTask &fts_task) override;

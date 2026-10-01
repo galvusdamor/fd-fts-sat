@@ -8,7 +8,10 @@
 #include "../operator_id.h"
 #include "../utils/system.h"
 
+#include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include "../globals.h"
 using namespace std;
 
 namespace task_transformation {
@@ -23,6 +26,20 @@ PlanReconstructionMergeAndShrink::PlanReconstructionMergeAndShrink(
       label_map(move(label_map)) {
 
     //predecessor_task->dump();
+    // Diagnostics: FTS_DUMP_LABEL_MAP=<file> appends, per reconstruction step, the map from
+    // the predecessor task's labels to this step's labels, and (for the atomic task, whose
+    // labels are the SAS operators) the operator names, so that transformed labels can be named.
+    if (const char *dump = getenv("FTS_DUMP_LABEL_MAP")) {
+        ofstream out(dump, ios::app);
+        const int n = predecessor_task->get_num_labels();
+        out << "; step predecessor_labels " << n << endl;
+        for (int l = 0; l < n; l++) out << l << " " << this->label_map->get_reduced_label(l) << endl;
+        const auto sas = g_sas_task();
+        if (sas && sas->get_num_operators() == n) {
+            out << "; names" << endl;
+            for (int l = 0; l < n; l++) out << l << " " << sas->get_operators()[l].get_name() << endl;
+        }
+    }
 }
 
     bool PlanReconstructionMergeAndShrink::match_states(const GlobalState & original_state,

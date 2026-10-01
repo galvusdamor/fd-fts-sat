@@ -640,7 +640,9 @@ namespace label_order_finder {
           pair_weight(opts.get<int>("pair_weight")),
           chain_weight(opts.get<int>("chain_weight")),
           pair_scope(opts.get_enum("pair_scope")),
-          pair_uncovered(opts.get<bool>("pair_uncovered")) {
+          pair_uncovered(opts.get<bool>("pair_uncovered")),
+          report_flaws(opts.get<bool>("report_flaws")),
+          chain_tiebreak(opts.get_enum("chain_tiebreak")) {
         if (pair_source != 0 && opts.get_enum("merge_strategy") == 0) {
             cerr << "label_order_goal_chains: pair_source needs a merge_strategy (explicit products)" << endl;
             utils::exit_with(utils::ExitCode::INPUT_ERROR);
@@ -672,7 +674,7 @@ namespace label_order_finder {
                                  int exact_max_size, int exact_conflicts, double exact_time_limit,
                                  MergeStats &ms, int exact_max_weight = -1, int chain_weight = 1,
                                  const Weights &extra = Weights(),
-                                 const vector<long> &extra_first = vector<long>()) {
+                                 const vector<long> &extra_first = vector<long>(), int tiebreak = 0) {
             Weights w;
             vector<long> first_pos(num_labels, -1);
             long stride = 1;
@@ -681,7 +683,10 @@ namespace label_order_finder {
                 const auto &c = chains[ci];
                 ms.chain_labels += c.size();
                 for (size_t i = 0; i < c.size(); i++) {
-                    const long key = ci * stride + i;
+                    // CHAIN keeps chains contiguous; POSITION interleaves them by relative position
+                    const long key = tiebreak == 0
+                        ? long(ci) * stride + i
+                        : (long(i) * 1000000 / max<long>(1, long(c.size()) - 1)) * long(chains.size() + 1) + ci;
                     if (first_pos[c[i]] < 0) first_pos[c[i]] = key;
                     if (i + 1 < c.size() && c[i] != c[i + 1]) w[{c[i], c[i + 1]}] += chain_weight;
                 }
@@ -692,7 +697,8 @@ namespace label_order_finder {
             if (!extra_first.empty())
                 for (int l = 0; l < num_labels; l++)
                     if (first_pos[l] < 0 && extra_first[l] >= 0)
-                        first_pos[l] = long(chains.size()) * stride + extra_first[l];
+                        first_pos[l] = (tiebreak == 0 ? long(chains.size()) * stride
+                                                      : 1000001L * long(chains.size() + 1)) + extra_first[l];
 
             vector<int> vs;
             for (int l = 0; l < num_labels; l++) if (first_pos[l] >= 0) vs.push_back(l);
@@ -1405,6 +1411,21 @@ namespace label_order_finder {
             return over;
         };
         long cegar_flaws = 0;
+        if (report_flaws) {
+            for (int f = 0; f < num_factors; f++) {
+                const TransitionSystem &ts = task.get_ts(f);
+                cout << "GOALCHAINS factor " << f << " states " << ts.get_size() << " init " << ts.get_init_state()
+                     << " goal_relevant " << ts.is_goal_relevant() << endl;
+            }
+            for (int l = 0; l < num_labels; l++) {
+                cout << "GOALCHAINS label " << l << " moves";
+                for (int f = 0; f < num_factors; f++)
+                    for (int m : moving[f]) if (m == l) { cout << " " << f; break; }
+                cout << " pre";
+                for (int f : pre_factors[l]) cout << " " << f;
+                cout << endl;
+            }
+        }
         double merge_time = 0;
         auto merged_goal_chain = [&](int g, vector<int> &plan, vector<int> &used) {
             const auto merge_start = chrono::steady_clock::now();
@@ -1591,6 +1612,25 @@ namespace label_order_finder {
                 continue;
             }
             if (plans[0].empty()) continue;
+            if (report_flaws) {
+                // which base factors outside the product refute the abstract plan, and where
+                vector<char> in_used(num_factors, 0);
+                for (int f : used) in_used[f] = 1;
+                vector<pair<int, int>> flaws;   // (position, factor)
+                for (int f = 0; f < num_factors; f++) {
+                    if (in_used[f]) continue;
+                    const int pos = first_flaw(task.get_ts(f), table(f), plans[0]);
+                    if (pos >= 0) flaws.push_back({pos, f});
+                }
+                sort(flaws.begin(), flaws.end());
+                cout << "GOALCHAINS goalplan goal " << g << " used";
+                for (int f : used) cout << " " << f;
+                cout << " plan";
+                for (int l : plans[0]) cout << " " << l;
+                cout << " flaws";
+                for (auto [pos, f] : flaws) cout << " " << f << "@" << pos;
+                cout << endl;
+            }
             add_subgoals(plans[0], used, 0);
             chains.push_back({plans, 0});
         }
@@ -1712,7 +1752,7 @@ namespace label_order_finder {
         vector<int> merged = merge_chains(selected_chains(), num_labels, exact_max_size,
                                           exact_conflicts, exact_time_limit, ms, exact_max_weight, chain_weight,
                                           pairs_in_maxsat ? extra_pairs : no_pairs,
-                                          pairs_in_maxsat ? extra_first : no_first);
+                                          pairs_in_maxsat ? extra_first : no_first, chain_tiebreak);
         vector<int> order = complete(merged);
         int rounds = 0, switches = 0;
         long alternatives = 0;
@@ -1736,7 +1776,7 @@ namespace label_order_finder {
                 merged = merge_chains(selected_chains(), num_labels, exact_max_size,
                                       exact_conflicts, exact_time_limit, ms, exact_max_weight, chain_weight,
                                       pairs_in_maxsat ? extra_pairs : no_pairs,
-                                      pairs_in_maxsat ? extra_first : no_first);
+                                      pairs_in_maxsat ? extra_first : no_first, chain_tiebreak);
                 order = complete(merged);
             }
         }
@@ -1921,6 +1961,16 @@ namespace label_order_finder {
             "no chain mentions (starting from the relaxed-layer insertion)"};
         parser.add_enum_option("pair_scope", pair_scopes,
             "with pair_source: where the state-induced pairs are used", "ALL", pair_scopes_doc);
+        vector<string> tiebreaks {"CHAIN", "POSITION"};
+        vector<string> tiebreaks_doc {"chain index, then position: chains stay contiguous",
+                                      "relative position within the chain: chains interleave"};
+        parser.add_enum_option("chain_tiebreak", tiebreaks,
+            "order of independent components (no pair between them) in the merged order", "CHAIN",
+            tiebreaks_doc);
+        parser.add_option<bool>("report_flaws",
+            "diagnostics: per goal chain, the product's factors and the base factors that refute "
+            "the abstract plan (factor@position); per label, the factors it moves and has "
+            "preconditions on", "false");
         parser.add_option<bool>("pair_uncovered",
             "with pair_scope=LEFTOVER: also take the pairs of all paths of every factor that no "
             "goal product contains", "false");
