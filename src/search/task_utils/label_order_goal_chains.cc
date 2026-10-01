@@ -642,7 +642,10 @@ namespace label_order_finder {
           pair_scope(opts.get_enum("pair_scope")),
           pair_uncovered(opts.get<bool>("pair_uncovered")),
           report_flaws(opts.get<bool>("report_flaws")),
-          chain_tiebreak(opts.get_enum("chain_tiebreak")) {
+          chain_tiebreak(opts.get_enum("chain_tiebreak")),
+          chain_edges(opts.get_enum("chain_edges")),
+          chain_schedule(opts.get_enum("chain_schedule")),
+          dep_weight(opts.get<int>("dep_weight")) {
         if (pair_source != 0 && opts.get_enum("merge_strategy") == 0) {
             cerr << "label_order_goal_chains: pair_source needs a merge_strategy (explicit products)" << endl;
             utils::exit_with(utils::ExitCode::INPUT_ERROR);
@@ -664,6 +667,23 @@ namespace label_order_finder {
         };
 
         /*
+          How independent components are scheduled (chain_schedule). CHAIN: by
+          the priority key only (chains stay contiguous). INTERACTION: greedily
+          the ready component with the largest net interaction weight towards
+          the unscheduled ones (a before b preferred for every (a, b) in
+          `interaction`). SIMULATE: replay the scheduled labels on all base
+          factors as state sets and prefer a ready component that is
+          applicable there, staying in the chain of the last one while it is.
+        */
+        struct ScheduleContext {
+            int mode = 0;
+            const FTSTask *task = nullptr;
+            const vector<vector<int>> *constrained_in = nullptr;   // label -> factors it constrains
+            const map<pair<int, int>, int> *interaction = nullptr;
+            long applicable_picks = 0, forced_picks = 0, chain_switches = 0;
+        };
+
+        /*
           Merge label chains into one order of the labels they mention:
           minimise backwards consecutive pairs. Components of the precedence
           graph in Kahn order, ties by (chain index, position) so chains stay
@@ -674,7 +694,8 @@ namespace label_order_finder {
                                  int exact_max_size, int exact_conflicts, double exact_time_limit,
                                  MergeStats &ms, int exact_max_weight = -1, int chain_weight = 1,
                                  const Weights &extra = Weights(),
-                                 const vector<long> &extra_first = vector<long>(), int tiebreak = 0) {
+                                 const vector<long> &extra_first = vector<long>(), int tiebreak = 0,
+                                 ScheduleContext *sched = nullptr) {
             Weights w;
             vector<long> first_pos(num_labels, -1);
             long stride = 1;
@@ -704,34 +725,14 @@ namespace label_order_finder {
             for (int l = 0; l < num_labels; l++) if (first_pos[l] >= 0) vs.push_back(l);
 
             vector<vector<int>> comps = sccs_topological(vs, w);
-            {
-                vector<int> comp_of(num_labels, -1);
-                for (size_t c = 0; c < comps.size(); c++) for (int l : comps[c]) comp_of[l] = c;
-                const int C = comps.size();
-                vector<vector<int>> succ(C);
-                vector<int> indeg(C, 0);
-                vector<long> prio(C, LONG_MAX);
-                for (int c = 0; c < C; c++) for (int l : comps[c]) prio[c] = min(prio[c], first_pos[l]);
-                set<pair<int, int>> seen;
-                for (const auto &[e, wt] : w) {
-                    const int a = comp_of[e.first], b = comp_of[e.second];
-                    if (a != b && seen.insert({a, b}).second) { succ[a].push_back(b); indeg[b]++; }
-                }
-                set<pair<long, int>> ready;
-                for (int c = 0; c < C; c++) if (!indeg[c]) ready.insert({prio[c], c});
-                vector<vector<int>> sorted;
-                while (!ready.empty()) {
-                    const int c = ready.begin()->second; ready.erase(ready.begin());
-                    sorted.push_back(comps[c]);
-                    for (int d : succ[c]) if (--indeg[d] == 0) ready.insert({prio[d], d});
-                }
-                assert(sorted.size() == comps.size());
-                comps.swap(sorted);
-            }
-            vector<int> order;
-            for (auto &comp : comps) {
+            const int C = comps.size();
+            // inner order of every component first: it does not depend on the
+            // schedule, and the simulation needs it
+            vector<vector<int>> inner(C);
+            for (int c = 0; c < C; c++) {
+                auto &comp = comps[c];
                 ms.largest = max<int>(ms.largest, comp.size());
-                if (comp.size() == 1) { order.push_back(comp[0]); continue; }
+                if (comp.size() == 1) { inner[c] = comp; continue; }
                 Weights wc;
                 {
                     vector<char> in(num_labels, 0);
@@ -750,8 +751,138 @@ namespace label_order_finder {
                 } else {
                     ms.heuristic_comps++;
                 }
-                order.insert(order.end(), co.begin(), co.end());
+                inner[c] = co;
             }
+
+            vector<int> comp_of(num_labels, -1);
+            for (int c = 0; c < C; c++) for (int l : comps[c]) comp_of[l] = c;
+            vector<vector<int>> succ(C);
+            vector<int> indeg(C, 0);
+            vector<long> prio(C, LONG_MAX);
+            for (int c = 0; c < C; c++) for (int l : comps[c]) prio[c] = min(prio[c], first_pos[l]);
+            {
+                set<pair<int, int>> seen;
+                for (const auto &[e, wt] : w) {
+                    const int a = comp_of[e.first], b = comp_of[e.second];
+                    if (a != b && seen.insert({a, b}).second) { succ[a].push_back(b); indeg[b]++; }
+                }
+            }
+            const int mode = sched ? sched->mode : 0;
+            // chain a component belongs to (for "stay in the chain"): from its priority key
+            auto chain_of_comp = [&](int c) { return tiebreak == 0 ? prio[c] / stride : -1; };
+
+            // INTERACTION: net weight of each component towards the unscheduled ones
+            vector<vector<pair<int, long>>> inter(C);   // (other, weight c before other)
+            vector<long> score(C, 0);
+            if (mode == 1 && sched->interaction) {
+                map<pair<int, int>, long> agg;
+                for (const auto &[e, wt] : *sched->interaction) {
+                    if (e.first >= num_labels || e.second >= num_labels) continue;
+                    const int a = comp_of[e.first], b = comp_of[e.second];
+                    if (a < 0 || b < 0 || a == b) continue;
+                    agg[{a, b}] += wt;
+                }
+                for (const auto &[e, wt] : agg) {
+                    inter[e.first].push_back({e.second, wt});
+                    inter[e.second].push_back({e.first, -wt});
+                    score[e.first] += wt; score[e.second] -= wt;
+                }
+            }
+
+            // SIMULATE: state sets of the base factors under the scheduled labels
+            const FTSTask *task = sched ? sched->task : nullptr;
+            vector<vector<char>> in_set;
+            vector<vector<int>> members;
+            auto ensure = [&](int f) {
+                if (in_set[f].empty()) {
+                    const TransitionSystem &ts = task->get_ts(f);
+                    in_set[f].assign(ts.get_size(), 0);
+                    in_set[f][ts.get_init_state()] = 1;
+                    members[f] = {ts.get_init_state()};
+                }
+            };
+            // apply label l to factor f; returns false if not applicable (then f
+            // continues from every target of l, as if a preparation happened)
+            auto step = [&](int f, int l, vector<int> &out) {
+                out.clear();
+                const auto &trs = task->get_ts(f).get_transitions_with_label(l);
+                for (const auto &tr : trs) if (in_set[f][tr.src]) out.push_back(tr.target);
+                if (!out.empty()) return true;
+                for (const auto &tr : trs) out.push_back(tr.target);
+                return false;
+            };
+            auto assign = [&](int f, vector<int> &nxt) {
+                for (int x : members[f]) in_set[f][x] = 0;
+                sort(nxt.begin(), nxt.end()); nxt.erase(unique(nxt.begin(), nxt.end()), nxt.end());
+                members[f] = nxt;
+                for (int x : nxt) in_set[f][x] = 1;
+            };
+            if (mode == 2) { in_set.resize(task->get_size()); members.resize(task->get_size()); }
+            vector<int> buf;
+            auto applicable = [&](int c) {   // all labels of c in inner order, on copies of the touched factors
+                map<int, vector<int>> saved;
+                bool ok = true;
+                for (int l : inner[c]) {
+                    for (int f : (*sched->constrained_in)[l]) {
+                        ensure(f);
+                        if (!saved.count(f)) saved[f] = members[f];
+                        if (!step(f, l, buf)) { ok = false; break; }
+                        assign(f, buf);
+                    }
+                    if (!ok) break;
+                }
+                for (auto &[f, m] : saved) { vector<int> back = m; assign(f, back); }
+                return ok;
+            };
+            auto apply = [&](int c) {
+                for (int l : inner[c])
+                    for (int f : (*sched->constrained_in)[l]) { ensure(f); step(f, l, buf); assign(f, buf); }
+            };
+
+            vector<int> ready;
+            for (int c = 0; c < C; c++) if (!indeg[c]) ready.push_back(c);
+            vector<char> done(C, 0);
+            vector<int> sorted_comps;
+            long last_chain = -2;
+            while (!ready.empty()) {
+                int pick = 0;
+                auto before = [&](int a, int b) { return prio[a] < prio[b] || (prio[a] == prio[b] && a < b); };
+                if (mode == 0 || (mode == 2 && deadline.passed())) {
+                    for (size_t k = 1; k < ready.size(); k++) if (before(ready[k], ready[pick])) pick = k;
+                } else if (mode == 1) {
+                    for (size_t k = 1; k < ready.size(); k++) {
+                        const int a = ready[k], b = ready[pick];
+                        if (score[a] > score[b] || (score[a] == score[b] && before(a, b))) pick = k;
+                    }
+                } else {
+                    int best = -1, best_same = -1;
+                    for (size_t k = 0; k < ready.size(); k++) {
+                        const int c = ready[k];
+                        if (!applicable(c)) continue;
+                        if (best < 0 || before(c, ready[best])) best = k;
+                        if (chain_of_comp(c) == last_chain && (best_same < 0 || before(c, ready[best_same]))) best_same = k;
+                    }
+                    if (best_same >= 0) { pick = best_same; sched->applicable_picks++; }
+                    else if (best >= 0) { pick = best; sched->applicable_picks++; }
+                    else {
+                        for (size_t k = 1; k < ready.size(); k++) if (before(ready[k], ready[pick])) pick = k;
+                        sched->forced_picks++;
+                    }
+                }
+                const int c = ready[pick];
+                ready.erase(ready.begin() + pick);
+                done[c] = 1;
+                sorted_comps.push_back(c);
+                if (mode == 1) for (auto [d, wt] : inter[c]) if (!done[d]) score[d] += wt;   // c is gone for d
+                if (mode == 2) {
+                    apply(c);
+                    if (chain_of_comp(c) != last_chain) { if (last_chain != -2) sched->chain_switches++; last_chain = chain_of_comp(c); }
+                }
+                for (int d : succ[c]) if (--indeg[d] == 0) ready.push_back(d);
+            }
+            assert((int)sorted_comps.size() == C);
+            vector<int> order;
+            for (int c : sorted_comps) order.insert(order.end(), inner[c].begin(), inner[c].end());
             ms.sccs = comps.size();
             ms.violated = cost_of(order, w);
             for (const auto &[e, wt] : w) ms.total_weight += wt;
@@ -1227,6 +1358,101 @@ namespace label_order_finder {
                 if (!improved) break;
             }
             return order;
+        }
+
+        // per factor, the chain labels constraining it; per label, the chains it occurs in
+        void chain_label_index(const vector<vector<int>> &chains, const vector<vector<int>> &constrained_in,
+                               int num_factors, vector<vector<int>> &labels_on, map<int, set<int>> &chains_of) {
+            labels_on.assign(num_factors, {});
+            chains_of.clear();
+            for (size_t ci = 0; ci < chains.size(); ci++) for (int l : chains[ci]) chains_of[l].insert(ci);
+            for (const auto &[l, cs] : chains_of) for (int f : constrained_in[l]) labels_on[f].push_back(l);
+        }
+
+        /*
+          chain_edges=DEPENDENCE: replay every chain on every base factor it
+          constrains (state sets). Where a label b of chain j is not applicable
+          on factor f, every label a of another chain that takes f from outside
+          into b's precondition there gets the pair (a, b): a should come first.
+          The replay then continues as if f had been prepared.
+        */
+        long dependence_pairs(const FTSTask &task, const vector<vector<int>> &chains,
+                              const vector<vector<int>> &constrained_in, int weight, map<pair<int, int>, int> &out) {
+            const int F = task.get_size();
+            vector<vector<int>> labels_on; map<int, set<int>> chains_of;
+            chain_label_index(chains, constrained_in, F, labels_on, chains_of);
+            long n = 0;
+            for (size_t j = 0; j < chains.size() && !deadline.passed(); j++) {
+                set<int> fs;
+                for (int l : chains[j]) for (int f : constrained_in[l]) fs.insert(f);
+                for (int f : fs) {
+                    const TransitionSystem &ts = task.get_ts(f);
+                    vector<char> cur(ts.get_size(), 0), nxt(ts.get_size(), 0);
+                    cur[ts.get_init_state()] = 1;
+                    for (int b : chains[j]) {
+                        if (ts.isIrrelevantLabel(b)) continue;
+                        const auto &trs = ts.get_transitions_with_label(b);
+                        fill(nxt.begin(), nxt.end(), 0);
+                        bool any = false;
+                        for (const auto &tr : trs) if (cur[tr.src]) { nxt[tr.target] = 1; any = true; }
+                        if (!any) {
+                            vector<char> need(ts.get_size(), 0);
+                            for (const auto &tr : trs) need[tr.src] = 1;
+                            for (int a : labels_on[f]) {
+                                if (chains_of[a].count(j)) continue;
+                                for (const auto &tr : ts.get_transitions_with_label(a))
+                                    if (!need[tr.src] && need[tr.target]) { out[{a, b}] += weight; n++; break; }
+                            }
+                            for (const auto &tr : trs) nxt[tr.target] = 1;   // as if f had been prepared
+                        }
+                        swap(cur, nxt);
+                    }
+                }
+            }
+            return n;
+        }
+
+        /*
+          Static interactions between labels of different chains on a common
+          factor f: a enables b (a takes f from outside into b's precondition)
+          gives (a, b); a disables b (a takes f out of b's precondition) gives
+          (b, a). Labels whose precondition on f is everything are skipped as b.
+        */
+        long interaction_pairs(const FTSTask &task, const vector<vector<int>> &chains,
+                               const vector<vector<int>> &constrained_in, int weight, map<pair<int, int>, int> &out) {
+            const int F = task.get_size();
+            vector<vector<int>> labels_on; map<int, set<int>> chains_of;
+            chain_label_index(chains, constrained_in, F, labels_on, chains_of);
+            long n = 0;
+            for (int f = 0; f < F && !deadline.passed(); f++) {
+                const auto &ls = labels_on[f];
+                if (ls.size() < 2) continue;
+                const TransitionSystem &ts = task.get_ts(f);
+                const int S = ts.get_size();
+                vector<vector<char>> pre(ls.size(), vector<char>(S, 0));
+                vector<char> full(ls.size(), 1);
+                for (size_t k = 0; k < ls.size(); k++) {
+                    for (const auto &tr : ts.get_transitions_with_label(ls[k])) pre[k][tr.src] = 1;
+                    for (int x = 0; x < S; x++) if (!pre[k][x]) { full[k] = 0; break; }
+                }
+                for (size_t ia = 0; ia < ls.size(); ia++) {
+                    const auto &trs = ts.get_transitions_with_label(ls[ia]);
+                    for (size_t ib = 0; ib < ls.size(); ib++) {
+                        if (ia == ib || full[ib]) continue;
+                        bool shared = false;
+                        for (int c : chains_of[ls[ia]]) if (chains_of[ls[ib]].count(c)) { shared = true; break; }
+                        if (shared) continue;
+                        bool en = false, dis = false;
+                        for (const auto &tr : trs) {
+                            if (!pre[ib][tr.src] && pre[ib][tr.target]) en = true;
+                            if (pre[ib][tr.src] && !pre[ib][tr.target]) dis = true;
+                        }
+                        if (en) { out[{ls[ia], ls[ib]}] += weight; n++; }
+                        if (dis) { out[{ls[ib], ls[ia]}] += weight; n++; }
+                    }
+                }
+            }
+            return n;
         }
 
         // Goal distances in a base factor (all states are goals if it has
@@ -1749,10 +1975,29 @@ namespace label_order_finder {
         const map<pair<int, int>, int> no_pairs;
         const vector<long> no_first;
         const bool pairs_in_maxsat = pair_scope == 0;
-        vector<int> merged = merge_chains(selected_chains(), num_labels, exact_max_size,
-                                          exact_conflicts, exact_time_limit, ms, exact_max_weight, chain_weight,
-                                          pairs_in_maxsat ? extra_pairs : no_pairs,
-                                          pairs_in_maxsat ? extra_first : no_first, chain_tiebreak);
+        if ((chain_edges != 0 || chain_schedule != 0) && constrained_in.empty()) {
+            constrained_in.assign(num_labels, {});
+            for (int f = 0; f < num_factors; f++)
+                for (int l = 0; l < num_labels; l++)
+                    if (!task.get_ts(f).isIrrelevantLabel(l)) constrained_in[l].push_back(f);
+        }
+        long edge_pairs = 0, interaction_count = 0;
+        ScheduleContext sched;
+        auto do_merge = [&]() {
+            const vector<vector<int>> sel = selected_chains();
+            map<pair<int, int>, int> edges = pairs_in_maxsat ? extra_pairs : no_pairs;
+            if (chain_edges == 1) edge_pairs = dependence_pairs(task, sel, constrained_in, dep_weight, edges);
+            if (chain_edges == 2) edge_pairs = interaction_pairs(task, sel, constrained_in, dep_weight, edges);
+            map<pair<int, int>, int> inter;
+            if (chain_schedule == 1) interaction_count = interaction_pairs(task, sel, constrained_in, 1, inter);
+            sched = ScheduleContext();
+            sched.mode = chain_schedule; sched.task = &task; sched.constrained_in = &constrained_in;
+            sched.interaction = &inter;
+            return merge_chains(sel, num_labels, exact_max_size, exact_conflicts, exact_time_limit, ms,
+                                exact_max_weight, chain_weight, edges, pairs_in_maxsat ? extra_first : no_first,
+                                chain_tiebreak, &sched);
+        };
+        vector<int> merged = do_merge();
         vector<int> order = complete(merged);
         int rounds = 0, switches = 0;
         long alternatives = 0;
@@ -1773,10 +2018,7 @@ namespace label_order_finder {
                 }
                 if (!changed) break;
                 ms = MergeStats();
-                merged = merge_chains(selected_chains(), num_labels, exact_max_size,
-                                      exact_conflicts, exact_time_limit, ms, exact_max_weight, chain_weight,
-                                      pairs_in_maxsat ? extra_pairs : no_pairs,
-                                      pairs_in_maxsat ? extra_first : no_first, chain_tiebreak);
+                merged = do_merge();
                 order = complete(merged);
             }
         }
@@ -1843,6 +2085,10 @@ namespace label_order_finder {
              << " pair_source " << pair_source << " pair_products " << pair_products
              << " state_pairs " << extra_distinct << " leftover_moves " << leftover_moves
              << " uncovered_pair_factors " << uncovered_pair_factors
+             << " chain_edges " << chain_edges << " edge_pairs " << edge_pairs
+             << " chain_schedule " << chain_schedule << " interaction_pairs " << interaction_count
+             << " applicable_picks " << sched.applicable_picks << " forced_picks " << sched.forced_picks
+             << " chain_switches " << sched.chain_switches
              << " chain_time " << chain_time << " total_time " << total_time << endl;
         return order;
     }
@@ -1967,6 +2213,26 @@ namespace label_order_finder {
         parser.add_enum_option("chain_tiebreak", tiebreaks,
             "order of independent components (no pair between them) in the merged order", "CHAIN",
             tiebreaks_doc);
+        vector<string> edge_kinds {"BASE", "DEPENDENCE", "INTERACTION"};
+        vector<string> edge_kinds_doc {
+            "the chains' consecutive pairs (and pair_source pairs)",
+            "plus, where a chain's label is not applicable on a base factor in a replay of the "
+            "chain, (a, b) for every label a of another chain preparing that factor for it",
+            "plus the static interactions between labels of different chains on a common "
+            "factor: a enables b gives (a, b), a disables b gives (b, a)"};
+        parser.add_enum_option("chain_edges", edge_kinds,
+            "edges of the precedence graph before the SCCs are formed (option C): extra edges "
+            "can join chains into larger components that the MaxSAT orders", "BASE", edge_kinds_doc);
+        parser.add_option<int>("dep_weight", "weight of one DEPENDENCE / INTERACTION edge", "1");
+        vector<string> schedules {"CHAIN", "INTERACTION", "SIMULATE"};
+        vector<string> schedules_doc {
+            "independent components by the priority key (chain_tiebreak)",
+            "A: greedily the ready component with the largest net static interaction weight "
+            "towards the unscheduled ones",
+            "B: replay the scheduled labels on all base factors (state sets) and prefer a ready "
+            "component applicable there, staying in the current chain while it is"};
+        parser.add_enum_option("chain_schedule", schedules,
+            "how components without an edge between them are ordered", "CHAIN", schedules_doc);
         parser.add_option<bool>("report_flaws",
             "diagnostics: per goal chain, the product's factors and the base factors that refute "
             "the abstract plan (factor@position); per label, the factors it moves and has "
