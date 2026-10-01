@@ -193,6 +193,10 @@ namespace label_order_finder {
         int chain_edges;      // 0 BASE, 1 DEPENDENCE, 2 INTERACTION
         int chain_schedule;   // 0 CHAIN, 1 INTERACTION (A), 2 SIMULATE (B)
         int dep_weight;
+        int global_abstraction;   // 0 NONE, 1 ONLY, 2 ADD
+        int global_shrink;        // as shrink
+        int global_max_states;
+        int global_samples;
         public:
         LabelOrderFinderGoalChains(const options::Options &opts);
         std::vector<int> find_order(const task_representation::FTSTask &fts_task) override;

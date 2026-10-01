@@ -13,6 +13,7 @@
 #include <set>
 #include <climits>
 #include <cmath>
+#include <random>
 #include <unordered_map>
 
 #include "../sat/kissat.h"
@@ -645,7 +646,11 @@ namespace label_order_finder {
           chain_tiebreak(opts.get_enum("chain_tiebreak")),
           chain_edges(opts.get_enum("chain_edges")),
           chain_schedule(opts.get_enum("chain_schedule")),
-          dep_weight(opts.get<int>("dep_weight")) {
+          dep_weight(opts.get<int>("dep_weight")),
+          global_abstraction(opts.get_enum("global_abstraction")),
+          global_shrink(opts.get_enum("global_shrink")),
+          global_max_states(opts.get<int>("global_max_states")),
+          global_samples(opts.get<int>("global_samples")) {
         if (pair_source != 0 && opts.get_enum("merge_strategy") == 0) {
             cerr << "label_order_goal_chains: pair_source needs a merge_strategy (explicit products)" << endl;
             utils::exit_with(utils::ExitCode::INPUT_ERROR);
@@ -1210,6 +1215,23 @@ namespace label_order_finder {
 
         // A shortest plan: from the initial state always to a successor one
         // step closer to the goal, smallest label first.
+        // A shortest plan with a random choice among the successors one step
+        // closer to the goal (global_samples > 1).
+        vector<int> product_plan_sampled(const Product &p, mt19937 &rng) {
+            vector<int> plan;
+            int s = p.init;
+            vector<pair<int, int>> cands;
+            while (p.dist[s] > 0) {
+                cands.clear();
+                for (auto [l, t] : p.out[s]) if (p.dist[t] == p.dist[s] - 1) cands.push_back({l, t});
+                assert(!cands.empty());
+                const auto [l, t] = cands[uniform_int_distribution<size_t>(0, cands.size() - 1)(rng)];
+                plan.push_back(l);
+                s = t;
+            }
+            return plan;
+        }
+
         vector<int> product_plan(const Product &p) {
             vector<int> plan;
             int s = p.init;
@@ -1807,7 +1829,65 @@ namespace label_order_finder {
                     subgoal_chains++;
                 }
         };
-        for (int g = 0; g < num_factors; g++) {
+        /*
+          global_abstraction: one product of all goal factors and all their
+          transitive ancestors, with the conjunction of all goals as its goal,
+          shrunk with global_shrink whenever it exceeds global_max_states. Its
+          abstract plans contain every goal and (as far as the shrinking kept
+          them) their interactions.
+        */
+        vector<vector<int>> global_chains;
+        int global_factors = 0, global_size = 0, global_spurious = 0, global_merges = 0, global_failed = 0;
+        bool global_approx = false;
+        if (global_abstraction != 0) {
+            if (constrained_in.empty()) {
+                constrained_in.assign(num_labels, {});
+                for (int f = 0; f < num_factors; f++)
+                    for (int l = 0; l < num_labels; l++)
+                        if (!task.get_ts(f).isIrrelevantLabel(l)) constrained_in[l].push_back(f);
+            }
+            vector<int> goals;
+            for (int g = 0; g < num_factors; g++) if (task.get_ts(g).is_goal_relevant()) goals.push_back(g);
+            Product gp;
+            const int gmax = global_max_states > 0 ? global_max_states : max_states;
+            if (!goals.empty() &&
+                root_product(task, goals[0], table(goals[0]), moving, num_labels, gp, explored_states) == MergeResult::OK) {
+                vector<int> order(goals.begin() + 1, goals.end());
+                for (int f : ancestors_of(goals, -1)) order.push_back(f);
+                const int build_cap = (int)min<double>(INT_MAX, gmax * max(1.0, merge_build_factor));
+                shrink_to(gp, global_shrink, prune_slack, gmax);
+                for (int f : order) {
+                    if (deadline.passed()) break;
+                    const FactorTable &F = table(f);
+                    Product r;
+                    MergeResult res = merge_into(task, gp, f, F, moving, build_cap, true, r, explored_states);
+                    if (res == MergeResult::TOO_BIG && global_shrink >= 2) {
+                        Product shrunk = gp;
+                        const long fs = task.get_ts(f).get_size();
+                        if (shrink_to(shrunk, global_shrink, prune_slack, max<long>(1, build_cap / fs)))
+                            res = merge_into(task, shrunk, f, F, moving, build_cap, true, r, explored_states);
+                    }
+                    if (res == MergeResult::OK && !shrink_to(r, global_shrink, prune_slack, gmax)) res = MergeResult::TOO_BIG;
+                    if (res == MergeResult::OK) { gp = move(r); global_merges++; }
+                    else global_failed++;
+                }
+                global_factors = gp.factors.size();
+                global_size = gp.size();
+                global_approx = gp.approximate;
+                for (int f : gp.factors) covered[f] = 1;
+                mt19937 rng(4711);
+                set<vector<int>> seen_plans;
+                for (int k = 0; k < max(1, global_samples); k++) {
+                    vector<int> pl = k == 0 ? product_plan(gp) : product_plan_sampled(gp, rng);
+                    if (pl.empty() || !seen_plans.insert(pl).second) continue;
+                    if (gp.approximate)
+                        for (int h : gp.factors) if (first_flaw(task.get_ts(h), table(h), pl) >= 0) { global_spurious++; break; }
+                    global_chains.push_back(pl);
+                }
+            }
+        }
+
+        for (int g = 0; g < num_factors && global_abstraction != 1; g++) {
             const TransitionSystem &tg = task.get_ts(g);
             if (!tg.is_goal_relevant()) continue;
             goal_factors++;
@@ -1869,7 +1949,7 @@ namespace label_order_finder {
         */
         int pair_chains = 0;
         const auto pair_start = chrono::steady_clock::now();
-        if (goal_pairs > 0) {
+        if (goal_pairs > 0 && global_abstraction != 1) {
             vector<int> goals;
             for (int g = 0; g < num_factors; g++) if (task.get_ts(g).is_goal_relevant()) goals.push_back(g);
             vector<vector<char>> anc_set(goals.size(), vector<char>(num_factors, 0));
@@ -1894,6 +1974,13 @@ namespace label_order_finder {
                     pair_chains++;
                 }
             }
+        }
+        // global chains first: the tie-break between independent components prefers them
+        if (!global_chains.empty()) {
+            vector<Chain> with_global;
+            for (const auto &gc : global_chains) with_global.push_back({{gc}, 0});
+            for (auto &c : chains) with_global.push_back(move(c));
+            chains = move(with_global);
         }
         const double chain_time = chrono::duration<double>(chrono::steady_clock::now() - start).count();
         const double pair_time = chrono::duration<double>(chrono::steady_clock::now() - pair_start).count();
@@ -2089,6 +2176,10 @@ namespace label_order_finder {
              << " chain_schedule " << chain_schedule << " interaction_pairs " << interaction_count
              << " applicable_picks " << sched.applicable_picks << " forced_picks " << sched.forced_picks
              << " chain_switches " << sched.chain_switches
+             << " global " << global_abstraction << " global_factors " << global_factors
+             << " global_size " << global_size << " global_merges " << global_merges
+             << " global_failed " << global_failed << " global_approx " << (global_approx ? 1 : 0)
+             << " global_chains " << global_chains.size() << " global_spurious " << global_spurious
              << " chain_time " << chain_time << " total_time " << total_time << endl;
         return order;
     }
@@ -2233,6 +2324,22 @@ namespace label_order_finder {
             "component applicable there, staying in the current chain while it is"};
         parser.add_enum_option("chain_schedule", schedules,
             "how components without an edge between them are ordered", "CHAIN", schedules_doc);
+        vector<string> globals {"NONE", "ONLY", "ADD"};
+        vector<string> globals_doc {
+            "per-goal chains only",
+            "only chains from one product of all goal factors and all their ancestors",
+            "those chains in addition to (and before) the per-goal chains"};
+        parser.add_enum_option("global_abstraction", globals,
+            "one abstraction over all goals: all goal factors and their transitive ancestors are "
+            "merged, the goal is the conjunction of all goals, and the product is shrunk with "
+            "global_shrink beyond global_max_states", "NONE", globals_doc);
+        parser.add_enum_option("global_shrink", shrinks,
+            "shrinking of the global product (see shrink)", "GREEDY", shrinks_doc);
+        parser.add_option<int>("global_max_states",
+            "size limit of the global product; 0 = max_states", "0");
+        parser.add_option<int>("global_samples",
+            "abstract plans taken from the global product: the first is the usual shortest one, "
+            "the others shortest plans with random tie-breaking", "1");
         parser.add_option<bool>("report_flaws",
             "diagnostics: per goal chain, the product's factors and the base factors that refute "
             "the abstract plan (factor@position); per label, the factors it moves and has "
