@@ -69,6 +69,11 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	omitForcedVariables(opts.get<bool>("omitforcedvariables")),
 	forcedVariablesThreshold(opts.get<int>("forcedvariablesthreshold")),
 	bddCutting(opts.get<bool>("cutbdds")),
+	cutMode(opts.get_enum("cut_mode")),
+	cutLimitFactor(opts.get<double>("cut_limit_factor")),
+	reportLabelConjunction(opts.get<bool>("report_label_conjunction")),
+	cubeEncodingMax(opts.get<int>("cube_encoding_max")),
+	labelConjunctionLimit(opts.get<int>("label_conjunction_limit")),
 	bddCovering(opts.get<bool>("coverbdds")),
 	alternateLabelOrders(opts.get<bool>("alternate_label_orders")),
 	reportLabelImplications(opts.get<bool>("report_label_implications")),
@@ -149,6 +154,30 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 		"cutbdds",
 		"fixpoint 'cutting' of the BDDs across factors for stronger constraints",
 		"false");
+
+	vector<string> cut_modes {"AND", "AND_LIMITED", "RESTRICT"};
+	vector<string> cut_modes_doc {
+		"conjoin the constraint into the target's BDDs (cutting proper)",
+		"conjoin with a node limit of cut_limit_factor * size of the target BDD; keep the result "
+		"only if it is smaller than the original",
+		"Cudd_bddRestrict with the constraint as care set: never larger, and sound because the "
+		"constraint is implied by the source factor's BDD in the same step"};
+	parser.add_enum_option("cut_mode", cut_modes, "with cutbdds: how a constraint is applied",
+		"AND", cut_modes_doc);
+	parser.add_option<double>("cut_limit_factor", "with cut_mode=AND_LIMITED", "1");
+	parser.add_option<bool>(
+		"report_label_conjunction",
+		"diagnostics: conjoin the any-transition label BDDs of all factors (every label set "
+		"permitted by every factor in one step) under label_conjunction_limit new nodes per "
+		"step, and report size, time and how many factors fit",
+		"false");
+	parser.add_option<int>("label_conjunction_limit", "node limit for report_label_conjunction", "10000000");
+	parser.add_option<int>(
+		"cube_encoding_max",
+		"encode a BDD with at most this many paths to 0 directly, one clause per path (cube of "
+		"its negation) together with the conditions, without Tseitin variables; larger BDDs keep "
+		"the Tseitin encoding. -1 = off (Tseitin only)",
+		"-1");
 
 	parser.add_option<bool>(
 		"coverbdds",
@@ -348,83 +377,200 @@ void BDDSATEncodingFactory::bdd_in_degree(DdNode * node){
  * constraint over the labels both factors share, and it can be conjoined onto
  * every transition BDD of the target.
  */
-void BDDSATEncodingFactory::cut_bdds_to_fixpoint(BDDEncodingData::Ordering & ord){
-	BDD stateCube = _manager->bddOne();
-	for (int i = 0; i < data->num_factor_vars; i++) stateCube *= _manager->bddVar(i);
+BDD BDDSATEncodingFactory::any_transition(const BDDEncodingData::Ordering & ord, int fac) const {
+	if (combineAllBDDsIntoOne){
+		BDD stateCube = _manager->bddOne();
+		for (int i = 0; i < data->num_factor_vars; i++) stateCube *= _manager->bddVar(i);
+		return ord.transition_BDDs_per_factor[fac].ExistAbstract(stateCube);
+	}
+	const TransitionSystem & factor = fts->get_ts(fac);
+	BDD any = _manager->bddZero();
+	for (int s = 0; s < factor.get_size(); s++)
+		for (int ss = 0; ss < factor.get_size(); ss++)
+			any += ord.transition_BDDs_per_factor_per_state_pair[fac][s][ss];
+	return any;
+}
 
+
+/**
+ * Propagate constraints between factors until a fixpoint is reached.
+ *
+ * For a pair of factors (source, target) the labels that are irrelevant for the
+ * target are projected away from "any transition of source". What remains is a
+ * constraint over the labels both factors share, and it is applied to every
+ * transition BDD of the target (cut_mode). With AND the fixpoint is unique, so a
+ * source is only projected again once its own BDDs changed.
+ */
+void BDDSATEncodingFactory::cut_bdds_to_fixpoint(BDDEncodingData::Ordering & ord){
+	const int F = fts->get_size();
+	utils::Timer total;
+	double t_any = 0, t_project = 0, t_apply = 0;
+	long projections = 0, applications = 0, changed_bdds = 0, aborted = 0, kept_larger = 0;
+	const long nodes_before = encoded_nodes_sum(ord);
+
+	// per factor: the labels its BDDs mention, and the labels to keep for it as target
+	vector<vector<int>> mentioned(F);
+	vector<vector<char>> keep(F, vector<char>(fts->get_num_labels(), 0));
+	for (int f = 0; f < F; f++){
+		const TransitionSystem & ts = fts->get_ts(f);
+		for (int label = 0; label < fts->get_num_labels(); label++){
+			LabelID id(label);
+			if (ts.is_relevant_label(id) || !ts.is_selfloop_everywhere(id)) { mentioned[f].push_back(label); keep[f][label] = 1; }
+		}
+	}
+
+	// apply constraint c to one BDD according to cut_mode; true if it changed
+	auto apply = [&](BDD & target, const BDD & c){
+		BDD old = target;
+		if (cutMode == 0) {
+			target *= c;
+		} else if (cutMode == 1) {
+			const unsigned int limit = max(1u, (unsigned int)(cutLimitFactor * max(1, target.nodeCount())));
+			try {
+				BDD r = target.And(c, limit);
+				if (r.nodeCount() < target.nodeCount()) target = r; else kept_larger++;
+			} catch (const BDDError &) {
+				Cudd_ClearErrorCode(_manager->getManager());
+				aborted++;
+			}
+		} else {
+			target = target.Restrict(c);
+		}
+		applications++;
+		if (old != target) { changed_bdds++; return true; }
+		return false;
+	};
+
+	vector<char> dirty(F, 1);   // source whose BDDs changed since it was last projected
 	int round = 0;
 	bool anyUpdate = true;
 	while (anyUpdate) {
-		cout << "Propagation Round " << round << flush;
 		anyUpdate = false;
 		round++;
-
-		// 1. a BDD per factor describing any legal transition in that factor
-		vector<BDD> any_transition_per_factor(fts->get_size());
-		for (int fac = 0; fac < fts->get_size(); fac++){
-			if (!combineAllBDDsIntoOne){
-				const TransitionSystem & factor = fts->get_ts(fac);
-				any_transition_per_factor[fac] = _manager->bddZero();
-				for (int s = 0; s < factor.get_size(); s++)
-					for (int ss = 0; ss < factor.get_size(); ss++)
-						any_transition_per_factor[fac] +=
-							ord.transition_BDDs_per_factor_per_state_pair[fac][s][ss];
-			} else {
-				// project away the state variables.
-				any_transition_per_factor[fac] =
-					ord.transition_BDDs_per_factor[fac].ExistAbstract(stateCube);
-			}
-		}
-
-		// 2. Go over all pairs of factors
-		for (int facS = 0; facS < fts->get_size(); facS++){
-			const TransitionSystem & factorSource = fts->get_ts(facS);
-			for (int facT = 0; facT < fts->get_size(); facT++){
+		utils::Timer t; t.resume();
+		vector<BDD> any(F);
+		for (int fac = 0; fac < F; fac++) if (dirty[fac]) any[fac] = any_transition(ord, fac);
+		t_any += t(); t.reset();
+		vector<char> next_dirty(F, 0);
+		for (int facS = 0; facS < F; facS++){
+			if (!dirty[facS]) continue;
+			for (int facT = 0; facT < F; facT++){
 				if (facS == facT) continue;
-				const TransitionSystem & factorTarget = fts->get_ts(facT);
-
-				// cube for the variables that need to be abstracted away
+				utils::Timer tp;
 				BDD cube = _manager->bddOne();
-				bool foundRemainingVariable = false;
-				for(int label = 0; label < fts->get_num_labels(); label++){
-					LabelID labelID (label);
-					// will not be mentioned in this BDD anyway
-					if (!factorSource.is_relevant_label(labelID) && factorSource.is_selfloop_everywhere(labelID)) continue;
-					// don't project away labels that *are* relevant
-					if (factorTarget.is_relevant_label(labelID) || !factorTarget.is_selfloop_everywhere(labelID)) {
-						foundRemainingVariable = true;
-						continue;
-					}
+				bool shared = false;
+				for (int label : mentioned[facS]) {
+					if (keep[facT][label]) { shared = true; continue; }
 					cube *= _manager->bddVar(ord.labelToBDDVar[label]);
 				}
-
-				// no shared variables
-				if (!foundRemainingVariable) continue;
-
-				BDD constraintsOverLabelsRelevantForTarget = any_transition_per_factor[facS].ExistAbstract(cube);
-
-				// if the relevant BDD is 1, then there is nothing to propagate.
-				if (constraintsOverLabelsRelevantForTarget == _manager->bddOne()) continue;
-
-				// actually propagate
+				if (!shared) continue;
+				const BDD constraint = any[facS].ExistAbstract(cube);
+				projections++;
+				t_project += tp();
+				if (constraint == _manager->bddOne()) continue;
+				utils::Timer ta;
+				bool changed = false;
 				if (!combineAllBDDsIntoOne){
-					for (int s = 0; s < factorTarget.get_size(); s++){
-						for (int ss = 0; ss < factorTarget.get_size(); ss++){
-							BDD & currentMemory = ord.transition_BDDs_per_factor_per_state_pair[facT][s][ss];
-							BDD old = currentMemory;
-							currentMemory *= constraintsOverLabelsRelevantForTarget;
-							if (old != currentMemory) anyUpdate = true;
-						}
-					}
+					const TransitionSystem & factorTarget = fts->get_ts(facT);
+					for (int s = 0; s < factorTarget.get_size(); s++)
+						for (int ss = 0; ss < factorTarget.get_size(); ss++)
+							changed |= apply(ord.transition_BDDs_per_factor_per_state_pair[facT][s][ss], constraint);
 				} else {
-					BDD old = ord.transition_BDDs_per_factor[facT];
-					ord.transition_BDDs_per_factor[facT] *= constraintsOverLabelsRelevantForTarget;
-					if (old != ord.transition_BDDs_per_factor[facT]) anyUpdate = true;
+					changed |= apply(ord.transition_BDDs_per_factor[facT], constraint);
 				}
+				t_apply += ta();
+				if (changed) { next_dirty[facT] = 1; anyUpdate = true; }
 			}
 		}
-		cout << " completed with " << (anyUpdate?"some reduction. Continuing": "no reduction. Reached fixpoint.") << endl;
+		dirty.swap(next_dirty);
+		// RESTRICT is not a propagation and need not converge: one pass only
+		if (cutMode == 2) break;
 	}
+	cout << "BDDSTAT cut mode " << cutMode << " rounds " << round
+		 << " projections " << projections << " applications " << applications
+		 << " changed_bdds " << changed_bdds << " aborted " << aborted << " kept_larger " << kept_larger
+		 << " nodes_before " << nodes_before << " nodes_after " << encoded_nodes_sum(ord)
+		 << " time_any " << t_any << " time_project " << t_project << " time_apply " << t_apply
+		 << " time_total " << total() << endl;
+}
+
+
+void BDDSATEncodingFactory::compute_zero_cubes() {
+	utils::Timer t;
+	long bdds = 0, cube_bdds = 0, tseitin_bdds = 0, cubes = 0, literals = 0, constant_true = 0;
+	int max_len = 0;
+	double smallest_tseitin_paths = -1;
+	DdManager * dd = _manager->getManager();
+	auto handle = [&](const BDD & f) {
+		DdNode * node = f.getNode();
+		bdds++;
+		if (data->zero_cubes.count(node)) { cube_bdds++; return; }   // shared root, already enumerated
+		if (f == _manager->bddOne()) { constant_true++; data->zero_cubes[node] = {}; cube_bdds++; return; }
+		DdNode * neg = Cudd_Not(node);
+		const double paths = Cudd_CountPathsToNonZero(neg);
+		if (paths > double(cubeEncodingMax)) {
+			tseitin_bdds++;
+			if (smallest_tseitin_paths < 0 || paths < smallest_tseitin_paths) smallest_tseitin_paths = paths;
+			return;
+		}
+		vector<vector<int>> list;
+		DdGen * gen; int * cube; CUDD_VALUE_TYPE value;
+		Cudd_ForeachCube(dd, neg, gen, cube, value) {
+			vector<int> c;
+			for (int v = 0; v < Cudd_ReadSize(dd); v++) {
+				if (cube[v] == 1) c.push_back(v + 1);
+				else if (cube[v] == 0) c.push_back(-(v + 1));
+			}
+			max_len = max<int>(max_len, c.size());
+			literals += c.size();
+			list.push_back(move(c));
+		}
+		cubes += list.size();
+		data->zero_cubes[node] = move(list);
+		cube_bdds++;
+	};
+	for (const auto & ord : data->orderings) {
+		if (combineAllBDDsIntoOne) {
+			for (const BDD & f : ord.transition_BDDs_per_factor) handle(f);
+		} else {
+			for (const auto & per_source : ord.transition_BDDs_per_factor_per_state_pair)
+				for (const auto & per_target : per_source)
+					for (const BDD & f : per_target) handle(f);
+		}
+	}
+	cout << "BDDSTAT cubes max " << cubeEncodingMax << " bdds " << bdds
+		 << " cube_bdds " << cube_bdds << " tseitin_bdds " << tseitin_bdds
+		 << " constant_true " << constant_true << " cubes " << cubes << " literals " << literals
+		 << " max_cube_len " << max_len
+		 << " mean_cube_len " << (cubes ? double(literals) / cubes : 0.0)
+		 << " smallest_tseitin_paths " << smallest_tseitin_paths
+		 << " time " << t() << endl;
+}
+
+
+void BDDSATEncodingFactory::report_label_conjunction(const BDDEncodingData::Ordering & ord) const {
+	utils::Timer t;
+	BDD all = _manager->bddOne();
+	int done = 0;
+	bool aborted = false;
+	long max_nodes = 0;
+	for (int fac = 0; fac < fts->get_size(); fac++){
+		const BDD any = any_transition(ord, fac);
+		try {
+			all = all.And(any, (unsigned int)labelConjunctionLimit);
+		} catch (const BDDError &) {
+			Cudd_ClearErrorCode(_manager->getManager());
+			aborted = true;
+			break;
+		}
+		done++;
+		max_nodes = max<long>(max_nodes, all.nodeCount());
+		if (all == _manager->bddZero()) break;
+	}
+	cout << "BDDSTAT label_conjunction factors " << done << " of " << fts->get_size()
+		 << " aborted " << (aborted ? 1 : 0) << " nodes " << all.nodeCount() << " max_nodes " << max_nodes
+		 << " empty " << (all == _manager->bddZero() ? 1 : 0)
+		 << " time " << t() << endl;
 }
 
 
@@ -1101,6 +1247,8 @@ void BDDSATEncodingFactory::initialize() {
 
 		if (bddCovering)
 			for (const auto & o : data->orderings) report_covering_implications(o);
+		if (reportLabelConjunction)
+			report_label_conjunction(data->orderings[0]);
 		if (reportLabelImplications)
 			for (const auto & o : data->orderings) report_label_implications(o);
 
@@ -1142,6 +1290,8 @@ void BDDSATEncodingFactory::initialize() {
 		cerr << "BDD construction exceeded the limits of the Cudd manager." << endl;
 		utils::exit_with(utils::ExitCode::OUT_OF_MEMORY);
 	}
+
+	if (cubeEncodingMax >= 0) compute_zero_cubes();
 
 	bdd_construction_timer.stop();
 	cout << "BDDSTAT construction_ok factors " << fts->get_size()
@@ -1356,10 +1506,27 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 		// the Tseitin variables are only shared within one factor
 		tseitsinVars.clear();
 
+		// a BDD with enumerated 0-cubes: one clause per cube, no Tseitin variables
+		auto encode_cubes = [&](DdNode * node, const vector<int> & conditions,
+				const vector<int> & factorVars, const vector<int> & nextFactorVars) {
+			auto it = data->zero_cubes.find(node);
+			if (it == data->zero_cubes.end()) return false;
+			vector<int> lits;
+			for (const vector<int> & cube : it->second) {
+				lits = conditions;
+				for (int v : cube) {
+					const int var = givevar(abs(v) - 1, ord, factorVars, labelVars, nextFactorVars);
+					lits.push_back(v > 0 ? var : -var);
+				}
+				sat->notAll(lits);
+			}
+			return true;
+		};
 		if (data->combineAllBDDsIntoOne){
 			const vector<int> noConditions;
-			bdd_to_cnf(ord.transition_BDDs_per_factor[fac].getNode(), ord, noConditions,
-					previousStateVars[fac], labelVars, nextStateVars[fac]);
+			DdNode * node = ord.transition_BDDs_per_factor[fac].getNode();
+			if (!encode_cubes(node, noConditions, previousStateVars[fac], nextStateVars[fac]))
+				bdd_to_cnf(node, ord, noConditions, previousStateVars[fac], labelVars, nextStateVars[fac]);
 		} else {
 			const TransitionSystem & factor = fts->get_ts(fac);
 			for (int s = 0; s < factor.get_size(); s++){
@@ -1367,8 +1534,9 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 					// The factor state variables are not part of these BDDs, they are
 					// the conditions instead.
 					const vector<int> conditions = {previousStateVars[fac][s], nextStateVars[fac][ss]};
-					bdd_to_cnf(ord.transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode(),
-							ord, conditions, noFactorVars, labelVars, noFactorVars);
+					DdNode * node = ord.transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode();
+					if (!encode_cubes(node, conditions, noFactorVars, noFactorVars))
+						bdd_to_cnf(node, ord, conditions, noFactorVars, labelVars, noFactorVars);
 				}
 			}
 		}

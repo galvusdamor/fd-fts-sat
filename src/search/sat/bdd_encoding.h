@@ -2,6 +2,7 @@
 #define SAT_BDD_ENCODING_H
 
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <set>
 #include <vector>
@@ -86,6 +87,12 @@ struct BDDEncodingData {
 
 	// in-degree of every BDD node, used by the omitForcedVariables optimisation
 	std::map<DdNode *, int> node_indegree;
+
+	// cube_encoding: for BDDs with at most cube_encoding_max paths to 0, the cubes of the
+	// negation (signed BDD variable indices + 1: +v true, -v false). Such a BDD f under
+	// conditions C is encoded as one clause per cube, -C v -cube, without Tseitin
+	// variables. Keyed by the node pointer including its complement bit.
+	std::unordered_map<DdNode *, std::vector<std::vector<int>>> zero_cubes;
 };
 
 
@@ -149,6 +156,16 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const bool omitForcedVariables;
 	const int forcedVariablesThreshold;
 	const bool bddCutting;
+	// cutbdds: 0 AND (conjoin the constraint, as before), 1 AND_LIMITED (conjoin with a
+	// node limit of cut_limit_factor * size of the target BDD, keep only a smaller result),
+	// 2 RESTRICT (Cudd_bddRestrict with the constraint as care set; never larger)
+	const int cutMode;
+	const double cutLimitFactor;
+	const bool reportLabelConjunction;
+	const int cubeEncodingMax;
+	/// cube_encoding: enumerate the 0-paths of every encoded BDD within cube_encoding_max
+	void compute_zero_cubes();
+	const int labelConjunctionLimit;
 	const bool bddCovering;
 	const bool alternateLabelOrders;
 	const bool reportLabelImplications;
@@ -229,6 +246,10 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	/// summed nodeCount() of the BDDs that get encoded, as in nodes_sum_all_factors
 	long encoded_nodes_sum(const BDDEncodingData::Ordering & ord) const;
 	void cut_bdds_to_fixpoint(BDDEncodingData::Ordering & ord);
+	/// the label sets a factor permits in one step, irrespective of source and target state
+	BDD any_transition(const BDDEncodingData::Ordering & ord, int fac) const;
+	/// diagnostics: AND of all factors' any_transition BDDs, under a node limit
+	void report_label_conjunction(const BDDEncodingData::Ordering & ord) const;
 	void report_covering_implications(const BDDEncodingData::Ordering & ord) const;
 	/// mine the per-factor label BDDs for unit and binary label dependencies
 	void report_label_implications(const BDDEncodingData::Ordering & ord) const;
