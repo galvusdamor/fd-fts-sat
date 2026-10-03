@@ -39,6 +39,10 @@ struct BDDEncodingData {
 	bool implicationalTseitsin;
 	bool omitForcedVariables;
 	int forcedVariablesThreshold;
+	// path_encoding: path-based (domain consistent) translation instead of Tseitin
+	bool pathEncoding = false;
+	// BDD variable index -> level in the final variable order (for path_encoding)
+	std::vector<int> varLevel;
 
 	// --- BDD variable layout ---
 	// Variables 0 .. num_factor_vars-1 encode (factor state | factor next state),
@@ -93,6 +97,13 @@ struct BDDEncodingData {
 	// conditions C is encoded as one clause per cube, -C v -cube, without Tseitin
 	// variables. Keyed by the node pointer including its complement bit.
 	std::unordered_map<DdNode *, std::vector<std::vector<int>>> zero_cubes;
+
+	// label_implications: clauses over the label variables implied by the factors'
+	// BDDs (signed label ids: +(l+1) / -(l+1)), per ordering. Unconditional ones hold
+	// in every step; conditional ones only if the factor is in the given source state.
+	struct CondClause { int factor; int source; std::vector<int> lits; };
+	std::vector<std::vector<std::vector<int>>> implied_clauses;
+	std::vector<std::vector<CondClause>> implied_cond_clauses;
 };
 
 
@@ -118,6 +129,15 @@ class BDDSATEncoding : public LabelEncoding {
 		const std::vector<int> & factorVars,
 		const std::vector<int> & labelVars,
 		const std::vector<int> & nextFactorVars) const;
+
+	/// path-based translation (NNFPath of Abio et al. 2016, for reduced BDDs with
+	/// complement edges): domain consistent on the BDD's variables when active
+	void bdd_to_cnf_path(DdNode * root,
+		const BDDEncodingData::Ordering & ord,
+		const std::vector<int> & conditions,
+		const std::vector<int> & factorVars,
+		const std::vector<int> & labelVars,
+		const std::vector<int> & nextFactorVars);
 
 	/// Tseitin-translate the BDD rooted at node, guarded by currentConditions
 	void bdd_to_cnf(DdNode * node,
@@ -153,6 +173,7 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const bool combineAllBDDsIntoOne;
 	const int bddEncodingSizeLimit;
 	const bool implicationalTseitsin;
+	const bool pathEncoding;
 	const bool omitForcedVariables;
 	const int forcedVariablesThreshold;
 	const bool bddCutting;
@@ -163,6 +184,12 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const double cutLimitFactor;
 	const bool reportLabelConjunction;
 	const int cubeEncodingMax;
+	// label_implications: 0 NONE, 1 UNCONDITIONAL, 2 PER_SOURCE, 3 BOTH
+	const int labelImplications;
+	const int labelImplicationsMax;
+	const double cutMinOverlap;
+	/// label_implications: extract units and binary implications from the factors' BDDs
+	void compute_implied_clauses();
 	/// cube_encoding: enumerate the 0-paths of every encoded BDD within cube_encoding_max
 	void compute_zero_cubes();
 	const int labelConjunctionLimit;

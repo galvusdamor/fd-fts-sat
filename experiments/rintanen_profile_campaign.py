@@ -94,6 +94,9 @@ def profile_instance(path, lengths, args):
         limits = f",step_time_limits=[{','.join(map(str, per))}]"
         startup = sum((old or {}).get("rounds", [{}])[0].get(k) or 0 for k in ("translate_time", "transform_time", "init_time"))
         overall = int(startup * 1.5 + sum(per) + 120)
+    # the estimate can be far too low when formula generation dominates (very long
+    # lengths, large tasks): then the run ends before it reaches the requested lengths
+    overall = max(overall, args.overall_floor)
     search = (f"sat(encoder={ENCODER},solver_quiet=true,continue_after_first_plan=true,"
               f"step_time_limit={args.step_limit}{limits},"
               f"length_strategy=length_list(lengths=[{','.join(map(str, todo))}]))")
@@ -150,6 +153,8 @@ def main():
     ap.add_argument("--step-limit", type=int, default=60)
     ap.add_argument("--overall-limit", type=int, default=300)
     ap.add_argument("--memory-limit", type=int, default=3000)
+    ap.add_argument("--overall-floor", type=int, default=0,
+                    help="lower bound (s) for the overall time limit of a demand round's run")
     ap.add_argument("--build", default="release64")
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--cap-factor", type=float, default=1.1,
