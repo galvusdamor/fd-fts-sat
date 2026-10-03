@@ -41,6 +41,8 @@ struct BDDEncodingData {
 	int forcedVariablesThreshold;
 	// path_encoding: path-based (domain consistent) translation instead of Tseitin
 	bool pathEncoding = false;
+	// path_sharing: one path encoding per factor over all its (s, s') BDDs
+	bool pathSharing = false;
 	// BDD variable index -> level in the final variable order (for path_encoding)
 	std::vector<int> varLevel;
 
@@ -104,6 +106,10 @@ struct BDDEncodingData {
 	struct CondClause { int factor; int source; std::vector<int> lits; };
 	std::vector<std::vector<std::vector<int>>> implied_clauses;
 	std::vector<std::vector<CondClause>> implied_cond_clauses;
+	// label_implications_bicliques: binary clauses grouped into bicliques A x B
+	// (every a in A conflicts with every b in B): a -> z, b -> -z for a fresh z
+	struct Biclique { std::vector<int> A; std::vector<int> B; };
+	std::vector<std::vector<Biclique>> implied_bicliques;
 };
 
 
@@ -131,10 +137,11 @@ class BDDSATEncoding : public LabelEncoding {
 		const std::vector<int> & nextFactorVars) const;
 
 	/// path-based translation (NNFPath of Abio et al. 2016, for reduced BDDs with
-	/// complement edges): domain consistent on the BDD's variables when active
-	void bdd_to_cnf_path(DdNode * root,
+	/// complement edges) of several BDDs sharing nodes, of which at most one is
+	/// active (its conditions hold): domain consistent on the BDDs' variables.
+	/// Empty conditions mean always active.
+	void bdd_to_cnf_paths(const std::vector<std::pair<DdNode *, std::vector<int>>> & roots,
 		const BDDEncodingData::Ordering & ord,
-		const std::vector<int> & conditions,
 		const std::vector<int> & factorVars,
 		const std::vector<int> & labelVars,
 		const std::vector<int> & nextFactorVars);
@@ -174,6 +181,9 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const int bddEncodingSizeLimit;
 	const bool implicationalTseitsin;
 	const bool pathEncoding;
+	const bool pathSharing;
+	const bool impliedBicliques;
+	const bool combineITE;
 	const bool omitForcedVariables;
 	const int forcedVariablesThreshold;
 	const bool bddCutting;
@@ -190,6 +200,7 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const double cutMinOverlap;
 	/// label_implications: extract units and binary implications from the factors' BDDs
 	void compute_implied_clauses();
+	void cover_bicliques();
 	/// cube_encoding: enumerate the 0-paths of every encoded BDD within cube_encoding_max
 	void compute_zero_cubes();
 	const int labelConjunctionLimit;

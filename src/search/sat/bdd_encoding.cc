@@ -4,6 +4,7 @@
 #include <climits>
 #include <functional>
 #include <map>
+#include <unordered_set>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -71,6 +72,9 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	bddEncodingSizeLimit(opts.get<int>("bdd_size_limit")),
 	implicationalTseitsin(opts.get<bool>("impltseitsin")),
 	pathEncoding(opts.get<bool>("path_encoding")),
+	pathSharing(opts.get<bool>("path_sharing")),
+	impliedBicliques(opts.get<bool>("label_implications_bicliques")),
+	combineITE(opts.get<bool>("combine_ite")),
 	omitForcedVariables(opts.get<bool>("omitforcedvariables")),
 	forcedVariablesThreshold(opts.get<int>("forcedvariablesthreshold")),
 	bddCutting(opts.get<bool>("cutbdds")),
@@ -153,6 +157,26 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 		"of Tseitin: variables for the nodes and edges on the root-to-1 path, plus clauses that "
 		"make unit propagation domain consistent on the BDD's variables. About three variables per "
 		"node and no sharing between BDDs; best with combinebdds",
+		"false");
+
+	parser.add_option<bool>(
+		"path_sharing",
+		"with path_encoding and split BDDs: one path encoding per factor over all its "
+		"(source, target) BDDs, which share nodes; the BDD of the active pair is selected by "
+		"an auxiliary variable for previous_state(s) & next_state(s'). Without it every pair's "
+		"BDD gets its own path encoding",
+		"false");
+	parser.add_option<bool>(
+		"label_implications_bicliques",
+		"encode the binary label_implications clauses by a greedy biclique cover "
+		"(Rintanen, ECAI 2006): a biclique A x B of conflicting literals becomes a -> z, "
+		"b -> -z with one new variable per step instead of |A|*|B| binary clauses",
+		"false");
+	parser.add_option<bool>(
+		"combine_ite",
+		"with combinebdds: build the factor BDD as if-then-else chains over the state "
+		"variables instead of conjoining full one-hot minterms. Equal on one-hot assignments, "
+		"which the exactly-one constraints guarantee; |S|^2 instead of |S|^3 BDD operations",
 		"false");
 
 	parser.add_option<bool>(
@@ -738,6 +762,78 @@ void BDDSATEncodingFactory::compute_implied_clauses() {
 }
 
 
+/*
+  Greedy biclique cover of the binary label_implications clauses (Rintanen, ECAI 2006).
+  A clause (l1 | l2) is a conflict between the literals -l1 and -l2. Starting from the
+  literal with most remaining conflicts, A = {v}, B = its conflict partners; A grows by the
+  literal that keeps the most of B as long as |A||B| - |A| - |B| (the clauses saved) grows.
+  Covered conflicts are removed; whatever is left stays a binary clause.
+*/
+void BDDSATEncodingFactory::cover_bicliques() {
+	utils::Timer t;
+	const int L = fts->get_num_labels();
+	auto id = [](int lit) { return lit > 0 ? 2 * (lit - 1) : 2 * (-lit - 1) + 1; };
+	auto lit_of = [](int i) { return i % 2 == 0 ? i / 2 + 1 : -(i / 2 + 1); };
+	data->implied_bicliques.assign(data->orderings.size(), {});
+	long before = 0, after = 0, covered = 0;
+	for (size_t o = 0; o < data->orderings.size(); o++) {
+		vector<unordered_set<int>> adj(2 * L);
+		vector<vector<int>> kept;
+		for (const auto & c : data->implied_clauses[o]) {
+			if (c.size() != 2) { kept.push_back(c); continue; }
+			const int a = id(-c[0]), b = id(-c[1]);
+			if (a == b) { kept.push_back(c); continue; }
+			adj[a].insert(b); adj[b].insert(a);
+		}
+		before += data->implied_clauses[o].size();
+		vector<char> exhausted(2 * L, 0);
+		auto value = [](long a, long b) { return a * b - a - b; };
+		vector<int> count(2 * L, 0);
+		while (true) {
+			int v = -1;
+			for (int i = 0; i < 2 * L; i++)
+				if (!exhausted[i] && adj[i].size() >= 3 && (v < 0 || adj[i].size() > adj[v].size())) v = i;
+			if (v < 0) break;
+			vector<int> A = {v};
+			vector<int> B(adj[v].begin(), adj[v].end());
+			while (true) {
+				// count[u] = |N(u) & B|
+				vector<int> touched;
+				for (int b : B) for (int u : adj[b]) { if (!count[u]) touched.push_back(u); count[u]++; }
+				int best = -1;
+				for (int u : touched)
+					if (find(A.begin(), A.end(), u) == A.end() && (best < 0 || count[u] > count[best])) best = u;
+				const int nb = best < 0 ? 0 : count[best];
+				for (int u : touched) count[u] = 0;
+				if (best < 0 || value(A.size() + 1, nb) <= value(A.size(), B.size())) break;
+				A.push_back(best);
+				vector<int> nB;
+				for (int b : B) if (adj[best].count(b)) nB.push_back(b);
+				B.swap(nB);
+			}
+			if (value(A.size(), B.size()) <= 0) { exhausted[v] = 1; continue; }
+			BDDEncodingData::Biclique bc;
+			for (int a : A) bc.A.push_back(lit_of(a));
+			for (int b : B) bc.B.push_back(lit_of(b));
+			for (int a : A) for (int b : B) { adj[a].erase(b); adj[b].erase(a); covered++; }
+			data->implied_bicliques[o].push_back(std::move(bc));
+		}
+		for (int a = 0; a < 2 * L; a++)
+			for (int b : adj[a]) if (a < b) {
+				vector<int> c = {-lit_of(a), -lit_of(b)};
+				sort(c.begin(), c.end());
+				kept.push_back(c);
+			}
+		data->implied_clauses[o].swap(kept);
+		after += data->implied_clauses[o].size();
+		for (const auto & bc : data->implied_bicliques[o]) after += bc.A.size() + bc.B.size();
+	}
+	cout << "BDDSTAT implied_bicliques bicliques " << data->implied_bicliques[0].size()
+		 << " covered_conflicts " << covered << " clauses_before " << before
+		 << " clauses_after " << after << " time " << t() << endl;
+}
+
+
 void BDDSATEncodingFactory::report_label_conjunction(const BDDEncodingData::Ordering & ord) const {
 	utils::Timer t;
 	BDD all = _manager->bddOne();
@@ -1272,7 +1368,21 @@ void BDDSATEncodingFactory::build_bdds_for_ordering(BDDEncodingData::Ordering & 
 			total_nodes_after_limit += summedSizeAfter;
 			if (maxPairNodes > overall_max_pair_nodes) overall_max_pair_nodes = maxPairNodes;
 
-			if (combineAllBDDsIntoOne){
+			if (combineAllBDDsIntoOne && combineITE){
+				// if x_0 then (if y_0 then B(0,0) else if y_1 ...) else if x_1 ...: on one-hot
+				// assignments of x (state) and y (next state) this is B(s, s'). The state
+				// variables lie above the labels, so every ITE only creates a node.
+				const int halfFactorVars = data->num_factor_vars / 2;
+				BDD chain = _manager->bddZero();
+				for (int s = numStates - 1; s >= 0; s--){
+					check_budget(fac, "combine_bdds");
+					BDD inner = _manager->bddZero();
+					for (int ss = numStates - 1; ss >= 0; ss--)
+						inner = _manager->bddVar(halfFactorVars + ss).Ite(chosen[s][ss], inner);
+					chain = _manager->bddVar(s).Ite(inner, chain);
+				}
+				ord.transition_BDDs_per_factor[fac] = chain;
+			} else if (combineAllBDDsIntoOne){
 				// one BDD describing all transitions of this factor at once
 				BDD allTransitionsBDD = _manager->bddZero();
 				const int halfFactorVars = data->num_factor_vars / 2;
@@ -1309,6 +1419,7 @@ void BDDSATEncodingFactory::initialize() {
 	data->combineAllBDDsIntoOne = combineAllBDDsIntoOne;
 	data->implicationalTseitsin = implicationalTseitsin;
 	data->pathEncoding = pathEncoding;
+	data->pathSharing = pathSharing;
 	data->omitForcedVariables = omitForcedVariables;
 	data->forcedVariablesThreshold = forcedVariablesThreshold;
 
@@ -1484,6 +1595,7 @@ void BDDSATEncodingFactory::initialize() {
 
 	if (cubeEncodingMax >= 0) compute_zero_cubes();
 	if (labelImplications != 0) compute_implied_clauses();
+	if (labelImplications != 0 && impliedBicliques) cover_bicliques();
 	data->varLevel.resize(data->bdd_num_vars);
 	for (int i = 0; i < data->bdd_num_vars; i++) data->varLevel[i] = _manager->ReadPerm(i);
 
@@ -1564,21 +1676,15 @@ int BDDSATEncoding::givevar(int bddvar,
 }
 
 
-void BDDSATEncoding::bdd_to_cnf_path(DdNode * root,
+void BDDSATEncoding::bdd_to_cnf_paths(const vector<pair<DdNode *, vector<int>>> & roots,
 		const BDDEncodingData::Ordering & ord,
-		const vector<int> & conditions,
 		const vector<int> & factorVars,
 		const vector<int> & labelVars,
 		const vector<int> & nextFactorVars){
-	// constants: true needs nothing, false forbids the conditions
-	if (Cudd_IsConstant(root)) {
-		if (Cudd_IsComplement(root)) sat->notAll(conditions);
-		return;
-	}
-	// nodes are (regular node, complement parity): the value of a terminal depends
-	// on the parity of the complemented edges on the way
-	struct PNode { DdNode * n; bool c; int var; int level; int x; int edge[2]; int child[2]; };
-	// child[k]: index of the child node, -1 = terminal true, -2 = terminal false
+	// Variables mean "on the path from the active root to 1". Nodes are (regular node,
+	// complement parity): the terminal an edge reaches depends on the parity of the
+	// complemented edges on the way. child: index of the child, -1 = 1, -2 = 0.
+	struct PNode { int var; int x; int level; int edge[2]; int child[2]; };
 	vector<PNode> nodes;
 	map<pair<DdNode *, bool>, int> index;
 	function<int(DdNode *, bool)> visit = [&](DdNode * n, bool c) -> int {
@@ -1589,66 +1695,108 @@ void BDDSATEncoding::bdd_to_cnf_path(DdNode * root,
 		if (it != index.end()) return it->second;
 		const int id = nodes.size();
 		index[{r, parity}] = id;
-		nodes.push_back({r, parity, sat->new_variable(), 0, int(Cudd_NodeReadIndex(r)), {0, 0}, {0, 0}});
+		const int x = Cudd_NodeReadIndex(r);
+		nodes.push_back({sat->new_variable(), x, data->varLevel[x], {0, 0}, {0, 0}});
 		const int t = visit(Cudd_T(r), parity);
 		const int e = visit(Cudd_E(r), parity);
 		nodes[id].child[1] = t; nodes[id].child[0] = e;
 		return id;
 	};
-	const int rootId = visit(root, false);
 	const int INF = INT_MAX;
-	// levels in the current variable order (Cudd may have reordered); terminals at INF
-	for (auto & nd : nodes) nd.level = data->varLevel[nd.x];
-	auto child_level = [&](int ch){ return ch < 0 ? INF : nodes[ch].level; };
+
+	// roots: activation literal (0 = always active), root node and its level
+	struct Root { int act; int node; int level; };
+	vector<Root> active_roots;
+	for (const auto & [root, conditions] : roots) {
+		const int rid = visit(root, false);
+		if (rid == -2) { sat->notAll(conditions); continue; }
+		int act = 0;
+		if (conditions.size() == 1) act = conditions[0];
+		else if (conditions.size() > 1) {
+			act = sat->new_variable();
+			for (int c : conditions) sat->implies(act, c);
+			vector<int> c = conditions; c.push_back(-act);
+			sat->notAll(c);
+		}
+		active_roots.push_back({act, rid, rid >= 0 ? nodes[rid].level : INF});
+	}
+	if (active_roots.empty()) return;
 
 	vector<vector<int>> incoming(nodes.size());
-	for (size_t i = 0; i < nodes.size(); i++) {
-		PNode & nd = nodes[i];
+	vector<char> always(nodes.size(), 0);
+	for (const Root & r : active_roots) {
+		if (r.node < 0) continue;
+		if (r.act == 0) { sat->assertYes(nodes[r.node].var); always[r.node] = 1; }
+		else { sat->implies(r.act, nodes[r.node].var); incoming[r.node].push_back(r.act); }
+	}
+	for (PNode & nd : nodes) {
 		const int v = givevar(nd.x, ord, factorVars, labelVars, nextFactorVars);
+		vector<int> out;
 		for (int k = 0; k < 2; k++) {
-			nd.edge[k] = sat->new_variable();
-			const int ev = nd.edge[k];
-			const int xl = k ? v : -v;   // literal the edge stands for
-			sat->implies(ev, nd.var);                        // T2
-			sat->notAll(vector<int>{ev, -xl});                          // T4: edge -> its literal
-			sat->notAll(vector<int>{nd.var, xl, -ev});                  // P1: node & literal -> edge
-			if (nd.child[k] == -2) sat->notAll(vector<int>{ev});        // edge into false is never on the path
-			else if (nd.child[k] >= 0) {
-				sat->implies(ev, nodes[nd.child[k]].var);    // T3
+			const int xl = k ? v : -v;   // the literal this edge stands for
+			if (nd.child[k] == -2) {     // edge into 0: node -> -literal
+				sat->notAll(vector<int>{nd.var, xl});
+				continue;
+			}
+			const int ev = nd.edge[k] = sat->new_variable();
+			out.push_back(ev);
+			sat->implies(ev, nd.var);                       // T2
+			sat->implies(ev, xl);                           // T4
+			sat->notAll(vector<int>{nd.var, xl, -ev});      // P1: node & literal -> edge
+			if (nd.child[k] >= 0) {
+				sat->implies(ev, nodes[nd.child[k]].var);   // T3
 				incoming[nd.child[k]].push_back(ev);
 			}
 		}
-		sat->impliesOr(nd.var, {nd.edge[0], nd.edge[1]});   // T1
+		sat->impliesOr(nd.var, out);                        // T1
 	}
-	// root on the path when the conditions hold; every other node needs an incoming edge
-	{
-		vector<int> c = conditions; c.push_back(-nodes[rootId].var);
-		sat->notAll(c);
+	for (size_t i = 0; i < nodes.size(); i++)              // P2
+		if (!always[i]) sat->impliesOr(nodes[i].var, incoming[i]);
+
+	// "some root is active": the P3 clauses only hold then
+	int on = 0;   // 0 = always
+	bool always_on = false;
+	for (const Root & r : active_roots) if (r.act == 0) always_on = true;
+	if (!always_on) {
+		if (active_roots.size() == 1) on = active_roots[0].act;
+		else {
+			on = sat->new_variable();
+			vector<int> acts;
+			for (const Root & r : active_roots) { acts.push_back(r.act); sat->implies(r.act, on); }
+			sat->impliesOr(on, acts);
+		}
 	}
-	for (size_t i = 0; i < nodes.size(); i++)
-		if ((int)i != rootId) sat->impliesOr(nodes[i].var, incoming[i]);   // P2
-	// P3: value of a support variable -> an edge with that value at its level, or an
-	// edge jumping over its level (reduced BDDs skip variables)
+
+	// P3: literal of a support variable -> an edge with that value at its level, an edge
+	// jumping over its level, or an active root below it
 	map<int, int> level_var;   // level -> BDD variable index, support only
 	for (const auto & nd : nodes) level_var[nd.level] = nd.x;
 	vector<int> levels;
 	for (const auto & [lev, x] : level_var) levels.push_back(lev);
-	vector<vector<int>> skipping(levels.size());   // edges jumping over levels[i]
-	vector<array<vector<int>, 2>> at(levels.size());   // edges at levels[i], by value
+	auto level_index = [&](int lev) { return lower_bound(levels.begin(), levels.end(), lev) - levels.begin(); };
+	vector<vector<int>> skipping(levels.size());
+	vector<array<vector<int>, 2>> at(levels.size());
+	vector<char> no_clause(levels.size(), 0);   // an always active root lies below
 	for (const auto & nd : nodes) {
-		const size_t i = lower_bound(levels.begin(), levels.end(), nd.level) - levels.begin();
+		const size_t i = level_index(nd.level);
 		for (int k = 0; k < 2; k++) {
-			if (nd.child[k] == -2) continue;
+			if (nd.edge[k] == 0) continue;
 			at[i][k].push_back(nd.edge[k]);
-			const int cl = child_level(nd.child[k]);
+			const int cl = nd.child[k] < 0 ? INF : nodes[nd.child[k]].level;
 			for (size_t j = i + 1; j < levels.size() && levels[j] < cl; j++) skipping[j].push_back(nd.edge[k]);
 		}
 	}
+	for (const Root & r : active_roots)
+		for (size_t j = 0; j < levels.size() && levels[j] < r.level; j++) {
+			if (r.act == 0) no_clause[j] = 1;
+			else skipping[j].push_back(r.act);
+		}
 	for (size_t i = 0; i < levels.size(); i++) {
+		if (no_clause[i]) continue;
 		const int v = givevar(level_var[levels[i]], ord, factorVars, labelVars, nextFactorVars);
 		for (int k = 0; k < 2; k++) {
-			// conditions & literal -> OR(edges with that value at this level, skipping edges)
-			vector<int> c = conditions;
+			vector<int> c;   // notAll: on & literal & no edge -> false
+			if (on != 0) c.push_back(on);
 			c.push_back(k ? v : -v);
 			for (int e : at[i][k]) c.push_back(-e);
 			for (int e : skipping[i]) c.push_back(-e);
@@ -1814,23 +1962,28 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 			const vector<int> noConditions;
 			DdNode * node = ord.transition_BDDs_per_factor[fac].getNode();
 			if (data->pathEncoding)
-				bdd_to_cnf_path(node, ord, noConditions, previousStateVars[fac], labelVars, nextStateVars[fac]);
+				bdd_to_cnf_paths({{node, noConditions}}, ord, previousStateVars[fac], labelVars, nextStateVars[fac]);
 			else if (!encode_cubes(node, noConditions, previousStateVars[fac], nextStateVars[fac]))
 				bdd_to_cnf(node, ord, noConditions, previousStateVars[fac], labelVars, nextStateVars[fac]);
 		} else {
 			const TransitionSystem & factor = fts->get_ts(fac);
+			vector<pair<DdNode *, vector<int>>> shared_roots;
 			for (int s = 0; s < factor.get_size(); s++){
 				for (int ss = 0; ss < factor.get_size(); ss++){
 					// The factor state variables are not part of these BDDs, they are
 					// the conditions instead.
 					const vector<int> conditions = {previousStateVars[fac][s], nextStateVars[fac][ss]};
 					DdNode * node = ord.transition_BDDs_per_factor_per_state_pair[fac][s][ss].getNode();
-					if (data->pathEncoding)
-						bdd_to_cnf_path(node, ord, conditions, noFactorVars, labelVars, noFactorVars);
+					if (data->pathEncoding && data->pathSharing)
+						shared_roots.push_back({node, conditions});
+					else if (data->pathEncoding)
+						bdd_to_cnf_paths({{node, conditions}}, ord, noFactorVars, labelVars, noFactorVars);
 					else if (!encode_cubes(node, conditions, noFactorVars, noFactorVars))
 						bdd_to_cnf(node, ord, conditions, noFactorVars, labelVars, noFactorVars);
 				}
 			}
+			if (!shared_roots.empty())
+				bdd_to_cnf_paths(shared_roots, ord, noFactorVars, labelVars, noFactorVars);
 		}
 	}
 	tseitsinVars.clear();
@@ -1844,6 +1997,13 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 			for (int l : c) negs.push_back(l > 0 ? -labelVars[l - 1] : labelVars[-l - 1]);
 			sat->notAll(negs);
 		}
+		if (!data->implied_bicliques.empty())
+			for (const auto & bc : data->implied_bicliques[o]) {
+				const int z = sat->new_variable();
+				DEBUG(sat->registerVariable(z, "biclique@" + to_string(fromTime)));
+				for (int l : bc.A) sat->implies(l > 0 ? labelVars[l - 1] : -labelVars[-l - 1], z);
+				for (int l : bc.B) sat->implies(l > 0 ? labelVars[l - 1] : -labelVars[-l - 1], -z);
+			}
 		for (const auto & cc : data->implied_cond_clauses[o]) {
 			negs = {previousStateVars[cc.factor][cc.source]};
 			for (int l : cc.lits) negs.push_back(l > 0 ? -labelVars[l - 1] : labelVars[-l - 1]);
