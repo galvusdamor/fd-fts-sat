@@ -84,6 +84,7 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	cubeEncodingMax(opts.get<int>("cube_encoding_max")),
 	labelImplications(opts.get_enum("label_implications")),
 	labelImplicationsMax(opts.get<int>("label_implications_max")),
+	labelImplicationsTimeLimit(opts.get<double>("label_implications_time_limit")),
 	cutMinOverlap(opts.get<double>("cut_min_overlap")),
 	labelConjunctionLimit(opts.get<int>("label_conjunction_limit")),
 	bddCovering(opts.get<bool>("coverbdds")),
@@ -230,7 +231,11 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 		"add clauses implied by the factor BDDs, so unit propagation sees dependencies the Tseitin "
 		"translation does not propagate", "NONE", impl_modes_doc);
 	parser.add_option<int>("label_implications_max",
-		"at most this many implied clauses of each kind (unconditional, per source); -1 = all", "-1");
+		"at most this many implied clauses of each kind (unconditional, per source); -1 = all. "
+		"Extraction stops as soon as the cap is reached; the clauses found so far are kept", "-1");
+	parser.add_option<double>("label_implications_time_limit",
+		"stop extracting implied clauses after this many seconds and keep the ones found so "
+		"far (all of them are sound); -1 = no limit", "-1");
 	parser.add_option<double>("cut_min_overlap",
 		"cutbdds (pairwise modes): only propagate from S to T if the labels they share make up at "
 		"least this fraction of T's labels", "0");
@@ -694,6 +699,12 @@ void BDDSATEncodingFactory::compute_implied_clauses() {
 	const bool uncond = labelImplications == 1 || labelImplications == 3;
 	const bool per_source = (labelImplications == 2 || labelImplications == 3) && !combineAllBDDsIntoOne;
 	long cap_hits = 0;
+	// 0 = complete, 1 = cap reached, 2 = time limit reached; partial results are kept
+	int stopped = 0;
+	auto out_of_time = [&]() {
+		if (labelImplicationsTimeLimit >= 0 && t() > labelImplicationsTimeLimit) { if (!stopped) stopped = 2; }
+		return stopped != 0;
+	};
 	data->implied_clauses.assign(data->orderings.size(), {});
 	data->implied_cond_clauses.assign(data->orderings.size(), {});
 	for (size_t o = 0; o < data->orderings.size(); o++) {
@@ -705,12 +716,16 @@ void BDDSATEncodingFactory::compute_implied_clauses() {
 		// units and binary implications of f, as clauses
 		auto extract = [&](const BDD & f, vector<vector<int>> & out) {
 			if (f == _manager->bddOne() || f == _manager->bddZero()) return;
+			if (out_of_time()) return;
 			for (unsigned int v : f.FindEssential().SupportIndices()) {
 				if (int(v) < nfv) continue;
 				out.push_back({lit(v, f.IsVarEssential(v, 1))});
 			}
 			for (unsigned int v : f.SupportIndices()) {
 				if (int(v) < nfv) continue;
+				if (out_of_time()) return;
+				// one factor can yield millions of clauses: stop at the cap already here
+				if (labelImplicationsMax >= 0 && (long)out.size() >= labelImplicationsMax) return;
 				for (int phase = 0; phase < 2; phase++) {
 					const BDD cof = f * (phase ? _manager->bddVar(v) : ~_manager->bddVar(v));
 					if (cof == _manager->bddZero()) continue;
@@ -725,19 +740,19 @@ void BDDSATEncodingFactory::compute_implied_clauses() {
 			}
 		};
 		set<vector<int>> seen;
-		for (int fac = 0; fac < fts->get_size(); fac++) {
+		for (int fac = 0; fac < fts->get_size() && !stopped; fac++) {
 			if (uncond) {
 				vector<vector<int>> cl;
 				extract(any_transition(ord, fac), cl);
 				for (auto & c : cl) {
+					if (labelImplicationsMax >= 0 && (long)data->implied_clauses[o].size() >= labelImplicationsMax) { cap_hits++; stopped = 1; break; }
 					if (!seen.insert(c).second) continue;
-					if (labelImplicationsMax >= 0 && (long)data->implied_clauses[o].size() >= labelImplicationsMax) { cap_hits++; continue; }
 					data->implied_clauses[o].push_back(c);
 				}
 			}
-			if (per_source) {
+			if (per_source && !stopped) {
 				const TransitionSystem & factor = fts->get_ts(fac);
-				for (int src = 0; src < factor.get_size(); src++) {
+				for (int src = 0; src < factor.get_size() && !stopped; src++) {
 					BDD fromSrc = _manager->bddZero();
 					for (int ss = 0; ss < factor.get_size(); ss++)
 						fromSrc += ord.transition_BDDs_per_factor_per_state_pair[fac][src][ss];
@@ -746,7 +761,7 @@ void BDDSATEncodingFactory::compute_implied_clauses() {
 					set<vector<int>> local;
 					for (auto & c : cl) {
 						if (seen.count(c) || !local.insert(c).second) continue;   // already unconditional
-						if (labelImplicationsMax >= 0 && (long)data->implied_cond_clauses[o].size() >= labelImplicationsMax) { cap_hits++; continue; }
+						if (labelImplicationsMax >= 0 && (long)data->implied_cond_clauses[o].size() >= labelImplicationsMax) { cap_hits++; stopped = 1; break; }
 						data->implied_cond_clauses[o].push_back({fac, src, c});
 					}
 				}
@@ -758,7 +773,9 @@ void BDDSATEncodingFactory::compute_implied_clauses() {
 	cout << "BDDSTAT implied_clauses mode " << labelImplications
 		 << " unconditional " << data->implied_clauses[0].size() << " (units " << units << ")"
 		 << " per_source " << data->implied_cond_clauses[0].size()
-		 << " cap_hits " << cap_hits << " time " << t() << endl;
+		 << " cap_hits " << cap_hits
+		 << " stopped " << (stopped == 0 ? "complete" : stopped == 1 ? "cap" : "time")
+		 << " time " << t() << endl;
 }
 
 

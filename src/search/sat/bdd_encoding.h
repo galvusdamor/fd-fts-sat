@@ -197,6 +197,7 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	// label_implications: 0 NONE, 1 UNCONDITIONAL, 2 PER_SOURCE, 3 BOTH
 	const int labelImplications;
 	const int labelImplicationsMax;
+	const double labelImplicationsTimeLimit;
 	const double cutMinOverlap;
 	/// label_implications: extract units and binary implications from the factors' BDDs
 	void compute_implied_clauses();

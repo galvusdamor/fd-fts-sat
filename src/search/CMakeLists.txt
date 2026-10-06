@@ -89,9 +89,23 @@ if (USE_SAT)
                 message("Build against kissat")
                 target_sources(downward PRIVATE sat/kissat.h sat/kissat.cpp)
 				target_link_libraries(downward PUBLIC ${SAT_LIB})
+				## search statistics (conflicts, ...) read from kissat's internal state;
+				## needs the kissat sources next to the build directory
+				if (EXISTS "${SAT_DIR}/../src/internal.h")
+					message("kissat statistics from ${SAT_DIR}/../src")
+					target_sources(downward PRIVATE sat/kissat_stats.c)
+					## -iquote, not -I: kissat has its own limits.h, which must not
+					## shadow the system <limits.h>
+					set_source_files_properties(sat/kissat_stats.c PROPERTIES
+						COMPILE_OPTIONS "-DNDEBUG;-iquote;${SAT_DIR}/../src")
+				else ()
+					message("no kissat sources at ${SAT_DIR}/../src: no solver statistics")
+					target_sources(downward PRIVATE sat/kissat_stats_dummy.c)
+				endif ()
         else (USE_KISSAT)
 				message("Build against regular ipasir solver, named ${SAT_LIB}")
 				target_sources(downward PRIVATE sat/kissat_dummy_terminate.cpp) ## only kissat has this function
+				target_sources(downward PRIVATE sat/kissat_stats_dummy.c)
 				if (${SAT_LIB} MATCHES "^.*cryptominisat.*$")
 					message("Building against CMS assing cadiback and cadical")
 					target_link_libraries(downward PUBLIC gmp)

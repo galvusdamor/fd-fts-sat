@@ -1,6 +1,8 @@
 #include <chrono>
 #include <thread>
 #include <atomic>
+#include <cstdint>
+#include <string>
 
 #include "sat_search.h"
 
@@ -21,6 +23,8 @@ bool kissat_quietMode;
 
 extern "C"{
 	void ipasir_terminate (void * solver);
+	int fts_kissat_statistics (void * solver, uint64_t * conflicts, uint64_t * decisions,
+		uint64_t * propagations);
 }
 
 namespace sat_search {
@@ -154,6 +158,12 @@ SearchStatus SATSearch::step() {
  
 	const double solve_time = solve_timer.stop();
 	cout << "SAT solver state: " << solverState << endl;
+	// deterministic effort of this call (kissat), immune to timing noise
+	uint64_t conflicts = 0, decisions = 0, propagations = 0;
+	string solver_stats;
+	if (fts_kissat_statistics(solver, &conflicts, &decisions, &propagations))
+		solver_stats = " conflicts " + to_string(conflicts) + " decisions " + to_string(decisions)
+			+ " propagations " + to_string(propagations);
 
 	if (solverState == 10){
 		// run plan extraction
@@ -169,7 +179,7 @@ SearchStatus SATSearch::step() {
 				<< " labels " << labels.size() << " timesteps with label " << timesteps_with_labels.size()
 				<< " compression " << double(labels.size()) / timesteps_with_labels.size()
 				<< " encode_time " << encode_time << " solve_time " << solve_time
-				<< endl;
+				<< solver_stats << endl;
 		if (!continueAfterFirstPlan)
 			return SOLVED;
 	} else {
@@ -179,7 +189,7 @@ SearchStatus SATSearch::step() {
 				<< (solverState == 20 ? " UNSAT" : " TIMEOUT") << " time " << step_timer
 				<< " clauses " << capsule->get_number_of_clauses() << " vars " << capsule->number_of_variables
 				<< " encode_time " << encode_time << " solve_time " << solve_time
-				<< endl;
+				<< solver_stats << endl;
 		ipasir_release(solver);
 	}
 
