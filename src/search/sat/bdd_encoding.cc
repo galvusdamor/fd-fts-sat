@@ -86,6 +86,16 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	labelImplicationsMax(opts.get<int>("label_implications_max")),
 	labelImplicationsTimeLimit(opts.get<double>("label_implications_time_limit")),
 	cutMinOverlap(opts.get<double>("cut_min_overlap")),
+	sourceUnits(opts.get<bool>("source_units")),
+	targetUnits(opts.get<bool>("target_units")),
+	pairUnits(opts.get<bool>("pair_units")),
+	crossUnits(opts.get<bool>("cross_units")),
+	leaveClauses(opts.get<bool>("leave_clauses")),
+	enterClauses(opts.get<bool>("enter_clauses")),
+	crossPairLimit(opts.get<int>("cross_pair_limit")),
+	stateClausesTimeLimit(opts.get<double>("state_clauses_time_limit")),
+	moveClausesMax(opts.get<int>("move_clauses_max")),
+	goalLastLabel(opts.get<bool>("goal_last_label")),
 	labelConjunctionLimit(opts.get<int>("label_conjunction_limit")),
 	bddCovering(opts.get<bool>("coverbdds")),
 	alternateLabelOrders(opts.get<bool>("alternate_label_orders")),
@@ -236,6 +246,33 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 	parser.add_option<double>("label_implications_time_limit",
 		"stop extracting implied clauses after this many seconds and keep the ones found so "
 		"far (all of them are sound); -1 = no limit", "-1");
+	parser.add_option<bool>("source_units",
+		"split BDDs: prev_s -> +-l for the labels forced in every label set the factor permits from s",
+		"false");
+	parser.add_option<bool>("target_units",
+		"split BDDs: next_s' -> +-l for the labels forced in every label set leading into s'", "false");
+	parser.add_option<bool>("pair_units",
+		"split BDDs: prev_s & next_s' -> +-l for the labels the (s, s') BDD forces (not already "
+		"source/target units)", "false");
+	parser.add_option<bool>("cross_units",
+		"split BDDs: for two factors sharing labels, prev_s1 & prev_s2 -> +-l (and the same for next "
+		"states) for labels forced only by both together; factor pairs with at most "
+		"cross_pair_limit state pairs, most shared labels first", "false");
+	parser.add_option<int>("cross_pair_limit", "cross_units: state pairs per factor pair", "10000");
+	parser.add_option<bool>("leave_clauses",
+		"prev_s & -next_s -> some label leaving s fires; prev_s & l -> a label leaving s fires before l "
+		"(in the label order) for every label l without a transition from s", "false");
+	parser.add_option<bool>("enter_clauses",
+		"next_s' & -prev_s' -> some label entering s' fires; next_s' & l -> a label entering s' fires "
+		"after l for every label l without a transition into s'", "false");
+	parser.add_option<double>("state_clauses_time_limit",
+		"stop computing source/target/pair/cross units and leave/enter clauses after this many "
+		"seconds, keeping what was found; -1 = no limit", "30");
+	parser.add_option<int>("move_clauses_max",
+		"leave/enter clauses: at most this many (state, blocked label) entries; -1 = all", "1000000");
+	parser.add_option<bool>("goal_last_label",
+		"at the last step, a label that cannot move any factor into its goal states must be followed "
+		"by a later label (a plan whose last action achieves no goal fact can be shortened)", "false");
 	parser.add_option<double>("cut_min_overlap",
 		"cutbdds (pairwise modes): only propagate from S to T if the labels they share make up at "
 		"least this fraction of T's labels", "0");
@@ -848,6 +885,211 @@ void BDDSATEncodingFactory::cover_bicliques() {
 	cout << "BDDSTAT implied_bicliques bicliques " << data->implied_bicliques[0].size()
 		 << " covered_conflicts " << covered << " clauses_before " << before
 		 << " clauses_after " << after << " time " << t() << endl;
+}
+
+
+/*
+  State clauses, all sound consequences of the factor BDDs (split mode). With
+  U(s) = OR_s' B(s, s') (label sets a factor permits from s) and V(s') = OR_s B(s, s'):
+  * source units: prev_s -> l / -l for the labels essential in U(s)
+  * target units: next_s' -> +-l, essential in V(s')
+  * pair units: prev_s & next_s' -> +-l, essential in B(s, s') and not already a
+    source/target unit
+  * cross units: for two factors sharing labels (at most cross_pair_limit state pairs):
+    prev_s1 & prev_s2 -> +-l essential in U1(s1) & U2(s2) but in neither alone, and the
+    same for next states. Since the empty step is always allowed, U1(s1) & U2(s2) is never
+    empty: there are no state mutexes to be had here, only forced label literals.
+  * leave / enter: a factor starting in s makes its first move with a label leaving s, so
+    a label l that cannot fire in s (no transition from s at all) needs a leaving label
+    earlier in the label order; ending in s' needs, after any label that cannot end in s',
+    a later label entering s'. Plus: state changed -> some leaving (entering) label fired.
+*/
+void BDDSATEncodingFactory::compute_state_clauses() {
+	utils::Timer t;
+	if (combineAllBDDsIntoOne) {
+		cout << "BDDSTAT state_clauses skipped: only for split BDDs (combinebdds=false)" << endl;
+		return;
+	}
+	const int F = fts->get_size();
+	const int L = fts->get_num_labels();
+	long n_src = 0, n_tgt = 0, n_pair = 0, n_cross = 0, cross_factor_pairs = 0, cross_state_pairs = 0,
+		cross_skipped = 0, n_moves = 0, n_blocked = 0;
+	bool timeout = false, capped = false;
+	auto out_of_time = [&]() {
+		if (stateClausesTimeLimit >= 0 && t() > stateClausesTimeLimit) timeout = true;
+		return timeout;
+	};
+	const BDD one = _manager->bddOne(), zero = _manager->bddZero();
+	data->state_units.assign(data->orderings.size(), {});
+	data->move_infos.assign(data->orderings.size(), {});
+
+	// the labels the factor's BDDs mention -- the same test as the construction
+	// (build_full_reachability_bdds): a label that has a self-loop at every state can
+	// still move the factor (is_selfloop_everywhere is not "only self-loops")
+	vector<vector<int>> mentioned(F);
+	for (int f = 0; f < F; f++) {
+		const TransitionSystem & ts = fts->get_ts(f);
+		for (int label = 0; label < L; label++) {
+			const LabelID id(label);
+			if (ts.is_relevant_label(id) || !ts.is_selfloop_everywhere(id)) mentioned[f].push_back(label);
+		}
+	}
+
+	for (size_t o = 0; o < data->orderings.size(); o++) {
+		const auto & ord = data->orderings[o];
+		auto & units = data->state_units[o];
+		auto essentials = [&](const BDD & f, vector<int> & out) {
+			out.clear();
+			if (f == one || f == zero) return;
+			const BDD e = f.FindEssential();
+			for (unsigned int v : e.SupportIndices()) {
+				const int label = ord.bddVarToLabel[v - data->num_factor_vars];
+				out.push_back(f.IsVarEssential(v, 1) ? label + 1 : -(label + 1));
+			}
+		};
+		auto push = [&](int lit, BDDEncodingData::CondLit a) {
+			BDDEncodingData::StateUnit u; u.c[0] = a; u.nc = 1; u.lit = lit; units.push_back(u);
+		};
+		auto push2 = [&](int lit, BDDEncodingData::CondLit a, BDDEncodingData::CondLit b) {
+			BDDEncodingData::StateUnit u; u.c[0] = a; u.c[1] = b; u.nc = 2; u.lit = lit; units.push_back(u);
+		};
+
+		// unions and their essential literals per factor state
+		const bool need_unions = sourceUnits || targetUnits || pairUnits || crossUnits;
+		vector<vector<BDD>> U(F), V(F);
+		vector<vector<set<int>>> Uess(F), Vess(F);
+		vector<int> lits;
+		for (int fac = 0; fac < F && need_unions && !out_of_time(); fac++) {
+			const int S = fts->get_ts(fac).get_size();
+			const auto & B = ord.transition_BDDs_per_factor_per_state_pair[fac];
+			U[fac].assign(S, zero); V[fac].assign(S, zero);
+			for (int s = 0; s < S; s++)
+				for (int ss = 0; ss < S; ss++) { U[fac][s] += B[s][ss]; V[fac][ss] += B[s][ss]; }
+			Uess[fac].assign(S, {}); Vess[fac].assign(S, {});
+			for (int s = 0; s < S; s++) {
+				essentials(U[fac][s], lits);
+				Uess[fac][s].insert(lits.begin(), lits.end());
+				if (sourceUnits) for (int l : lits) { push(l, {fac, s, false}); n_src++; }
+				essentials(V[fac][s], lits);
+				Vess[fac][s].insert(lits.begin(), lits.end());
+				if (targetUnits) for (int l : lits) { push(l, {fac, s, true}); n_tgt++; }
+			}
+		}
+		for (int fac = 0; fac < F && pairUnits && !out_of_time(); fac++) {
+			const int S = fts->get_ts(fac).get_size();
+			const auto & B = ord.transition_BDDs_per_factor_per_state_pair[fac];
+			for (int s = 0; s < S && !out_of_time(); s++)
+				for (int ss = 0; ss < S; ss++) {
+					essentials(B[s][ss], lits);
+					for (int l : lits) {
+						if ((sourceUnits && Uess[fac][s].count(l)) || (targetUnits && Vess[fac][ss].count(l))) continue;
+						push2(l, {fac, s, false}, {fac, ss, true}); n_pair++;
+					}
+				}
+		}
+		if (crossUnits && !out_of_time()) {
+			// factor pairs sharing labels, most shared labels first
+			vector<char> in(L, 0);
+			vector<tuple<int,int,int>> pairs;   // (-shared, f1, f2)
+			for (int f1 = 0; f1 < F; f1++) {
+				for (int l : mentioned[f1]) in[l] = 1;
+				for (int f2 = f1 + 1; f2 < F; f2++) {
+					int shared = 0;
+					for (int l : mentioned[f2]) shared += in[l];
+					if (shared) pairs.emplace_back(-shared, f1, f2);
+				}
+				for (int l : mentioned[f1]) in[l] = 0;
+			}
+			sort(pairs.begin(), pairs.end());
+			for (const auto & [neg, f1, f2] : pairs) {
+				if (out_of_time()) break;
+				const long S1 = fts->get_ts(f1).get_size(), S2 = fts->get_ts(f2).get_size();
+				if (S1 * S2 > crossPairLimit || U[f1].empty() || U[f2].empty()) { cross_skipped++; continue; }
+				cross_factor_pairs++;
+				for (int next = 0; next < 2 && !out_of_time(); next++) {
+					const auto & W1 = next ? V[f1] : U[f1];
+					const auto & W2 = next ? V[f2] : U[f2];
+					const auto & E1 = next ? Vess[f1] : Uess[f1];
+					const auto & E2 = next ? Vess[f2] : Uess[f2];
+					for (int s1 = 0; s1 < S1 && !out_of_time(); s1++)
+						for (int s2 = 0; s2 < S2; s2++) {
+							cross_state_pairs++;
+							essentials(W1[s1] * W2[s2], lits);
+							for (int l : lits) {
+								if (E1[s1].count(l) || E2[s2].count(l)) continue;
+								push2(l, {f1, s1, next == 1}, {f2, s2, next == 1}); n_cross++;
+							}
+						}
+				}
+			}
+		}
+		if ((leaveClauses || enterClauses) && !out_of_time()) {
+			auto & moves = data->move_infos[o];
+			for (int fac = 0; fac < F && !capped; fac++) {
+				const TransitionSystem & ts = fts->get_ts(fac);
+				const int S = ts.get_size();
+				vector<vector<int>> leaving(S), entering(S);
+				vector<vector<char>> from(S, vector<char>(L, 0)), into(S, vector<char>(L, 0));
+				for (int l : mentioned[fac])
+					for (const auto & tr : ts.get_transitions_with_label(l)) {
+						from[tr.src][l] = into[tr.target][l] = 1;
+						if (tr.src != tr.target) { leaving[tr.src].push_back(l); entering[tr.target].push_back(l); }
+					}
+				auto pos = [&](int l) { return ord.labelPosition[l]; };
+				for (int s = 0; s < S && !capped; s++)
+					for (int enter = 0; enter < 2; enter++) {
+						if (enter ? !enterClauses : !leaveClauses) continue;
+						BDDEncodingData::MoveInfo m;
+						m.fac = fac; m.state = s; m.enter = enter;
+						m.movers = enter ? entering[s] : leaving[s];
+						sort(m.movers.begin(), m.movers.end());
+						m.movers.erase(unique(m.movers.begin(), m.movers.end()), m.movers.end());
+						sort(m.movers.begin(), m.movers.end(), [&](int a, int b) {
+							return enter ? pos(a) > pos(b) : pos(a) < pos(b); });
+						vector<int> mpos;
+						for (int l : m.movers) mpos.push_back(pos(l));
+						for (int l : mentioned[fac]) {
+							if (enter ? into[s][l] : from[s][l]) continue;
+							// movers before l (leave) / after l (enter)
+							const int j = enter
+								? int(m.movers.size()) - int(upper_bound(mpos.rbegin(), mpos.rend(), pos(l)) - mpos.rbegin())
+								: int(lower_bound(mpos.begin(), mpos.end(), pos(l)) - mpos.begin());
+							m.blocked.emplace_back(l, j);
+						}
+						n_blocked += m.blocked.size();
+						n_moves++;
+						moves.push_back(std::move(m));
+						if (moveClausesMax >= 0 && n_blocked >= moveClausesMax) capped = true;
+					}
+			}
+		}
+	}
+	cout << "BDDSTAT state_clauses source_units " << n_src << " target_units " << n_tgt
+		 << " pair_units " << n_pair << " cross_units " << n_cross
+		 << " cross_factor_pairs " << cross_factor_pairs << " cross_skipped " << cross_skipped
+		 << " cross_state_pairs " << cross_state_pairs
+		 << " move_states " << n_moves << " blocked " << n_blocked
+		 << " stopped " << (timeout ? "time" : capped ? "cap" : "complete")
+		 << " time " << t() << endl;
+}
+
+
+/// goal_last_label: labels that can move some goal factor from a non-goal into a goal state
+void BDDSATEncodingFactory::compute_goal_achieving() {
+	const int L = fts->get_num_labels();
+	data->goal_achieving.assign(L, 0);
+	for (int f = 0; f < fts->get_size(); f++) {
+		const TransitionSystem & ts = fts->get_ts(f);
+		if (!ts.is_goal_relevant()) continue;
+		for (int l = 0; l < L; l++) {
+			if (data->goal_achieving[l]) continue;
+			for (const auto & tr : ts.get_transitions_with_label(l))
+				if (!ts.is_goal_state(tr.src) && ts.is_goal_state(tr.target)) { data->goal_achieving[l] = 1; break; }
+		}
+	}
+	long n = 0;
+	for (char c : data->goal_achieving) n += c;
+	cout << "BDDSTAT goal_last_label achieving " << n << " of " << L << endl;
 }
 
 
@@ -1613,6 +1855,10 @@ void BDDSATEncodingFactory::initialize() {
 	if (cubeEncodingMax >= 0) compute_zero_cubes();
 	if (labelImplications != 0) compute_implied_clauses();
 	if (labelImplications != 0 && impliedBicliques) cover_bicliques();
+	if (sourceUnits || targetUnits || pairUnits || crossUnits || leaveClauses || enterClauses)
+		compute_state_clauses();
+	data->goalLastLabel = goalLastLabel;
+	if (goalLastLabel) compute_goal_achieving();
 	data->varLevel.resize(data->bdd_num_vars);
 	for (int i = 0; i < data->bdd_num_vars; i++) data->varLevel[i] = _manager->ReadPerm(i);
 
@@ -2005,6 +2251,44 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 	}
 	tseitsinVars.clear();
 
+	// state clauses: source/target/pair/cross units, leave/enter clauses
+	if (!data->state_units.empty() || !data->move_infos.empty()) {
+		const size_t o = (fromTime - 1) % data->orderings.size();
+		auto lab = [&](int lit) { return lit > 0 ? labelVars[lit - 1] : -labelVars[-lit - 1]; };
+		auto cond = [&](const BDDEncodingData::CondLit & c) {
+			return (c.next ? nextStateVars : previousStateVars)[c.fac][c.state]; };
+		vector<int> v;
+		if (!data->state_units.empty())
+			for (const auto & u : data->state_units[o]) {
+				v.clear();
+				for (int k = 0; k < u.nc; k++) v.push_back(cond(u.c[k]));
+				v.push_back(-lab(u.lit));
+				sat->notAll(v);
+			}
+		if (!data->move_infos.empty())
+			for (const auto & m : data->move_infos[o]) {
+				const int here = (m.enter ? nextStateVars : previousStateVars)[m.fac][m.state];
+				const int there = (m.enter ? previousStateVars : nextStateVars)[m.fac][m.state];
+				// the factor changed state: some mover fired
+				v = {here, -there};
+				for (int l : m.movers) v.push_back(-labelVars[l]);
+				sat->notAll(v);
+				// P[j]: one of the first j movers fires
+				int maxj = 0;
+				for (const auto & b : m.blocked) maxj = max(maxj, b.second);
+				vector<int> P(maxj + 1, 0);
+				for (int j = 1; j <= maxj; j++) {
+					P[j] = sat->new_variable();
+					if (j == 1) sat->implies(P[1], labelVars[m.movers[0]]);
+					else sat->notAll(vector<int>{P[j], -P[j - 1], -labelVars[m.movers[j - 1]]});
+				}
+				for (const auto & [l, j] : m.blocked) {
+					if (j == 0) sat->notAll(vector<int>{here, labelVars[l]});
+					else sat->notAll(vector<int>{here, labelVars[l], -P[j]});
+				}
+			}
+	}
+
 	// label_implications: clauses implied by the BDDs, over this step's label variables
 	if (!data->implied_clauses.empty()) {
 		const size_t o = (fromTime - 1) % data->orderings.size();
@@ -2026,6 +2310,36 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 			for (int l : cc.lits) negs.push_back(l > 0 ? -labelVars[l - 1] : labelVars[-l - 1]);
 			sat->notAll(negs);
 		}
+	}
+}
+
+
+/*
+  goal_last_label: a plan whose last label moves no factor into its goal states can be
+  shortened (the goal already held before it). So in the last step, a label that cannot
+  achieve a goal state anywhere must be followed by a later label. A[i] = "a label at
+  position >= i of the label order fires" (one direction suffices).
+*/
+void BDDSATEncoding::encodeGoal(int toTime, bool retractable){
+	LabelEncoding::encodeGoal(toTime, retractable);
+	if (!data->goalLastLabel || retractable) return;
+	auto it = allTimesLabelVars.find(toTime - 1);
+	if (it == allTimesLabelVars.end()) return;
+	const vector<int> & labelVars = it->second;
+	const BDDEncodingData::Ordering & ord = data->ordering_at(toTime - 1);
+	const int n = ord.labelOrder.size();
+	vector<int> A(n + 1, 0);
+	for (int i = n - 1; i >= 1; i--) {
+		A[i] = sat->new_variable();
+		const int l = labelVars[ord.labelOrder[i]];
+		if (A[i + 1] == 0) sat->implies(A[i], l);
+		else sat->notAll(vector<int>{A[i], -l, -A[i + 1]});
+	}
+	for (int p = 0; p < n; p++) {
+		const int label = ord.labelOrder[p];
+		if (data->goal_achieving[label]) continue;
+		if (p == n - 1) sat->notAll(vector<int>{labelVars[label]});
+		else sat->notAll(vector<int>{labelVars[label], -A[p + 1]});
 	}
 }
 

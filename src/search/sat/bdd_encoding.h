@@ -110,6 +110,24 @@ struct BDDEncodingData {
 	// (every a in A conflicts with every b in B): a -> z, b -> -z for a fresh z
 	struct Biclique { std::vector<int> A; std::vector<int> B; };
 	std::vector<std::vector<Biclique>> implied_bicliques;
+
+	// state clauses (per ordering): "conditions -> label literal", the conditions being
+	// one or two factor states at the start (next=false) or end (next=true) of the step.
+	// source/target units (one condition), pair units (state at start and end of one
+	// factor), cross units (states of two factors). lit: +-(label + 1).
+	struct CondLit { int fac; int state; bool next; };
+	struct StateUnit { CondLit c[2]; int nc; int lit; };
+	std::vector<std::vector<StateUnit>> state_units;
+	// leave / enter clauses (per ordering): for a factor state, the labels moving out of
+	// it (leave, sorted by label position) or into it (enter, sorted by descending
+	// position), and the labels that cannot fire there; blocked (l, j): l needs one of
+	// the first j movers
+	struct MoveInfo { int fac; int state; bool enter; std::vector<int> movers;
+		std::vector<std::pair<int,int>> blocked; };
+	std::vector<std::vector<MoveInfo>> move_infos;
+	// goal_last_label: per label, whether it can move some factor into its goal states
+	bool goalLastLabel = false;
+	std::vector<char> goal_achieving;
 };
 
 
@@ -170,6 +188,7 @@ public:
 	~BDDSATEncoding() override = default;
 
 	void encode(int fromTime, int toTime) override;
+	void encodeGoal(int toTime, bool retractable) override;
 	std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>>
 		extractSolution(int initTime, std::vector<std::pair<int,int>> time_step_order) override;
 };
@@ -199,6 +218,14 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const int labelImplicationsMax;
 	const double labelImplicationsTimeLimit;
 	const double cutMinOverlap;
+	const bool sourceUnits, targetUnits, pairUnits, crossUnits, leaveClauses, enterClauses;
+	const int crossPairLimit;
+	const double stateClausesTimeLimit;
+	const int moveClausesMax;
+	const bool goalLastLabel;
+	/// source/target/pair/cross units and leave/enter clauses (see BDDEncodingData)
+	void compute_state_clauses();
+	void compute_goal_achieving();
 	/// label_implications: extract units and binary implications from the factors' BDDs
 	void compute_implied_clauses();
 	void cover_bicliques();
