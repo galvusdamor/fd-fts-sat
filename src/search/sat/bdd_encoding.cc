@@ -94,6 +94,7 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	enterClauses(opts.get<bool>("enter_clauses")),
 	crossPairLimit(opts.get<int>("cross_pair_limit")),
 	stateClausesTimeLimit(opts.get<double>("state_clauses_time_limit")),
+	stateClausesMinPhase(opts.get<double>("state_clauses_min_phase")),
 	moveClausesMax(opts.get<int>("move_clauses_max")),
 	goalLastLabel(opts.get<bool>("goal_last_label")),
 	labelConjunctionLimit(opts.get<int>("label_conjunction_limit")),
@@ -266,8 +267,12 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 		"next_s' & -prev_s' -> some label entering s' fires; next_s' & l -> a label entering s' fires "
 		"after l for every label l without a transition into s'", "false");
 	parser.add_option<double>("state_clauses_time_limit",
-		"stop computing source/target/pair/cross units and leave/enter clauses after this many "
-		"seconds, keeping what was found; -1 = no limit", "30");
+		"overall budget for the state clauses, computed in phases leave/enter, source/target "
+		"units, pair units, cross units; what a phase found before it stopped is kept; "
+		"-1 = no limit", "30");
+	parser.add_option<double>("state_clauses_min_phase",
+		"seconds of the budget reserved for each enabled phase still to come: phase k stops at "
+		"budget - min_phase * (enabled phases after k)", "2");
 	parser.add_option<int>("move_clauses_max",
 		"leave/enter clauses: at most this many (state, blocked label) entries; -1 = all", "1000000");
 	parser.add_option<bool>("goal_last_label",
@@ -914,14 +919,35 @@ void BDDSATEncodingFactory::compute_state_clauses() {
 	const int L = fts->get_num_labels();
 	long n_src = 0, n_tgt = 0, n_pair = 0, n_cross = 0, cross_factor_pairs = 0, cross_state_pairs = 0,
 		cross_skipped = 0, n_moves = 0, n_blocked = 0;
-	bool timeout = false, capped = false;
-	auto out_of_time = [&]() {
-		if (stateClausesTimeLimit >= 0 && t() > stateClausesTimeLimit) timeout = true;
-		return timeout;
-	};
+	bool capped = false;
 	const BDD one = _manager->bddOne(), zero = _manager->bddZero();
 	data->state_units.assign(data->orderings.size(), {});
 	data->move_infos.assign(data->orderings.size(), {});
+
+	/*
+	  Phases, cheapest and most useful first: leave/enter clauses, source/target units
+	  (and the unions the later phases need), pair units, cross units. Within the
+	  overall budget state_clauses_time_limit, every enabled phase still to come keeps
+	  state_clauses_min_phase seconds: phase k stops at
+	  budget - min_phase * (enabled phases after k). What a phase found before it
+	  stopped is kept.
+	*/
+	enum Phase { MOVES, UNITS, PAIRS, CROSS, NUM_PHASES };
+	const bool enabled[NUM_PHASES] = {leaveClauses || enterClauses,
+		sourceUnits || targetUnits || pairUnits || crossUnits, pairUnits, crossUnits};
+	const char * phase_name[NUM_PHASES] = {"moves", "units", "pairs", "cross"};
+	bool stopped[NUM_PHASES] = {false, false, false, false};
+	double phase_time[NUM_PHASES] = {0, 0, 0, 0};
+	int phase = MOVES;
+	auto deadline = [&]() {
+		int later = 0;
+		for (int q = phase + 1; q < NUM_PHASES; q++) later += enabled[q];
+		return stateClausesTimeLimit - stateClausesMinPhase * later;
+	};
+	auto out_of_time = [&]() {
+		if (stateClausesTimeLimit >= 0 && t() > deadline()) stopped[phase] = true;
+		return stopped[phase];
+	};
 
 	// the labels the factor's BDDs mention -- the same test as the construction
 	// (build_full_reachability_bdds): a label that has a self-loop at every state can
@@ -953,79 +979,15 @@ void BDDSATEncodingFactory::compute_state_clauses() {
 		auto push2 = [&](int lit, BDDEncodingData::CondLit a, BDDEncodingData::CondLit b) {
 			BDDEncodingData::StateUnit u; u.c[0] = a; u.c[1] = b; u.nc = 2; u.lit = lit; units.push_back(u);
 		};
-
-		// unions and their essential literals per factor state
-		const bool need_unions = sourceUnits || targetUnits || pairUnits || crossUnits;
-		vector<vector<BDD>> U(F), V(F);
-		vector<vector<set<int>>> Uess(F), Vess(F);
+		double phase_start = t();
+		auto next_phase = [&](int p) { phase_time[phase] += t() - phase_start; phase = p; phase_start = t(); };
 		vector<int> lits;
-		for (int fac = 0; fac < F && need_unions && !out_of_time(); fac++) {
-			const int S = fts->get_ts(fac).get_size();
-			const auto & B = ord.transition_BDDs_per_factor_per_state_pair[fac];
-			U[fac].assign(S, zero); V[fac].assign(S, zero);
-			for (int s = 0; s < S; s++)
-				for (int ss = 0; ss < S; ss++) { U[fac][s] += B[s][ss]; V[fac][ss] += B[s][ss]; }
-			Uess[fac].assign(S, {}); Vess[fac].assign(S, {});
-			for (int s = 0; s < S; s++) {
-				essentials(U[fac][s], lits);
-				Uess[fac][s].insert(lits.begin(), lits.end());
-				if (sourceUnits) for (int l : lits) { push(l, {fac, s, false}); n_src++; }
-				essentials(V[fac][s], lits);
-				Vess[fac][s].insert(lits.begin(), lits.end());
-				if (targetUnits) for (int l : lits) { push(l, {fac, s, true}); n_tgt++; }
-			}
-		}
-		for (int fac = 0; fac < F && pairUnits && !out_of_time(); fac++) {
-			const int S = fts->get_ts(fac).get_size();
-			const auto & B = ord.transition_BDDs_per_factor_per_state_pair[fac];
-			for (int s = 0; s < S && !out_of_time(); s++)
-				for (int ss = 0; ss < S; ss++) {
-					essentials(B[s][ss], lits);
-					for (int l : lits) {
-						if ((sourceUnits && Uess[fac][s].count(l)) || (targetUnits && Vess[fac][ss].count(l))) continue;
-						push2(l, {fac, s, false}, {fac, ss, true}); n_pair++;
-					}
-				}
-		}
-		if (crossUnits && !out_of_time()) {
-			// factor pairs sharing labels, most shared labels first
-			vector<char> in(L, 0);
-			vector<tuple<int,int,int>> pairs;   // (-shared, f1, f2)
-			for (int f1 = 0; f1 < F; f1++) {
-				for (int l : mentioned[f1]) in[l] = 1;
-				for (int f2 = f1 + 1; f2 < F; f2++) {
-					int shared = 0;
-					for (int l : mentioned[f2]) shared += in[l];
-					if (shared) pairs.emplace_back(-shared, f1, f2);
-				}
-				for (int l : mentioned[f1]) in[l] = 0;
-			}
-			sort(pairs.begin(), pairs.end());
-			for (const auto & [neg, f1, f2] : pairs) {
-				if (out_of_time()) break;
-				const long S1 = fts->get_ts(f1).get_size(), S2 = fts->get_ts(f2).get_size();
-				if (S1 * S2 > crossPairLimit || U[f1].empty() || U[f2].empty()) { cross_skipped++; continue; }
-				cross_factor_pairs++;
-				for (int next = 0; next < 2 && !out_of_time(); next++) {
-					const auto & W1 = next ? V[f1] : U[f1];
-					const auto & W2 = next ? V[f2] : U[f2];
-					const auto & E1 = next ? Vess[f1] : Uess[f1];
-					const auto & E2 = next ? Vess[f2] : Uess[f2];
-					for (int s1 = 0; s1 < S1 && !out_of_time(); s1++)
-						for (int s2 = 0; s2 < S2; s2++) {
-							cross_state_pairs++;
-							essentials(W1[s1] * W2[s2], lits);
-							for (int l : lits) {
-								if (E1[s1].count(l) || E2[s2].count(l)) continue;
-								push2(l, {f1, s1, next == 1}, {f2, s2, next == 1}); n_cross++;
-							}
-						}
-				}
-			}
-		}
-		if ((leaveClauses || enterClauses) && !out_of_time()) {
+
+		// ---- phase MOVES: leave / enter clauses
+		phase = MOVES; phase_start = t();
+		if (enabled[MOVES]) {
 			auto & moves = data->move_infos[o];
-			for (int fac = 0; fac < F && !capped; fac++) {
+			for (int fac = 0; fac < F && !capped && !out_of_time(); fac++) {
 				const TransitionSystem & ts = fts->get_ts(fac);
 				const int S = ts.get_size();
 				vector<vector<int>> leaving(S), entering(S);
@@ -1063,13 +1025,97 @@ void BDDSATEncodingFactory::compute_state_clauses() {
 					}
 			}
 		}
+
+		// ---- phase UNITS: unions per factor state, source / target units
+		next_phase(UNITS);
+		vector<vector<BDD>> U(F), V(F);
+		vector<vector<set<int>>> Uess(F), Vess(F);
+		for (int fac = 0; fac < F && enabled[UNITS] && !out_of_time(); fac++) {
+			const int S = fts->get_ts(fac).get_size();
+			const auto & B = ord.transition_BDDs_per_factor_per_state_pair[fac];
+			vector<BDD> u(S, zero), v(S, zero);
+			for (int s = 0; s < S; s++)
+				for (int ss = 0; ss < S; ss++) { u[s] += B[s][ss]; v[ss] += B[s][ss]; }
+			vector<set<int>> ue(S), ve(S);
+			for (int s = 0; s < S; s++) {
+				essentials(u[s], lits);
+				ue[s].insert(lits.begin(), lits.end());
+				if (sourceUnits) for (int l : lits) { push(l, {fac, s, false}); n_src++; }
+				essentials(v[s], lits);
+				ve[s].insert(lits.begin(), lits.end());
+				if (targetUnits) for (int l : lits) { push(l, {fac, s, true}); n_tgt++; }
+			}
+			// only complete factors are kept: the later phases skip the others
+			U[fac].swap(u); V[fac].swap(v); Uess[fac].swap(ue); Vess[fac].swap(ve);
+		}
+
+		// ---- phase PAIRS: pair units
+		next_phase(PAIRS);
+		for (int fac = 0; fac < F && enabled[PAIRS] && !out_of_time(); fac++) {
+			if (U[fac].empty()) continue;
+			const int S = fts->get_ts(fac).get_size();
+			const auto & B = ord.transition_BDDs_per_factor_per_state_pair[fac];
+			for (int s = 0; s < S && !out_of_time(); s++)
+				for (int ss = 0; ss < S; ss++) {
+					essentials(B[s][ss], lits);
+					for (int l : lits) {
+						if ((sourceUnits && Uess[fac][s].count(l)) || (targetUnits && Vess[fac][ss].count(l))) continue;
+						push2(l, {fac, s, false}, {fac, ss, true}); n_pair++;
+					}
+				}
+		}
+
+		// ---- phase CROSS: cross units for factor pairs sharing labels
+		next_phase(CROSS);
+		if (enabled[CROSS] && !out_of_time()) {
+			// factor pairs sharing labels, most shared labels first
+			vector<char> in(L, 0);
+			vector<tuple<int,int,int>> pairs;   // (-shared, f1, f2)
+			for (int f1 = 0; f1 < F; f1++) {
+				for (int l : mentioned[f1]) in[l] = 1;
+				for (int f2 = f1 + 1; f2 < F; f2++) {
+					int shared = 0;
+					for (int l : mentioned[f2]) shared += in[l];
+					if (shared) pairs.emplace_back(-shared, f1, f2);
+				}
+				for (int l : mentioned[f1]) in[l] = 0;
+			}
+			sort(pairs.begin(), pairs.end());
+			for (const auto & [neg, f1, f2] : pairs) {
+				if (out_of_time()) break;
+				const long S1 = fts->get_ts(f1).get_size(), S2 = fts->get_ts(f2).get_size();
+				if (S1 * S2 > crossPairLimit || U[f1].empty() || U[f2].empty()) { cross_skipped++; continue; }
+				cross_factor_pairs++;
+				for (int next = 0; next < 2 && !out_of_time(); next++) {
+					const auto & W1 = next ? V[f1] : U[f1];
+					const auto & W2 = next ? V[f2] : U[f2];
+					const auto & E1 = next ? Vess[f1] : Uess[f1];
+					const auto & E2 = next ? Vess[f2] : Uess[f2];
+					for (int s1 = 0; s1 < S1 && !out_of_time(); s1++)
+						for (int s2 = 0; s2 < S2; s2++) {
+							cross_state_pairs++;
+							essentials(W1[s1] * W2[s2], lits);
+							for (int l : lits) {
+								if (E1[s1].count(l) || E2[s2].count(l)) continue;
+								push2(l, {f1, s1, next == 1}, {f2, s2, next == 1}); n_cross++;
+							}
+						}
+				}
+			}
+		}
+		next_phase(CROSS);
 	}
+	string stop;
+	for (int q = 0; q < NUM_PHASES; q++) if (stopped[q]) stop += string(stop.empty() ? "" : ",") + phase_name[q];
+	if (capped) stop += string(stop.empty() ? "" : ",") + "move_cap";
 	cout << "BDDSTAT state_clauses source_units " << n_src << " target_units " << n_tgt
 		 << " pair_units " << n_pair << " cross_units " << n_cross
 		 << " cross_factor_pairs " << cross_factor_pairs << " cross_skipped " << cross_skipped
 		 << " cross_state_pairs " << cross_state_pairs
 		 << " move_states " << n_moves << " blocked " << n_blocked
-		 << " stopped " << (timeout ? "time" : capped ? "cap" : "complete")
+		 << " stopped " << (stop.empty() ? "complete" : stop)
+		 << " time_moves " << phase_time[MOVES] << " time_units " << phase_time[UNITS]
+		 << " time_pairs " << phase_time[PAIRS] << " time_cross " << phase_time[CROSS]
 		 << " time " << t() << endl;
 }
 

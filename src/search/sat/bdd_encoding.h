@@ -221,6 +221,7 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const bool sourceUnits, targetUnits, pairUnits, crossUnits, leaveClauses, enterClauses;
 	const int crossPairLimit;
 	const double stateClausesTimeLimit;
+	const double stateClausesMinPhase;
 	const int moveClausesMax;
 	const bool goalLastLabel;
 	/// source/target/pair/cross units and leave/enter clauses (see BDDEncodingData)
