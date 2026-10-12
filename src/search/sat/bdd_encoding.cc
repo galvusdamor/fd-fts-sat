@@ -96,6 +96,7 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	stateClausesTimeLimit(opts.get<double>("state_clauses_time_limit")),
 	stateClausesMinPhase(opts.get<double>("state_clauses_min_phase")),
 	moveClausesMax(opts.get<int>("move_clauses_max")),
+	moveClauseParts(opts.get_enum("move_clause_parts")),
 	goalLastLabel(opts.get<bool>("goal_last_label")),
 	labelConjunctionLimit(opts.get<int>("label_conjunction_limit")),
 	bddCovering(opts.get<bool>("coverbdds")),
@@ -273,6 +274,12 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 	parser.add_option<double>("state_clauses_min_phase",
 		"seconds of the budget reserved for each enabled phase still to come: phase k stops at "
 		"budget - min_phase * (enabled phases after k)", "2");
+	vector<string> move_parts {"BOTH", "FRAME", "ORDER"};
+	vector<string> move_parts_doc {"frame and order clauses",
+		"only: state changed -> some leaving (entering) label fired",
+		"only: a blocked label needs an earlier leaving (later entering) label, with prefix chains"};
+	parser.add_enum_option("move_clause_parts", move_parts,
+		"leave/enter clauses: which of the two parts to emit", "BOTH", move_parts_doc);
 	parser.add_option<int>("move_clauses_max",
 		"leave/enter clauses: at most this many (state, blocked label) entries; -1 = all", "1000000");
 	parser.add_option<bool>("goal_last_label",
@@ -1904,6 +1911,7 @@ void BDDSATEncodingFactory::initialize() {
 	if (sourceUnits || targetUnits || pairUnits || crossUnits || leaveClauses || enterClauses)
 		compute_state_clauses();
 	data->goalLastLabel = goalLastLabel;
+	data->moveClauseParts = moveClauseParts;
 	if (goalLastLabel) compute_goal_achieving();
 	data->varLevel.resize(data->bdd_num_vars);
 	for (int i = 0; i < data->bdd_num_vars; i++) data->varLevel[i] = _manager->ReadPerm(i);
@@ -2316,9 +2324,12 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 				const int here = (m.enter ? nextStateVars : previousStateVars)[m.fac][m.state];
 				const int there = (m.enter ? previousStateVars : nextStateVars)[m.fac][m.state];
 				// the factor changed state: some mover fired
-				v = {here, -there};
-				for (int l : m.movers) v.push_back(-labelVars[l]);
-				sat->notAll(v);
+				if (data->moveClauseParts != 2) {
+					v = {here, -there};
+					for (int l : m.movers) v.push_back(-labelVars[l]);
+					sat->notAll(v);
+				}
+				if (data->moveClauseParts == 1) continue;
 				// P[j]: one of the first j movers fires
 				int maxj = 0;
 				for (const auto & b : m.blocked) maxj = max(maxj, b.second);

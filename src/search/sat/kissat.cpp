@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <cstdlib>
 #include <vector>
+#include <string>
 
 int clauseCount = 0;
 extern bool kissat_quietMode;
@@ -45,6 +46,23 @@ IPASIR_API void * ipasir_init (){
 	kissat* solver = kissat_init();
 	if (kissat_quietMode)
 		kissat_set_option(solver, "quiet", 1);	
+	// experiments on solver variance: FTS_KISSAT_SEED sets kissat's random seed
+	if (const char * seed = getenv("FTS_KISSAT_SEED"))
+		kissat_set_option(solver, "seed", atoi(seed));
+	// FTS_KISSAT_OPTIONS="name=value,name=value": further kissat options for experiments
+	if (const char * opts = getenv("FTS_KISSAT_OPTIONS")) {
+		std::string all(opts);
+		size_t start = 0;
+		while (start < all.size()) {
+			size_t end = all.find(',', start);
+			if (end == std::string::npos) end = all.size();
+			std::string kv = all.substr(start, end - start);
+			size_t eq = kv.find('=');
+			if (eq != std::string::npos)
+				kissat_set_option(solver, kv.substr(0, eq).c_str(), atoi(kv.substr(eq + 1).c_str()));
+			start = end + 1;
+		}
+	}
 	return solver;
 }
 

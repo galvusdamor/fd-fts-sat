@@ -127,6 +127,8 @@ struct BDDEncodingData {
 	std::vector<std::vector<MoveInfo>> move_infos;
 	// goal_last_label: per label, whether it can move some factor into its goal states
 	bool goalLastLabel = false;
+	// leave/enter clauses: 0 both parts, 1 frame clauses only, 2 order clauses only
+	int moveClauseParts = 0;
 	std::vector<char> goal_achieving;
 };
 
@@ -223,6 +225,7 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const double stateClausesTimeLimit;
 	const double stateClausesMinPhase;
 	const int moveClausesMax;
+	const int moveClauseParts;
 	const bool goalLastLabel;
 	/// source/target/pair/cross units and leave/enter clauses (see BDDEncodingData)
 	void compute_state_clauses();
