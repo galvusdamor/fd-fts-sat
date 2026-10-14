@@ -27,21 +27,26 @@ int fts_kissat_statistics (void *solver, uint64_t *conflicts, uint64_t *decision
 }
 
 
-/* Variables after a SAT call: kissat's internal count, the active ones (not
-   eliminated, not fixed), and the eliminated and fixed ones (per-variable flags;
-   the "eliminated" statistic itself is not compiled into this kissat). */
+/* Variables after a SAT call. kissat compacts its internal variable numbering during
+   solving and drops eliminated (and merges fixed) variables from it, so the internal
+   flags undercount; the import table over the external variables keeps an "eliminated"
+   mark. vars: external variables, active: kissat's active internal variables,
+   eliminated: external variables eliminated, fixed: internal variables currently fixed
+   (after compaction all fixed variables share one internal variable, so this is a lower
+   bound). */
 int fts_kissat_variables (void *solver, uint64_t *vars, uint64_t *active,
                           uint64_t *eliminated, uint64_t *fixed)
 {
   kissat *k = (kissat *) solver;
-  *vars = k->vars;
-  *active = k->active;
-  uint64_t e = 0, f = 0;
+  const size_t n = SIZE_STACK (k->import);
+  uint64_t e = 0;
+  for (size_t idx = 1; idx < n; idx++)
+    e += PEEK_STACK (k->import, idx).eliminated;
+  uint64_t f = 0;
   for (unsigned idx = 0; idx < k->vars; idx++)
-    {
-      e += k->flags[idx].eliminated;
-      f += k->flags[idx].fixed;
-    }
+    f += k->flags[idx].fixed;
+  *vars = n ? n - 1 : 0;
+  *active = k->active;
   *eliminated = e;
   *fixed = f;
   return 1;
