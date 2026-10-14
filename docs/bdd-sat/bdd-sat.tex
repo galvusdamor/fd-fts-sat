@@ -1,0 +1,440 @@
+%% Documentation of the BDD-based SAT encodings of fd-fts-sat, written with the JAIR
+%% author kit (ACM-based jair.cls, 2025 style). Build:
+%%   pdflatex bdd-sat && biber bdd-sat && pdflatex bdd-sat && pdflatex bdd-sat
+%% The option tables (options-*.tex) are generated from the C++ sources:
+%%   python3 extract_options.py
+\documentclass[manuscript, screen]{jair}
+
+\setcopyright{cc}
+\acmDOI{}
+\JAIRAE{}
+\JAIRTrack{}
+\acmVolume{}
+\acmArticle{}
+\acmMonth{10}
+\acmYear{2026}
+
+\RequirePackage[
+  datamodel=acmdatamodel,
+  style=acmauthoryear,
+  backend=biber,
+  giveninits=true,
+  uniquename=init
+  ]{biblatex}
+\renewcommand*{\bibopenbracket}{(}
+\renewcommand*{\bibclosebracket}{)}
+\addbibresource{bdd-sat.bib}
+
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{amsmath}
+\usepackage{xspace}
+
+\newcommand{\opt}[1]{\texttt{#1}}
+\newcommand{\bddsat}{\opt{bdd\_sat}\xspace}
+\newcommand{\B}{\mathcal{B}}
+\newcommand{\prev}[1]{\mathit{prev}_{#1}}
+\newcommand{\nxt}[1]{\mathit{next}_{#1}}
+
+\begin{document}
+
+\title[BDD-Based SAT Encodings for Factored Transition Systems]{BDD-Based SAT Encodings for
+Planning on Factored Transition Systems: Encodings, Label Orders, and Constraints}
+
+% TODO: check the author list and affiliations
+\author{Gregor Behnke}
+\email{g.behnke@uva.nl}
+\affiliation{%
+  \institution{University of Amsterdam}
+  \city{Amsterdam}
+  \country{The Netherlands}}
+
+\renewcommand{\shortauthors}{Behnke}
+
+\begin{abstract}
+  This document describes the \bddsat encoder of the planner fd-fts-sat and everything that can be
+  configured around it. The planner does not plan on the finite-domain representation of a task but
+  on a factored transition system (FTS), possibly after a merge-and-shrink style transformation, and
+  encodes bounded plan existence into SAT. For every factor, \bddsat represents the label sets that
+  move the factor from one state to another within one time step as binary decision diagrams (BDDs)
+  over one variable per label, and translates these BDDs into clauses. We describe how the BDDs are
+  built, how they can be strengthened, the alternative CNF translations (Tseitin variants, cube and
+  path encodings), the redundant clauses that can be derived from them (label implications, state
+  units, leave and enter clauses, and a goal condition on the last step), the label orders that
+  define the step semantics, and the search engines and length strategies that use the encoding.
+  Every option is listed with its default in the appendix; the tables there are generated from the
+  source code.
+\end{abstract}
+
+\keywords{Planning as satisfiability, factored transition systems, binary decision diagrams, CNF
+encodings, merge-and-shrink}
+
+\maketitle
+
+%% ===========================================================================
+\section{Introduction}
+
+Planning as satisfiability \parencite{kautz-selman-ecai1992} answers the question whether a plan of
+a given length exists by encoding it as a propositional formula. The planner described here, a fork
+of Fast Downward \parencite{helmert-jair2006}, does so for a \emph{factored transition system}: the
+finite-domain task is turned into an atomic FTS with one factor per variable, which can be
+transformed further by label reduction, shrinking and merging
+\parencite{sievers-helmert-jair2021,torralba-sievers-ijcai2019}. Plans for the transformed FTS are
+mapped back to the original task afterwards.
+
+The SAT encodings work on the FTS directly. A plan step may contain several labels, applied in a
+fixed \emph{label order}; the order thus defines the step semantics. The \bddsat encoder describes,
+for every factor and every pair of a source and a target state, the label sets that lead from the
+source to the target within one step by a BDD \parencite{bryant-ieee1986}, and translates these BDDs
+into clauses. Everything else in this document is a variation of this idea: how the BDDs are built
+and strengthened, how they are translated, which consequences of them are added as redundant
+clauses, and which label order is used.
+
+The document is organised along the pipeline. Section~\ref{sec:prelim} fixes the notation and the
+step semantics. Section~\ref{sec:bdds} describes the construction of the BDDs,
+Section~\ref{sec:cnf} their translation into CNF, Section~\ref{sec:cut} the strengthening of the BDDs
+by other factors, and Section~\ref{sec:redundant} the redundant clauses. Section~\ref{sec:orders}
+describes the label orders, Section~\ref{sec:engines} the search engines and length strategies, and
+Section~\ref{sec:empirical} summarises what we observed empirically. The appendix lists every
+option.
+
+%% ===========================================================================
+\section{Preliminaries}\label{sec:prelim}
+
+A \emph{transition system} is a tuple $\Theta = (S, L, T, s_0, S_\star)$ with a finite set of states
+$S$, a finite set of labels $L$, transitions $T \subseteq S \times L \times S$, an initial state
+$s_0$ and goal states $S_\star \subseteq S$. A \emph{factored transition system} is a set of
+transition systems $\Theta_1, \dots, \Theta_n$ over the same labels. A label is applicable in a
+global state $(s_1,\dots,s_n)$ if every factor has a transition with that label from its current
+state, and applying it moves every factor along such a transition. A label $\ell$ is
+\emph{irrelevant} for a factor if it has exactly the self-loops $(s,\ell,s)$ for all $s$; such labels
+do not occur in that factor's BDDs. Note that a label with a self-loop at every state may still move
+the factor (it can have further transitions); only labels with nothing but self-loops are
+irrelevant.
+
+\paragraph{Step semantics.} A \emph{label order} is a total order $\prec$ on $L$. One time step of a
+plan is a set of labels $\{\ell_1 \prec \dots \prec \ell_k\}$, applied as the sequence
+$\ell_1,\dots,\ell_k$; each label occurs at most once per step and the empty step is always allowed.
+A plan with $m$ actions thus fits into $1 + b$ steps, where $b$ is the number of consecutive pairs
+that are not increasing in $\prec$. The label order is therefore a central parameter: it decides how
+many time steps a plan needs (Section~\ref{sec:orders}).
+
+\paragraph{Variables.} For every time step $t$ and factor $i$ there is one state variable per state,
+with an exactly-one constraint, and for every step one variable per label. We write $\prev{s}$ and
+$\nxt{s'}$ for the state variables of a factor at the beginning and end of the step. The initial
+state is asserted at the first step and, for every factor, one of its goal states at the last.
+
+%% ===========================================================================
+\section{Building the BDDs}\label{sec:bdds}
+
+For every factor $i$ and every pair of states $s, s'$ of that factor, $\B_i(s,s')$ is a BDD over the
+label variables that is true exactly for the label sets that move the factor from $s$ to $s'$ in one
+step under the step semantics.
+
+\paragraph{Full reachability.} With $\B_i(s,s')$ initialised to $[s = s']$ and the labels processed in
+reverse label order, one dynamic-programming step for label $\ell$ is
+\[
+  \B_i(s,s') \leftarrow \neg\ell \wedge \B_i(s,s') \;\vee\; \bigvee_{(s,\ell,u) \in T_i} \ell \wedge \B_i(u,s'),
+\]
+i.e., either the label is not used, or it is used first and the remaining (later) labels lead from
+its target to $s'$. Afterwards $\B_i(s,s')$ describes arbitrary label sequences that respect the order
+(\opt{one\_step\_only=false}). This allows a factor to make several transitions within one step.
+
+\paragraph{One step.} With \opt{one\_step\_only=true}, a factor makes at most one real transition per
+step, framed by self-loops: labels before it in the order must self-loop on the source, labels after
+it on the target. This is closer to $\exists$-step semantics, gives smaller BDDs for some factors and
+much larger ones for others. \opt{bdd\_size\_limit} interpolates: oversized full-reachability BDDs of
+a factor are replaced by their one-step counterparts until a node budget is met.
+
+\paragraph{Variable order.} The BDD variable of a label is, by default, its position in the label
+order. \opt{bdd\_variable\_order} chooses the BDD variable order independently (any label order
+finder), and \opt{bdd\_reorder} lets CUDD \parencite{somenzi-cudd} reorder the variables, once after
+construction or dynamically (\opt{bdd\_reorder\_dynamic}). The label order remains the semantics; the
+variable order only affects the size of the BDDs. \opt{alternate\_label\_orders} uses two label orders
+on alternating steps.
+
+\paragraph{Split and combined BDDs.} By default the encoding keeps one BDD per $(i,s,s')$, conditioned
+on the state variables (\emph{split}). With \opt{combinebdds=true} each factor has a single BDD over
+the current-state variables $x_0,\dots,x_{n-1}$, the next-state variables $y_0,\dots,y_{n-1}$ and the
+labels, which must equal $\B_i(s,s')$ whenever exactly $x_s$ and $y_{s'}$ are true. The original
+construction is a disjunction of spelled-out minterms,
+\[
+  \bigvee_{s,s'} \Bigl( x_s \wedge \bigwedge_{t \neq s} \neg x_t \wedge y_{s'} \wedge \bigwedge_{t' \neq s'} \neg y_{t'} \wedge \B_i(s,s') \Bigr),
+\]
+which costs $\Theta(|S|^3)$ BDD operations and fixes the value on impossible assignments.
+\opt{combine\_ite=true} builds instead the if-then-else chain
+\[
+  F = \mathit{ite}(x_0, G_0, \mathit{ite}(x_1, G_1, \dots \mathit{ite}(x_{n-1}, G_{n-1}, \bot)\dots)),
+  \qquad
+  G_s = \mathit{ite}(y_0, \B_i(s,0), \mathit{ite}(y_1, \B_i(s,1), \dots, \bot)\dots),
+\]
+in which the first true state variable decides. On one-hot assignments, which the exactly-one
+constraints guarantee, $F$ coincides with the disjunction above; elsewhere it may differ, which is
+sound for the same reason. Because the state variables lie above the labels in the variable order,
+every $\mathit{ite}$ only creates a node: $\Theta(|S|^2)$ constant-time steps.
+
+\paragraph{Budgets.} \opt{bdd\_init\_time\_limit} and \opt{bdd\_node\_limit} abort the construction
+when exceeded; the CUDD manager is sized by \opt{cudd\_init\_nodes}, \opt{cudd\_cache\_size} and
+\opt{cudd\_max\_memory\_mb}.
+
+%% ===========================================================================
+\section{Translating the BDDs into CNF}\label{sec:cnf}
+
+In the split representation, the BDD of $(i,s,s')$ is translated with the conditions
+$\prev{s} \wedge \nxt{s'}$: its root must be true when both hold. Pairs whose BDD is constant false
+yield the clause $\neg\prev{s} \vee \neg\nxt{s'}$. Since every pair, including the impossible ones,
+is constrained, no frame axioms are needed. In the combined representation the factor's single BDD is
+asserted at every step.
+
+\paragraph{Tseitin.} Every BDD node gets a variable that stands for the sub-BDD below it
+\parencite{tseitin1968,een-sorensson-jsat2006}. With \opt{impltseitsin=true} (default) only the
+implication from the node variable to its children is encoded, which suffices because the roots are
+asserted; \opt{impltseitsin=false} encodes both directions. \opt{omitforcedvariables} skips node
+variables for nodes with in-degree at most \opt{forcedvariablesthreshold}, encoding them inline. The
+Tseitin variables are shared within a factor and time step, which is valid because they represent the
+sub-BDD itself.
+
+\paragraph{Consistency versus domain consistency.} \textcite{abio-et-al-cpaior2016} show that this
+translation is only \emph{consistent}: unit propagation detects a violated BDD once all variables are
+assigned, but does not derive the values a partial assignment forces. A BDD that implies
+$\ell_1 \rightarrow \neg\ell_2$ does not propagate $\neg\ell_2$ when $\ell_1$ is set. This observation
+motivates the path encoding and the redundant clauses of Section~\ref{sec:redundant}.
+
+\paragraph{Cube encoding.} With \opt{cube\_encoding\_max=k}, a BDD with at most $k$ paths to the
+false terminal is encoded as one clause per such path (its negation), without auxiliary variables.
+This is exact and propagation-complete per BDD, but exponential in general.
+
+\paragraph{Path encoding.} \opt{path\_encoding=true} uses NNFPath \parencite{abio-et-al-cpaior2016}.
+Variables mean ``this node (edge) lies on the path from the root to the true terminal''. A node on the
+path takes one of its outgoing edges; an edge on the path implies its label literal and its child;
+node and literal imply the edge; every non-root node on the path needs an incoming edge on the path;
+and, for every variable $x$ of the BDD and value $v$,
+\[
+  (x = v) \;\rightarrow\; \bigvee \{\text{edges carrying } x = v \text{ at } x\text{'s level}\} \vee
+  \bigvee \{\text{edges jumping over } x\text{'s level}\}. \tag{P3}
+\]
+P3 makes unit propagation domain consistent: once no path through $x = v$ is left, $x \neq v$ is
+propagated. Three points go beyond the paper:
+\begin{itemize}
+  \item The paper treats quasi-reduced diagrams. Our BDDs are reduced, so edges may skip levels; P3
+        includes such edges for every level they skip. Equivalently one could quasi-reduce the BDD.
+  \item CUDD's complement edges are handled by giving every node a parity, so that one CUDD node may
+        appear twice in the encoding.
+  \item The path variables cannot be shared between diagrams, but CUDD shares nodes heavily between
+        the $(s,s')$ BDDs of a factor. \opt{path\_sharing=true} therefore encodes all of a factor's BDDs
+        as one diagram with several roots. The root of pair $(s,s')$ is activated by an auxiliary
+        variable equivalent to $\prev{s} \wedge \nxt{s'}$; since exactly one pair is active, the
+        active nodes still form a single path, and roots below a level count as skipping it in P3.
+\end{itemize}
+The path encoding uses about three variables per node instead of one.
+
+%% ===========================================================================
+\section{Strengthening the BDDs: Cutting}\label{sec:cut}
+
+A label set that factor $j$ cannot perform from any state can never occur in a plan, whatever factor
+$i$ allows. With \opt{cutbdds=true}, the union over all pairs of factor $j$'s BDDs, projected onto the
+labels relevant to factor $i$ (all other labels existentially quantified), is conjoined into factor
+$i$'s BDDs, up to a fixpoint. \opt{cut\_mode} selects how:
+\begin{description}
+  \item[\opt{AND}] conjunction;
+  \item[\opt{AND\_LIMITED}] conjunction with a node limit of \opt{cut\_limit\_factor} times the target's
+        size, kept only if the result is not larger;
+  \item[\opt{AND\_CAPPED}] the same limit, but the result is kept even if larger;
+  \item[\opt{RESTRICT}] \texttt{Cudd\_bddRestrict} with the projection as care set. This is only sound
+        when care sets come from unrestricted BDDs, so restriction flows along the factor order only;
+        restricting in both directions lets two factors justify each other and accept label sets
+        neither allows;
+  \item[\opt{GLOBAL\_AND}, \opt{GLOBAL\_AND\_LIMITED}, \opt{GLOBAL\_RESTRICT}] the conjunction $G$ of
+        all factors' unions, projected per factor (for restriction, the prefix of earlier factors).
+\end{description}
+\opt{cut\_min\_overlap} restricts pairwise cutting to factor pairs that share at least the given
+fraction of the target's labels, and \opt{coverbdds} reports state-to-label implications for
+diagnosis only.
+
+%% ===========================================================================
+\section{Redundant Clauses Derived from the BDDs}\label{sec:redundant}
+
+The clauses in this section are logical consequences of the BDDs. They do not change the set of
+models; they add propagation the Tseitin translation lacks. All of them are optional and can be
+combined.
+
+\subsection{Label implications}
+
+Let $U_i = \bigvee_{s,s'} \B_i(s,s')$ be the label sets factor $i$ permits in one step, from any
+state. Every implication over label literals that holds in $U_i$ holds at every step. The essential
+variables of a BDD (CUDD's \texttt{FindEssential}) are the literals true in all its models; applied
+to $U_i$ they give unit clauses, and applied to the cofactor of $U_i$ by a literal $\ell$ they give
+every binary clause with premise $\ell$ in one call. Extraction therefore needs two cofactors and
+essential-variable computations per label in the support of the factor.
+\opt{label\_implications} selects \opt{UNCONDITIONAL} (from $U_i$), \opt{PER\_SOURCE} (from the union
+over targets of each source state, conditioned on $\prev{s}$), or \opt{BOTH}. Since the empty step is
+always allowed, there are no positive units, and almost all unconditional clauses are label mutexes
+$\neg\ell_1 \vee \neg\ell_2$.
+
+The number of clauses can be quadratic in the number of labels of a factor. \opt{label\_implications\_max}
+stops the extraction at a number of clauses (also within a factor) and
+\opt{label\_implications\_time\_limit} after a number of seconds; the clauses found so far are kept,
+since each is sound on its own. \opt{label\_implications\_bicliques} encodes the binary clauses by a
+greedy biclique cover \parencite{rintanen-ecai2006}: a biclique $A \times B$ of conflicting literals
+becomes $a \rightarrow z$, $b \rightarrow \neg z$ with one new variable per step.
+
+\subsection{State clauses}
+
+With $U_i(s) = \bigvee_{s'} \B_i(s,s')$ and $V_i(s') = \bigvee_{s} \B_i(s,s')$ (split BDDs only):
+\begin{description}
+  \item[\opt{source\_units}] $\prev{s} \rightarrow \pm\ell$ for the literals essential in $U_i(s)$;
+  \item[\opt{target\_units}] $\nxt{s'} \rightarrow \pm\ell$ for those essential in $V_i(s')$;
+  \item[\opt{pair\_units}] $\prev{s} \wedge \nxt{s'} \rightarrow \pm\ell$ for those essential in
+        $\B_i(s,s')$ but not already source or target units: the part of domain consistency Tseitin
+        misses for the active BDD;
+  \item[\opt{cross\_units}] for two factors sharing labels, $\prev{s_1} \wedge \prev{s_2} \rightarrow
+        \pm\ell$ for literals essential in $U_{i}(s_1) \wedge U_{j}(s_2)$ but in neither alone, and the
+        same for next states; at most \opt{cross\_pair\_limit} state pairs per factor pair, factor
+        pairs with most shared labels first. Because the empty step is always allowed, the
+        conjunction is never empty: this yields forced labels, never state mutexes.
+\end{description}
+
+\paragraph{Leave and enter clauses.} A factor that starts a step in $s$ and ends elsewhere made its
+first move with a label that leaves $s$. A label $\ell$ without any transition from $s$ (not even a
+self-loop) can only fire after the factor left $s$, i.e., after a leaving label earlier in the label
+order. With \opt{leave\_clauses}:
+\[
+  \prev{s} \wedge \neg\nxt{s} \rightarrow \bigvee_{\ell \in \mathit{leave}(s)} \ell
+  \qquad\text{and}\qquad
+  \prev{s} \wedge \ell \rightarrow P_s(\ell)
+\]
+for every label $\ell$ without a transition from $s$, where $P_s(\ell)$ is an auxiliary variable
+implying that some leaving label before $\ell$ fires (one prefix chain per state). \opt{enter\_clauses}
+is symmetric for the end state: a label that cannot end in $s'$ needs a later entering label.
+\opt{move\_clause\_parts} emits only the frame part (first clause) or only the order part (second),
+and \opt{move\_clauses\_max} bounds the number of (state, label) entries. The movers use the same
+relevance test as the construction: a label with a self-loop everywhere may still move the factor.
+
+\paragraph{Budget.} The state clauses are computed in phases, cheapest and most useful first:
+leave/enter clauses, source/target units (with the unions the later phases need), pair units, cross
+units. Within the overall budget \opt{state\_clauses\_time\_limit}, every enabled phase still to come
+keeps \opt{state\_clauses\_min\_phase} seconds: phase $k$ stops at
+$\mathit{budget} - \mathit{min\_phase} \cdot |\{\text{enabled phases after } k\}|$. What a phase
+found before it stopped is kept.
+
+\subsection{Goal condition on the last step}
+
+\begin{proposition}
+If a task has a plan with at most $m$ time steps, it has one with at most $m$ steps whose last
+action moves some factor from a non-goal state into a goal state.
+\end{proposition}
+\begin{proof}
+Let $a$ be the last action of a plan. Every factor is in a goal state after $a$. If $a$ moved no
+factor from a non-goal into a goal state, then every factor was already in a goal state before $a$:
+it was either not moved by $a$ or moved from a goal state. Removing $a$ yields a shorter plan with
+at most as many steps. Repeat until the condition holds.
+\end{proof}
+With \opt{goal\_last\_label}, a label that cannot move any factor into its goal states anywhere must,
+at the last step, be followed by a later label of that step. The clauses use one suffix chain over
+the label order ($A_k$: ``a label at position $\geq k$ fires''). The condition holds for every
+horizon, also when the last steps are empty, and is therefore compatible with every length strategy.
+
+%% ===========================================================================
+\section{Label Orders}\label{sec:orders}
+
+The label order is given by a \opt{LabelOrderFinder}. The simple finders are \opt{label\_order\_linear}
+(label ids), \opt{label\_order\_reverse}, \opt{label\_order\_random}, \opt{label\_order\_causal},
+\opt{label\_order\_relaxed} (layers of relaxed reachability), \opt{label\_order\_tsort} (a topological
+ranking of the labels) and \opt{label\_order\_file}, which reads an order
+and orders unmentioned labels with \opt{leftover}.
+
+\paragraph{Plan-optimal orders as a reference.} For a given plan, the order that minimises the number
+of steps is a linear ordering problem; the experiment scripts solve it exactly by MaxSAT. Such orders
+are tailored to one plan, but show how much the order matters.
+
+\paragraph{Goal chains.} \opt{label\_order\_goal\_chains} approximates a good order without a plan.
+For every goal-relevant factor, a breadth-first search in the product of the factor and its causal
+ancestors (up to \opt{ancestor\_depth} levels, within \opt{max\_states} and \opt{state\_budget})
+yields an abstract plan, i.e., a chain of labels. The chains are merged into one order by a MaxSAT
+over all consecutive pairs (exact per strongly connected component up to \opt{exact\_max\_size}, with
+\opt{exact\_time\_limit}); components are ordered topologically, ties by chain index and position.
+Further options add joint chains for pairs of goals (\opt{goal\_pairs}), insert leftover labels by
+relaxed layer (\opt{leftover\_layer}), and control merging and shrinking of the abstractions
+(\opt{merge\_strategy}, \opt{shrink}, \opt{time\_budget}), the sources and scope of order pairs
+(\opt{pair\_source}, \opt{pair\_scope}), the scheduling of chains (\opt{chain\_edges},
+\opt{chain\_schedule}) and a single abstraction over all goals (\opt{global\_abstraction}). The
+configuration we use as default is
+\begin{center}
+\texttt{label\_order\_goal\_chains(ancestor\_depth=2, goal\_pairs=2, leftover\_layer=true,\\
+state\_budget=200000, max\_states=20000, exact\_time\_limit=1)}.
+\end{center}
+
+%% ===========================================================================
+\section{Search Engines and Length Strategies}\label{sec:engines}
+
+\opt{sat} solves one formula per horizon, with horizons from a \opt{length\_strategy}:
+\opt{one\_by\_one} ($1,2,3,\dots$), \opt{by\_iteration} (geometric), \opt{by\_increment} (arithmetic),
+\opt{length\_list} (explicit) and \opt{constant}. \opt{rintanen} implements Rintanen's algorithm~C
+\parencite{rintanen-et-al-aij2006}: several horizons are solved in interleaved threads with a
+scheduler, the $i$-th open horizon receiving turns of \opt{scheduler\_interval}$\cdot\gamma^i$.
+\opt{incremental\_sat} reuses one solver across horizons and needs assumptions, which kissat
+\parencite{kissat} does not provide. Every call reports kissat's conflicts, decisions and
+propagations, which are deterministic for a given formula and seed and therefore a noise-free
+measure of search effort.
+
+%% ===========================================================================
+\section{Empirical Notes}\label{sec:empirical}
+
+The following observations come from the Autoscale benchmark set \parencite{torralba-et-al-icaps2021}
+(1260 agile tasks, 300\,s, 2.5\,GB, kissat), restricted where noted to the 303 tasks solved by at
+least one configuration and not solved by the transformation alone.
+\begin{itemize}
+  \item The path encodings remove 92--96\,\% of the conflicts but enlarge the formula five- to
+        sixfold; overall they are slower, except in single domains (childsnack).
+  \item All state clauses with a phased 10\,s budget reduce conflicts to about 0.3 and total time to
+        about 0.8 of the plain Tseitin encoding (geometric means on tasks of at least 5\,s).
+  \item Capped label implications are the cheapest robust improvement.
+  \item Coverage differences of a few tasks at the time limit are dominated by noise: two identical
+        runs of the same configuration differ by 2--3 solved tasks, with identical conflict
+        counts and run times varying by a factor of 0.83--1.31 (5th to 95th percentile).
+  \item Kissat's bounded variable elimination interacts with redundant clauses. In single domains it
+        turns easy UNSAT proofs into very hard ones (rovers), but disabling it slows every
+        configuration down by 11--21\,\%.
+\end{itemize}
+
+\printbibliography
+
+\appendix
+
+%% ===========================================================================
+\section{Options}
+
+The tables below are generated from the C++ sources by \texttt{extract\_options.py}; option names,
+defaults and descriptions are those of the code.
+
+\subsection{\texorpdfstring{\bddsat}{bdd\_sat}}
+\input{options-bdd_sat.tex}
+
+\subsection{\texorpdfstring{\opt{label\_order\_goal\_chains}}{label\_order\_goal\_chains}}
+\input{options-label_order_goal_chains.tex}
+
+\subsection{Other label order finders}
+\opt{label\_order\_linear}, \opt{label\_order\_reverse}, \opt{label\_order\_random},
+\opt{label\_order\_causal} and \opt{label\_order\_relaxed} have no options.
+\paragraph{\opt{label\_order\_file}}
+\input{options-label_order_file.tex}
+\paragraph{\opt{label\_order\_tsort}}
+\input{options-label_order_tsort.tex}
+
+\subsection{Search engines}
+\paragraph{\opt{sat}}
+\input{options-sat.tex}
+\paragraph{\opt{rintanen}}
+\input{options-rintanen.tex}
+
+\subsection{Length strategies}
+\paragraph{\opt{one\_by\_one}}
+\input{options-one_by_one.tex}
+\paragraph{\opt{by\_iteration}}
+\input{options-by_iteration.tex}
+\paragraph{\opt{by\_increment}}
+\input{options-by_increment.tex}
+\paragraph{\opt{length\_list}}
+\input{options-length_list.tex}
+
+\end{document}
