@@ -25,6 +25,8 @@ extern "C"{
 	void ipasir_terminate (void * solver);
 	int fts_kissat_statistics (void * solver, uint64_t * conflicts, uint64_t * decisions,
 		uint64_t * propagations);
+	int fts_kissat_variables (void * solver, uint64_t * vars, uint64_t * active,
+		uint64_t * eliminated, uint64_t * fixed);
 }
 
 namespace sat_search {
@@ -164,6 +166,10 @@ SearchStatus SATSearch::step() {
 	if (fts_kissat_statistics(solver, &conflicts, &decisions, &propagations))
 		solver_stats = " conflicts " + to_string(conflicts) + " decisions " + to_string(decisions)
 			+ " propagations " + to_string(propagations);
+	uint64_t svars = 0, sactive = 0, seliminated = 0, sfixed = 0;
+	if (fts_kissat_variables(solver, &svars, &sactive, &seliminated, &sfixed))
+		solver_stats += " solver_vars " + to_string(svars) + " active " + to_string(sactive)
+			+ " eliminated " + to_string(seliminated) + " fixed " + to_string(sfixed);
 
 	if (solverState == 10){
 		// run plan extraction

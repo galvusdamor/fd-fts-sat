@@ -25,3 +25,24 @@ int fts_kissat_statistics (void *solver, uint64_t *conflicts, uint64_t *decision
     kissat_print_statistics (k);
   return 1;
 }
+
+
+/* Variables after a SAT call: kissat's internal count, the active ones (not
+   eliminated, not fixed), and the eliminated and fixed ones (per-variable flags;
+   the "eliminated" statistic itself is not compiled into this kissat). */
+int fts_kissat_variables (void *solver, uint64_t *vars, uint64_t *active,
+                          uint64_t *eliminated, uint64_t *fixed)
+{
+  kissat *k = (kissat *) solver;
+  *vars = k->vars;
+  *active = k->active;
+  uint64_t e = 0, f = 0;
+  for (unsigned idx = 0; idx < k->vars; idx++)
+    {
+      e += k->flags[idx].eliminated;
+      f += k->flags[idx].fixed;
+    }
+  *eliminated = e;
+  *fixed = f;
+  return 1;
+}

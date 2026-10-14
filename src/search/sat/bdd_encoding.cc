@@ -2255,6 +2255,11 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 	const BDDEncodingData::Ordering & ord = data->ordering_at(fromTime);
 
 	const vector<int> noFactorVars;
+	// added-clause statistics, printed for the first time step of each SAT call
+	const bool stats = fromTime == 1;
+	const int clauses_before_bdds = sat->get_number_of_clauses();
+	long st_units = 0, st_units_lits = 0, st_frame = 0, st_frame_lits = 0, st_frame_max = 0,
+		st_order = 0, st_order_lits = 0, st_impl = 0, st_impl_lits = 0;
 	for(int fac = 0 ; fac < fts->get_size() ; fac++){
 		// the Tseitin variables are only shared within one factor
 		tseitsinVars.clear();
@@ -2304,6 +2309,7 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 		}
 	}
 	tseitsinVars.clear();
+	const int base_clauses = sat->get_number_of_clauses() - clauses_before_bdds;
 
 	// state clauses: source/target/pair/cross units, leave/enter clauses
 	if (!data->state_units.empty() || !data->move_infos.empty()) {
@@ -2318,6 +2324,7 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 				for (int k = 0; k < u.nc; k++) v.push_back(cond(u.c[k]));
 				v.push_back(-lab(u.lit));
 				sat->notAll(v);
+				st_units++; st_units_lits += v.size();
 			}
 		if (!data->move_infos.empty())
 			for (const auto & m : data->move_infos[o]) {
@@ -2328,6 +2335,7 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 					v = {here, -there};
 					for (int l : m.movers) v.push_back(-labelVars[l]);
 					sat->notAll(v);
+					st_frame++; st_frame_lits += v.size(); st_frame_max = max<long>(st_frame_max, v.size());
 				}
 				if (data->moveClauseParts == 1) continue;
 				// P[j]: one of the first j movers fires
@@ -2343,6 +2351,9 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 					if (j == 0) sat->notAll(vector<int>{here, labelVars[l]});
 					else sat->notAll(vector<int>{here, labelVars[l], -P[j]});
 				}
+				st_order += maxj + m.blocked.size();
+				st_order_lits += (maxj > 0 ? 2 + 3 * (maxj - 1) : 0);
+				for (const auto & b : m.blocked) st_order_lits += b.second == 0 ? 2 : 3;
 			}
 	}
 
@@ -2354,6 +2365,7 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 			negs.clear();
 			for (int l : c) negs.push_back(l > 0 ? -labelVars[l - 1] : labelVars[-l - 1]);
 			sat->notAll(negs);
+			st_impl++; st_impl_lits += negs.size();
 		}
 		if (!data->implied_bicliques.empty())
 			for (const auto & bc : data->implied_bicliques[o]) {
@@ -2366,8 +2378,15 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 			negs = {previousStateVars[cc.factor][cc.source]};
 			for (int l : cc.lits) negs.push_back(l > 0 ? -labelVars[l - 1] : labelVars[-l - 1]);
 			sat->notAll(negs);
+			st_impl++; st_impl_lits += negs.size();
 		}
 	}
+	if (stats)
+		cout << "BDDSTAT added_clauses base " << base_clauses
+			 << " units " << st_units << " units_lits " << st_units_lits
+			 << " frame " << st_frame << " frame_lits " << st_frame_lits << " frame_max_len " << st_frame_max
+			 << " order " << st_order << " order_lits " << st_order_lits
+			 << " implications " << st_impl << " implications_lits " << st_impl_lits << endl;
 }
 
 
