@@ -1453,19 +1453,48 @@ bool BDDSATEncodingFactory::mutexes_from_sas() {
 		reach[j][i >> 6] |= uint64_t(1) << (i & 63);
 	};
 	for (int i = 0; i < N; i++) set(i, i);
+	/*
+	  The preimage of an abstract state is the set of values mapped onto it plus the values
+	  the transformation pruned: an abstract plan may sit in any abstract state of a factor
+	  while the concrete factor passes through a pruned value (e.g. childsnack: factor
+	  "location of sandw2" stays in {notexist} while the sandwich concretely is ontray, a
+	  pruned value). An abstract pair is mutex iff all pairs of its preimages are mutex.
+	*/
+	vector<vector<vector<int>>> pre(F);
+	for (int f = 0; f < F; f++) {
+		const int n = fts->get_ts(f).get_size();
+		pre[f].assign(n, {});
+		vector<int> pruned;
+		for (int x = 0; x < (int)table[f].size(); x++) {
+			if (table[f][x] < 0) pruned.push_back(x);
+			else pre[f][table[f][x]].push_back(x);
+		}
+		for (int a = 0; a < n; a++) pre[f][a].insert(pre[f][a].end(), pruned.begin(), pruned.end());
+	}
 	for (int f = 0; f < F; f++)
 		for (int g = f + 1; g < F; g++)
-			for (int x = 0; x < (int)table[f].size(); x++) {
-				const int a = table[f][x];
-				if (a < 0) continue;
-				for (int y = 0; y < (int)table[g].size(); y++) {
-					const int b = table[g][y];
-					if (b < 0) continue;
-					if (!sas->are_facts_mutex(task_representation::FactPair(varOf[f], x),
-					                          task_representation::FactPair(varOf[g], y)))
-						set(factOffset[f] + a, factOffset[g] + b);
+			for (int a = 0; a < fts->get_ts(f).get_size(); a++)
+				for (int b = 0; b < fts->get_ts(g).get_size(); b++) {
+					// no preimage at all: no evidence, claim nothing
+					bool mutex = !pre[f][a].empty() && !pre[g][b].empty();
+					for (int x : pre[f][a]) {
+						if (!mutex) break;
+						for (int y : pre[g][b])
+							if (!sas->are_facts_mutex(task_representation::FactPair(varOf[f], x),
+							                          task_representation::FactPair(varOf[g], y))) { mutex = false; break; }
+						if (!mutex) break;
+					}
+					if (!mutex) set(factOffset[f] + a, factOffset[g] + b);
 				}
-			}
+	// FTS_MAPPING_DUMP=file: per factor its SAS variable and value -> state table (diagnostics)
+	if (const char * dump = getenv("FTS_MAPPING_DUMP")) {
+		ofstream out(dump);
+		for (int f = 0; f < F; f++) {
+			out << f << " " << varOf[f];
+			for (int a : table[f]) out << " " << a;
+			out << "\n";
+		}
+	}
 	// safeguard: the initial states of all factors hold together, so a mutex between two of
 	// them means the mapping is wrong -- then no mutexes are used at all
 	long bad = 0;
@@ -3037,6 +3066,15 @@ BDDSATEncoding::extractSolution(int initTime, std::vector<std::pair<int,int>> ti
 			labels.push_back(l);
 	}
 
+	// FTS_PLAN_STATES_DUMP=file: the abstract states of the plan (diagnostics)
+	if (const char * dump = getenv("FTS_PLAN_STATES_DUMP")) {
+		ofstream out(dump);
+		for (size_t s = 0; s < statesPerTimestep.size(); s++) {
+			out << (s < labels.size() + 1 && s > 0 ? labels[s - 1] : -1);
+			for (int v : statesPerTimestep[s]) out << " " << v;
+			out << "\n";
+		}
+	}
 	vector<int> GS = statesPerTimestep.back();
 	PlanState goalState = PlanState(std::move(GS));
 	vector<PlanState> states;
