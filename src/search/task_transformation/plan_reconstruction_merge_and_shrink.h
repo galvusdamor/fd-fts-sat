@@ -30,6 +30,10 @@ class PlanReconstructionMergeAndShrink : public PlanReconstruction {
     // the plan was found.
     std::shared_ptr<LabelMap> label_map;
 
+    // merge_and_shrink_representations[i] describes the factor factor_of_representation[i]
+    // of the transformed task, or a factor the transformation dropped (-1)
+    std::vector<int> factor_of_representation;
+
 
     // This is the set of tau_labels, that we can use.
     //std::vector<int> tau_labels;
@@ -48,11 +52,20 @@ public:
     PlanReconstructionMergeAndShrink(
         const std::shared_ptr<task_representation::FTSTask> &predecessor_task,
         std::vector<std::unique_ptr<MergeAndShrinkRepresentation>> &&merge_and_shrink_representations,
-        std::shared_ptr<LabelMap> label_map);
+        std::shared_ptr<LabelMap> label_map,
+        std::vector<int> factor_of_representation = {});
     virtual ~PlanReconstructionMergeAndShrink() = default;
     virtual void reconstruct_plan(Plan &plan) const override;
 
     virtual void print(std::ostream& o) const override;
+
+    // per factor of the transformed task: the mapping from the predecessor task's states
+    const std::vector<std::unique_ptr<MergeAndShrinkRepresentation>> &get_representations() const {
+        return merge_and_shrink_representations;
+    }
+    const std::vector<int> &get_factor_of_representation() const {
+        return factor_of_representation;
+    }
 };
 }
 #endif

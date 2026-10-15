@@ -18,12 +18,14 @@ namespace task_transformation {
 PlanReconstructionMergeAndShrink::PlanReconstructionMergeAndShrink(
     const shared_ptr<task_representation::FTSTask> &predecessor_task,
     vector<unique_ptr<MergeAndShrinkRepresentation>> &&merge_and_shrink_representations,
-    shared_ptr<LabelMap> label_map)
+    shared_ptr<LabelMap> label_map,
+    vector<int> factor_of_representation)
     : predecessor_task(predecessor_task),
       state_registry(predecessor_task->get_search_task()),
       search_space(state_registry,OperatorCost::NORMAL), 
       merge_and_shrink_representations(move(merge_and_shrink_representations)),
-      label_map(move(label_map)) {
+      label_map(move(label_map)),
+      factor_of_representation(move(factor_of_representation)) {
 
     //predecessor_task->dump();
     // Diagnostics: FTS_DUMP_LABEL_MAP=<file> appends, per reconstruction step, the map from

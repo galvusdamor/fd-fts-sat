@@ -31,6 +31,10 @@ public:
         std::vector<std::shared_ptr<PlanReconstruction>> plan_reconstructions);
     virtual ~PlanReconstructionSequence() override = default;
 
+    const std::vector<std::shared_ptr<PlanReconstruction>> &get_reconstructions() const {
+        return plan_reconstructions;
+    }
+
     virtual void reconstruct_plan(Plan & plan) const override {
         for (const auto & pr : plan_reconstructions) {
             pr->reconstruct_plan(plan);

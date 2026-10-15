@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <memory>
 #include <set>
+#include <array>
 #include <vector>
 
 #include "label_encoding.h"
@@ -129,6 +130,10 @@ struct BDDEncodingData {
 	bool goalLastLabel = false;
 	// leave/enter clauses: 0 both parts, 1 frame clauses only, 2 order clauses only
 	int moveClauseParts = 0;
+	bool moveFrameSplit = false;
+	// state_mutexes: unreachable (factor, state) and mutex pairs (f1, s1, f2, s2)
+	std::vector<std::pair<int,int>> mutex_units;
+	std::vector<std::array<int,4>> mutex_pairs;
 	std::vector<char> goal_achieving;
 };
 
@@ -213,6 +218,7 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	// 2 RESTRICT (Cudd_bddRestrict with the constraint as care set; never larger)
 	const int cutMode;
 	const double cutLimitFactor;
+	const double cutTimeLimit;
 	const bool reportLabelConjunction;
 	const int cubeEncodingMax;
 	// label_implications: 0 NONE, 1 UNCONDITIONAL, 2 PER_SOURCE, 3 BOTH
@@ -226,6 +232,24 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const double stateClausesMinPhase;
 	const int moveClausesMax;
 	const int moveClauseParts;
+	const bool moveFrameSplit;
+	const bool mutexClauses, mutexCutting;
+	const std::string dumpFTSFile;
+	const int mutexSource;
+	const std::string mutexFile;
+	const int mutexMaxFacts, mutexClauseMax;
+	const double mutexTimeLimit, mutexCutTimeLimit, mutexCutLimitFactor;
+	// pairwise reachability of facts (factor states); empty if not computed / not converged
+	std::vector<int> factOffset;
+	std::vector<std::vector<uint64_t>> reach;
+	void compute_state_mutexes();
+	void dump_fts() const;
+	int init_facts();
+	bool mutexes_from_sas();
+	bool mutexes_from_file();
+	void mutexes_fts_fixpoint();
+	void finish_mutexes(const char * source, double seconds);
+	void mutex_cut(BDDEncodingData::Ordering & ord);
 	const bool goalLastLabel;
 	/// source/target/pair/cross units and leave/enter clauses (see BDDEncodingData)
 	void compute_state_clauses();

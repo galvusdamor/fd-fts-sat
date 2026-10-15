@@ -1,4 +1,5 @@
 #include <fstream>
+#include <sstream>
 #include <algorithm>
 #include <array>
 #include <climits>
@@ -20,6 +21,12 @@
 #include "../utils/logging.h"
 #include "../utils/system.h"
 #include "../utils/timer.h"
+#include "../globals.h"
+#include "../task_representation/fact.h"
+#include "../task_representation/sas_task.h"
+#include "../task_transformation/plan_reconstruction.h"
+#include "../task_transformation/plan_reconstruction_merge_and_shrink.h"
+#include "../task_transformation/merge_and_shrink_representation.h"
 
 #include "../options/option_parser.h"
 #include "../options/options.h"
@@ -80,6 +87,7 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	bddCutting(opts.get<bool>("cutbdds")),
 	cutMode(opts.get_enum("cut_mode")),
 	cutLimitFactor(opts.get<double>("cut_limit_factor")),
+	cutTimeLimit(opts.get<double>("cut_time_limit")),
 	reportLabelConjunction(opts.get<bool>("report_label_conjunction")),
 	cubeEncodingMax(opts.get<int>("cube_encoding_max")),
 	labelImplications(opts.get_enum("label_implications")),
@@ -97,6 +105,17 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	stateClausesMinPhase(opts.get<double>("state_clauses_min_phase")),
 	moveClausesMax(opts.get<int>("move_clauses_max")),
 	moveClauseParts(opts.get_enum("move_clause_parts")),
+	moveFrameSplit(opts.get<bool>("move_frame_split")),
+	mutexClauses(opts.get<bool>("state_mutexes")),
+	mutexCutting(opts.get<bool>("mutex_cutting")),
+	dumpFTSFile(opts.get<string>("dump_fts")),
+	mutexSource(opts.get_enum("mutex_source")),
+	mutexFile(opts.get<string>("mutex_file")),
+	mutexMaxFacts(opts.get<int>("mutex_max_facts")),
+	mutexClauseMax(opts.get<int>("mutex_clauses_max")),
+	mutexTimeLimit(opts.get<double>("mutex_time_limit")),
+	mutexCutTimeLimit(opts.get<double>("mutex_cut_time_limit")),
+	mutexCutLimitFactor(opts.get<double>("mutex_cut_limit_factor")),
 	goalLastLabel(opts.get<bool>("goal_last_label")),
 	labelConjunctionLimit(opts.get<int>("label_conjunction_limit")),
 	bddCovering(opts.get<bool>("coverbdds")),
@@ -224,6 +243,8 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 		"even if it is larger (bounded growth); meant together with cut_min_overlap"};
 	parser.add_enum_option("cut_mode", cut_modes, "with cutbdds: how a constraint is applied",
 		"AND", cut_modes_doc);
+	parser.add_option<double>("cut_time_limit",
+		"cutbdds: stop cutting after this many seconds and keep what was cut so far; -1 = no limit", "-1");
 	parser.add_option<double>("cut_limit_factor", "with cut_mode=AND_LIMITED", "1");
 	parser.add_option<bool>(
 		"report_label_conjunction",
@@ -280,6 +301,36 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 		"only: a blocked label needs an earlier leaving (later entering) label, with prefix chains"};
 	parser.add_enum_option("move_clause_parts", move_parts,
 		"leave/enter clauses: which of the two parts to emit", "BOTH", move_parts_doc);
+	parser.add_option<bool>("state_mutexes",
+		"compute mutexes between states of different factors by an h^2-style pairwise reachability "
+		"fixpoint on the FTS and add them as clauses at every step (unreachable states as units)", "false");
+	parser.add_option<bool>("mutex_cutting",
+		"split BDDs: cut the BDD of (t, t') of every factor with the label sets another factor permits "
+		"from states compatible with t and into states compatible with t' (needs the mutexes; "
+		"computes them, without adding clauses unless state_mutexes)", "false");
+	vector<string> mutex_sources {"SAS", "FILE", "FTS_FIXPOINT"};
+	vector<string> mutex_sources_doc {
+		"mutexes of the finite-domain task (translator mutex groups, or h2 if preprocessed) "
+		"mapped through the transformation's state mapping",
+		"read from mutex_file: lines 'f s g t' (mutex) or 'f s' (unreachable state)",
+		"h^2-style pairwise reachability fixpoint on the transformed FTS"};
+	parser.add_enum_option("mutex_source", mutex_sources, "where state mutexes come from", "SAS", mutex_sources_doc);
+	parser.add_option<string>("dump_fts",
+		"write the (transformed) FTS to this file for external analyses: 'fts F L', per factor "
+		"'factor f n init goals...', then 't f label src target' for every transition of a label "
+		"the factor's BDDs mention; 'none' = off", "none");
+	parser.add_option<string>("mutex_file", "mutex_source=FILE: the file", "none");
+	parser.add_option<int>("mutex_max_facts",
+		"skip the mutex computation for more facts (factor states) than this", "20000");
+	parser.add_option<int>("mutex_clauses_max", "state_mutexes: at most this many pair clauses per step", "2000000");
+	parser.add_option<double>("mutex_time_limit",
+		"seconds for the mutex fixpoint; if it does not converge, no mutexes are used", "30");
+	parser.add_option<double>("mutex_cut_time_limit", "seconds for mutex cutting (what is cut is kept)", "30");
+	parser.add_option<double>("mutex_cut_limit_factor",
+		"mutex cutting keeps a result only up to this factor times the original BDD size", "1");
+	parser.add_option<bool>("move_frame_split",
+		"leave/enter clauses: encode the long frame clause 'state changed -> one of the movers fired' "
+		"as a chain of ternary clauses over auxiliary variables instead of one clause", "false");
 	parser.add_option<int>("move_clauses_max",
 		"leave/enter clauses: at most this many (state, blocked label) entries; -1 = all", "1000000");
 	parser.add_option<bool>("goal_last_label",
@@ -520,6 +571,13 @@ BDD BDDSATEncodingFactory::any_transition(const BDDEncodingData::Ordering & ord,
 void BDDSATEncodingFactory::cut_bdds_to_fixpoint(BDDEncodingData::Ordering & ord){
 	const int F = fts->get_size();
 	utils::Timer total;
+	// cut_time_limit: stop and keep what was cut so far (every cut only removes label sets
+	// some factor cannot perform, so a partial result is as sound as a complete one)
+	bool cut_stopped = false;
+	auto out_of_cut_time = [&]() {
+		if (cutTimeLimit >= 0 && total() > cutTimeLimit) cut_stopped = true;
+		return cut_stopped;
+	};
 	double t_any = 0, t_project = 0, t_apply = 0;
 	long projections = 0, applications = 0, changed_bdds = 0, aborted = 0, kept_larger = 0;
 	const long nodes_before = encoded_nodes_sum(ord);
@@ -581,6 +639,8 @@ void BDDSATEncodingFactory::cut_bdds_to_fixpoint(BDDEncodingData::Ordering & ord
 		int fitted = 0;
 		for (int f = 0; f < F; f++){
 			prefix[f] = G;
+			// out of time: G over the factors so far (weaker, still sound)
+			if (out_of_cut_time()) { for (int g = f; g <= F; g++) prefix[g] = G; break; }
 			const BDD any = any_transition(ord, f);
 			try {
 				G = G.And(any, (unsigned int)labelConjunctionLimit);
@@ -594,7 +654,7 @@ void BDDSATEncodingFactory::cut_bdds_to_fixpoint(BDDEncodingData::Ordering & ord
 		if (fitted == F) prefix[F] = G;
 		t_any = tg();
 		const long g_nodes = G.nodeCount();
-		for (int facT = 0; facT < F; facT++){
+		for (int facT = 0; facT < F && !out_of_cut_time(); facT++){
 			utils::Timer tp;
 			const BDD & source = (mode == 2) ? prefix[facT] : G;
 			BDD cube = _manager->bddOne();
@@ -621,6 +681,7 @@ void BDDSATEncodingFactory::cut_bdds_to_fixpoint(BDDEncodingData::Ordering & ord
 			 << " changed_bdds " << changed_bdds << " aborted " << aborted << " kept_larger " << kept_larger
 			 << " nodes_before " << nodes_before << " nodes_after " << encoded_nodes_sum(ord)
 			 << " time_any " << t_any << " time_project " << t_project << " time_apply " << t_apply
+			 << (cut_stopped ? " stopped time" : "")
 			 << " time_total " << total() << endl;
 		return;
 	}
@@ -636,10 +697,11 @@ void BDDSATEncodingFactory::cut_bdds_to_fixpoint(BDDEncodingData::Ordering & ord
 		for (int fac = 0; fac < F; fac++) if (dirty[fac]) any[fac] = any_transition(ord, fac);
 		t_any += t(); t.reset();
 		vector<char> next_dirty(F, 0);
-		for (int facS = 0; facS < F; facS++){
+		for (int facS = 0; facS < F && !cut_stopped; facS++){
 			if (!dirty[facS]) continue;
 			for (int facT = 0; facT < F; facT++){
 				if (facS == facT) continue;
+				if (out_of_cut_time()) break;
 				// RESTRICT uses the constraint as a care set: T may then be arbitrary
 				// outside it. That is only sound if the constraint is implied by an
 				// *unrestricted* BDD, so care sets flow along the factor order only (by
@@ -676,13 +738,14 @@ void BDDSATEncodingFactory::cut_bdds_to_fixpoint(BDDEncodingData::Ordering & ord
 		}
 		dirty.swap(next_dirty);
 		// RESTRICT is not a propagation and need not converge: one pass only
-		if (cutMode == 2) break;
+		if (cutMode == 2 || cut_stopped) break;
 	}
 	cout << "BDDSTAT cut mode " << cutMode << " rounds " << round
 		 << " projections " << projections << " applications " << applications
 		 << " changed_bdds " << changed_bdds << " aborted " << aborted << " kept_larger " << kept_larger
 		 << " nodes_before " << nodes_before << " nodes_after " << encoded_nodes_sum(ord)
 		 << " time_any " << t_any << " time_project " << t_project << " time_apply " << t_apply
+		 << (cut_stopped ? " stopped time" : "")
 		 << " time_total " << total() << endl;
 }
 
@@ -1124,6 +1187,443 @@ void BDDSATEncodingFactory::compute_state_clauses() {
 		 << " time_moves " << phase_time[MOVES] << " time_units " << phase_time[UNITS]
 		 << " time_pairs " << phase_time[PAIRS] << " time_cross " << phase_time[CROSS]
 		 << " time " << t() << endl;
+}
+
+
+/*
+  State mutexes between factors by an h^2-style pairwise reachability fixpoint on the
+  (transformed) FTS. Facts are (factor, state); R over-approximates the pairs of facts that
+  can hold together in a reachable state: it starts with the pairs of initial states, and a
+  label l adds the pairs of its transitions' targets (for two factors it is relevant to,
+  or one and a factor it does not touch) from pairs of their sources, provided every other
+  factor l is relevant to has an l-source state compatible with both. Pairs outside R are
+  mutex, facts outside R unreachable. A fixpoint that did not converge within the budget
+  is discarded (an unfinished R would under-approximate and claim false mutexes).
+*/
+void BDDSATEncodingFactory::mutexes_fts_fixpoint() {
+	utils::Timer t;
+	const int F = fts->get_size();
+	const int L = fts->get_num_labels();
+	const int N = init_facts();
+	if (N < 0) {
+		cout << "BDDSTAT state_mutexes skipped: too many facts" << endl;
+		return;
+	}
+	vector<int> factOf(N);
+	for (int f = 0; f < F; f++) for (int i = factOffset[f]; i < factOffset[f + 1]; i++) factOf[i] = f;
+	const int W = (N + 63) / 64;
+	auto get = [&](int i, int j) { return (reach[i][j >> 6] >> (j & 63)) & 1; };
+	bool changed = false;
+	auto add = [&](int i, int j) {
+		if (get(i, j)) return;
+		reach[i][j >> 6] |= uint64_t(1) << (j & 63);
+		reach[j][i >> 6] |= uint64_t(1) << (i & 63);
+		changed = true;
+	};
+	for (int f = 0; f < F; f++)
+		for (int g = 0; g < F; g++)
+			add(factOffset[f] + fts->get_ts(f).get_init_state(), factOffset[g] + fts->get_ts(g).get_init_state());
+
+	// per label: relevant factors, their transitions (fact ids) and source masks
+	struct LabelInfo { vector<int> rel; vector<vector<pair<int,int>>> trans; vector<vector<uint64_t>> pre; };
+	vector<LabelInfo> info(L);
+	for (int l = 0; l < L; l++) {
+		for (int f = 0; f < F; f++) {
+			const TransitionSystem & ts = fts->get_ts(f);
+			const LabelID id(l);
+			if (!ts.is_relevant_label(id) && ts.is_selfloop_everywhere(id)) continue;
+			info[l].rel.push_back(f);
+			vector<pair<int,int>> tr;
+			vector<uint64_t> pre(W, 0);
+			for (const auto & x : ts.get_transitions_with_label(l)) {
+				const int s = factOffset[f] + x.src, s2 = factOffset[f] + x.target;
+				tr.emplace_back(s, s2);
+				pre[s >> 6] |= uint64_t(1) << (s & 63);
+			}
+			info[l].trans.push_back(std::move(tr));
+			info[l].pre.push_back(std::move(pre));
+		}
+	}
+	vector<char> relMark(F, 0);
+	int passes = 0;
+	bool timeout = false;
+	do {
+		changed = false;
+		passes++;
+		for (int l = 0; l < L && !timeout; l++) {
+			const LabelInfo & li = info[l];
+			const int k = li.rel.size();
+			if (k == 0) continue;
+			for (int f : li.rel) relMark[f] = 1;
+			// every relevant factor other than fx, fy has an l-source compatible with x and y
+			auto consistent = [&](int x, int y, int ix, int iy) {
+				for (int h = 0; h < k; h++) {
+					if (h == ix || h == iy) continue;
+					const auto & p = li.pre[h];
+					bool any = false;
+					for (int w = 0; w < W && !any; w++) any = (reach[x][w] & reach[y][w] & p[w]) != 0;
+					if (!any) return false;
+				}
+				return true;
+			};
+			for (int a = 0; a < k; a++) {
+				for (const auto & [s, s2] : li.trans[a]) {
+					if (!get(s, s)) continue;
+					if (!consistent(s, s, a, -1)) continue;
+					add(s2, s2);
+					for (int b = a + 1; b < k; b++)
+						for (const auto & [u, u2] : li.trans[b])
+							if (get(s, u) && consistent(s, u, a, b)) add(s2, u2);
+					// facts of factors l does not touch keep their state
+					for (int w = 0; w < W; w++) {
+						uint64_t bits = reach[s][w];
+						while (bits) {
+							const int j = (w << 6) + __builtin_ctzll(bits);
+							bits &= bits - 1;
+							if (relMark[factOf[j]]) continue;
+							if (consistent(s, j, a, -1)) add(s2, j);
+						}
+					}
+				}
+			}
+			for (int f : li.rel) relMark[f] = 0;
+			if (mutexTimeLimit >= 0 && t() > mutexTimeLimit) timeout = true;
+		}
+	} while (changed && !timeout);
+	if (timeout) {
+		reach.clear();
+		cout << "BDDSTAT state_mutexes stopped time passes " << passes << " facts " << N << " time " << t() << endl;
+		return;
+	}
+	finish_mutexes(("fts_fixpoint passes " + to_string(passes)).c_str(), t());
+}
+
+
+
+void BDDSATEncodingFactory::dump_fts() const {
+	ofstream out(dumpFTSFile);
+	const int F = fts->get_size(), L = fts->get_num_labels();
+	out << "fts " << F << " " << L << "\n";
+	for (int f = 0; f < F; f++) {
+		const TransitionSystem & ts = fts->get_ts(f);
+		out << "factor " << f << " " << ts.get_size() << " " << ts.get_init_state();
+		for (int g : ts.get_goal_states()) out << " " << g;
+		out << "\n";
+	}
+	for (int f = 0; f < F; f++) {
+		const TransitionSystem & ts = fts->get_ts(f);
+		for (int l = 0; l < L; l++) {
+			const LabelID id(l);
+			if (!ts.is_relevant_label(id) && ts.is_selfloop_everywhere(id)) continue;
+			for (const auto & tr : ts.get_transitions_with_label(l))
+				out << "t " << f << " " << l << " " << tr.src << " " << tr.target << "\n";
+		}
+	}
+	cout << "BDDSTAT dump_fts " << dumpFTSFile << endl;
+}
+
+
+/// statistics and the mutex clauses (state_mutexes) from the pairwise compatibility in reach
+void BDDSATEncodingFactory::finish_mutexes(const char * source, double seconds) {
+	const int F = fts->get_size();
+	const int N = factOffset[F];
+	vector<int> factOf(N);
+	for (int f = 0; f < F; f++) for (int i = factOffset[f]; i < factOffset[f + 1]; i++) factOf[i] = f;
+	auto get = [&](int i, int j) { return (reach[i][j >> 6] >> (j & 63)) & 1; };
+	long unreachable = 0, mutex_pairs = 0;
+	data->mutex_units.clear(); data->mutex_pairs.clear();
+	for (int i = 0; i < N; i++)
+		if (!get(i, i)) { unreachable++; data->mutex_units.emplace_back(factOf[i], i - factOffset[factOf[i]]); }
+	bool capped = false;
+	for (int i = 0; i < N; i++) {
+		if (!get(i, i)) continue;
+		for (int j = factOffset[factOf[i] + 1]; j < N; j++) {
+			if (!get(j, j) || get(i, j)) continue;
+			mutex_pairs++;
+			if (mutexClauses && (mutexClauseMax < 0 || (long)data->mutex_pairs.size() < mutexClauseMax))
+				data->mutex_pairs.push_back({factOf[i], i - factOffset[factOf[i]], factOf[j], j - factOffset[factOf[j]]});
+			else if (mutexClauses) capped = true;
+		}
+	}
+	// FTS_MUTEX_DUMP=file: write all mutex pairs and unreachable facts (for comparisons)
+	if (const char * dump = getenv("FTS_MUTEX_DUMP")) {
+		ofstream out(dump);
+		for (int i = 0; i < N; i++) {
+			if (!get(i, i)) { out << factOf[i] << " " << i - factOffset[factOf[i]] << "\n"; continue; }
+			for (int j = factOffset[factOf[i] + 1]; j < N; j++)
+				if (get(j, j) && !get(i, j))
+					out << factOf[i] << " " << i - factOffset[factOf[i]] << " " << factOf[j] << " " << j - factOffset[factOf[j]] << "\n";
+		}
+	}
+	if (!mutexClauses) data->mutex_units.clear();
+	cout << "BDDSTAT state_mutexes source " << source << " facts " << N << " unreachable_facts " << unreachable
+		 << " mutex_pairs " << mutex_pairs << " clauses " << data->mutex_pairs.size() + data->mutex_units.size()
+		 << (capped ? " capped" : "") << " time " << seconds << endl;
+}
+
+
+/// facts (factor states): offsets, and reach sized N x W, false everywhere
+int BDDSATEncodingFactory::init_facts() {
+	const int F = fts->get_size();
+	factOffset.assign(F + 1, 0);
+	for (int f = 0; f < F; f++) factOffset[f + 1] = factOffset[f] + fts->get_ts(f).get_size();
+	const int N = factOffset[F];
+	if (N > mutexMaxFacts) return -1;
+	reach.assign(N, vector<uint64_t>((N + 63) / 64, 0));
+	return N;
+}
+
+
+/*
+  Mutexes of the finite-domain task -- the translator's mutex groups, or the h2
+  preprocessor's if the task was preprocessed -- mapped onto the states of the transformed
+  FTS. Without merging, every factor is one SAS variable, and the merge-and-shrink
+  representation kept for plan reconstruction maps its values to abstract states (pruned
+  values to PRUNED_STATE). Two abstract states are mutex iff every pair of values mapped to
+  them is mutex. Without a merge-and-shrink transformation the mapping is the identity.
+*/
+bool BDDSATEncodingFactory::mutexes_from_sas() {
+	utils::Timer t;
+	const int F = fts->get_size();
+	const int N = init_facts();
+	if (N < 0) { cout << "BDDSTAT state_mutexes skipped: too many facts" << endl; return false; }
+	auto sas = g_sas_task();
+	// the merge-and-shrink stages of the transformation, in order
+	vector<const task_transformation::PlanReconstructionMergeAndShrink *> stages;
+	function<void(const shared_ptr<task_transformation::PlanReconstruction> &)> find =
+		[&](const shared_ptr<task_transformation::PlanReconstruction> & pr) {
+			if (!pr) return;
+			if (auto m = dynamic_cast<const task_transformation::PlanReconstructionMergeAndShrink *>(pr.get()))
+				stages.push_back(m);
+			else if (auto q = dynamic_cast<const task_transformation::PlanReconstructionSequence *>(pr.get()))
+				for (const auto & sub : q->get_reconstructions()) find(sub);
+		};
+	find(g_plan_reconstruction);
+	// compose the stages: per current factor, the SAS variable and the map value -> state.
+	// Start with the atomic FTS (factor = variable, state = value); every stage maps the
+	// previous factors' states through leaves (no merging) to its own factors.
+	vector<int> varOf(sas->get_num_variables());
+	vector<vector<int>> table(sas->get_num_variables());
+	for (int v = 0; v < sas->get_num_variables(); v++) {
+		varOf[v] = v;
+		table[v].resize(sas->get_variable_domain_size(v));
+		for (int x = 0; x < (int)table[v].size(); x++) table[v][x] = x;
+	}
+	// the plan reconstruction lists the stages last transformation first
+	for (auto it = stages.rbegin(); it != stages.rend(); ++it) {
+		const auto & reps = (*it)->get_representations();
+		const auto & to_factor = (*it)->get_factor_of_representation();
+		if (to_factor.size() != reps.size()) {
+			cout << "BDDSTAT state_mutexes skipped: no factor mapping in the plan reconstruction" << endl;
+			return false;
+		}
+		int new_factors = 0;
+		for (int nf : to_factor) new_factors = max(new_factors, nf + 1);
+		vector<int> nvar(new_factors, -1);
+		vector<vector<int>> ntable(new_factors);
+		for (size_t r = 0; r < reps.size(); r++) {
+			const int f = to_factor[r];
+			if (f < 0) continue;   // dropped by this stage
+			auto leaf = dynamic_cast<const task_transformation::MergeAndShrinkRepresentationLeaf *>(reps[r].get());
+			if (!leaf) { cout << "BDDSTAT state_mutexes skipped: merged factors" << endl; return false; }
+			const int pf = leaf->get_var_id();   // factor of the previous stage
+			if (pf < 0 || pf >= (int)varOf.size()) {
+				cout << "BDDSTAT state_mutexes skipped: bad mapping" << endl;
+				return false;
+			}
+			const auto & lt = leaf->get_lookup_table();
+			nvar[f] = varOf[pf];
+			ntable[f].resize(table[pf].size());
+			for (size_t x = 0; x < table[pf].size(); x++) {
+				const int prev = table[pf][x];
+				ntable[f][x] = (prev < 0 || prev >= (int)lt.size()) ? -1 : lt[prev];
+			}
+		}
+		varOf.swap(nvar); table.swap(ntable);
+	}
+	if ((int)varOf.size() != F) {
+		cout << "BDDSTAT state_mutexes skipped: " << varOf.size() << " mapped factors for " << F << " factors" << endl;
+		return false;
+	}
+	for (int f = 0; f < F; f++)
+		for (int a : table[f])
+			if (a >= fts->get_ts(f).get_size()) { cout << "BDDSTAT state_mutexes skipped: state out of range" << endl; return false; }
+	auto set = [&](int i, int j) {
+		reach[i][j >> 6] |= uint64_t(1) << (j & 63);
+		reach[j][i >> 6] |= uint64_t(1) << (i & 63);
+	};
+	for (int i = 0; i < N; i++) set(i, i);
+	for (int f = 0; f < F; f++)
+		for (int g = f + 1; g < F; g++)
+			for (int x = 0; x < (int)table[f].size(); x++) {
+				const int a = table[f][x];
+				if (a < 0) continue;
+				for (int y = 0; y < (int)table[g].size(); y++) {
+					const int b = table[g][y];
+					if (b < 0) continue;
+					if (!sas->are_facts_mutex(task_representation::FactPair(varOf[f], x),
+					                          task_representation::FactPair(varOf[g], y)))
+						set(factOffset[f] + a, factOffset[g] + b);
+				}
+			}
+	// safeguard: the initial states of all factors hold together, so a mutex between two of
+	// them means the mapping is wrong -- then no mutexes are used at all
+	long bad = 0;
+	for (int f = 0; f < F && bad < 1; f++)
+		for (int g = f + 1; g < F; g++) {
+			const int i = factOffset[f] + fts->get_ts(f).get_init_state(), j = factOffset[g] + fts->get_ts(g).get_init_state();
+			if (!((reach[i][j >> 6] >> (j & 63)) & 1)) {
+				if (bad++ == 0)
+					cout << "BDDSTAT state_mutexes skipped: initial states mutex (factors " << f << " (var " << varOf[f]
+					     << ") and " << g << " (var " << varOf[g] << "), init states " << fts->get_ts(f).get_init_state()
+					     << ", " << fts->get_ts(g).get_init_state() << "): inconsistent mapping" << endl;
+				if (getenv("FTS_MUTEX_DEBUG")) {
+					for (int h : {f, g}) {
+						cout << "  factor " << h << " var " << varOf[h] << " sas_init " << sas->get_initial_state_data()[varOf[h]]
+						     << " fts_init " << fts->get_ts(h).get_init_state() << " table";
+						for (int x : table[h]) cout << " " << x;
+						cout << endl;
+					}
+					cout << "  stages " << stages.size() << endl;
+				}
+			}
+		}
+	if (bad) return false;
+	finish_mutexes("sas", t());
+	return true;
+}
+
+
+/*
+  Mutexes from a file (e.g. computed externally by operator counting), over the states of
+  the transformed FTS: lines "f s g t" (state s of factor f and state t of factor g are
+  mutex) or "f s" (state s of factor f is unreachable).
+*/
+bool BDDSATEncodingFactory::mutexes_from_file() {
+	utils::Timer t;
+	const int N = init_facts();
+	if (N < 0) return false;
+	for (auto & row : reach) std::fill(row.begin(), row.end(), ~uint64_t(0));
+	auto clear = [&](int i, int j) {
+		reach[i][j >> 6] &= ~(uint64_t(1) << (j & 63));
+		reach[j][i >> 6] &= ~(uint64_t(1) << (i & 63));
+	};
+	ifstream in(mutexFile);
+	if (!in) { cout << "BDDSTAT state_mutexes skipped: cannot read " << mutexFile << endl; return false; }
+	string line;
+	while (getline(in, line)) {
+		istringstream ls(line);
+		vector<int> v; int x;
+		while (ls >> x) v.push_back(x);
+		if (v.size() == 4) clear(factOffset[v[0]] + v[1], factOffset[v[2]] + v[3]);
+		else if (v.size() == 2) { const int i = factOffset[v[0]] + v[1]; for (int j = 0; j < N; j++) clear(i, j); }
+	}
+	finish_mutexes("file", t());
+	return true;
+}
+
+
+void BDDSATEncodingFactory::compute_state_mutexes() {
+	bool ok = true;
+	if (mutexSource == 0) ok = mutexes_from_sas();
+	else if (mutexSource == 1) ok = mutexes_from_file();
+	else mutexes_fts_fixpoint();
+	if (!ok) reach.clear();
+}
+
+/*
+  Mutex-aware cutting: the BDD of (t, t') of factor T is conjoined with what another factor
+  S permits when it is in a state compatible with t at the start and with t' at the end:
+  (OR_{s ~ t} U_S(s)) & (OR_{s' ~ t'} V_S(s')), projected onto T's labels, with U_S(s) the
+  label sets S permits from s and V_S(s') those leading into s'. This over-approximates
+  OR over compatible (s, s') of B_S(s, s'), so it is sound, and needs |T| unions per factor
+  pair instead of |T|^2 |S|^2 conjunctions. A pair (t, t') whose state is unreachable is cut
+  to false. Results larger than mutex_cut_limit_factor times the BDD are not kept.
+*/
+void BDDSATEncodingFactory::mutex_cut(BDDEncodingData::Ordering & ord) {
+	utils::Timer t;
+	if (reach.empty() || combineAllBDDsIntoOne) {
+		cout << "BDDSTAT mutex_cut skipped (no mutexes or combined BDDs)" << endl;
+		return;
+	}
+	const int F = fts->get_size();
+	const int L = fts->get_num_labels();
+	const BDD one = _manager->bddOne(), zero = _manager->bddZero();
+	auto get = [&](int i, int j) { return (reach[i][j >> 6] >> (j & 63)) & 1; };
+	vector<vector<int>> mentioned(F);
+	vector<vector<char>> keep(F, vector<char>(L, 0));
+	for (int f = 0; f < F; f++) {
+		const TransitionSystem & ts = fts->get_ts(f);
+		for (int l = 0; l < L; l++) {
+			const LabelID id(l);
+			if (ts.is_relevant_label(id) || !ts.is_selfloop_everywhere(id)) { mentioned[f].push_back(l); keep[f][l] = 1; }
+		}
+	}
+	vector<vector<BDD>> U(F), V(F);
+	for (int f = 0; f < F; f++) {
+		const int S = fts->get_ts(f).get_size();
+		const auto & B = ord.transition_BDDs_per_factor_per_state_pair[f];
+		U[f].assign(S, zero); V[f].assign(S, zero);
+		for (int s = 0; s < S; s++)
+			for (int ss = 0; ss < S; ss++) { U[f][s] += B[s][ss]; V[f][ss] += B[s][ss]; }
+	}
+	const long nodes_before = encoded_nodes_sum(ord);
+	long conj = 0, changed = 0, kept_out = 0, zeroed = 0, pairs = 0;
+	bool timeout = false;
+	for (int T = 0; T < F && !timeout; T++) {
+		const int ST = fts->get_ts(T).get_size();
+		auto & BT = ord.transition_BDDs_per_factor_per_state_pair[T];
+		// unreachable source or target state: the pair cannot occur
+		for (int tt = 0; tt < ST; tt++)
+			for (int tt2 = 0; tt2 < ST; tt2++)
+				if (BT[tt][tt2] != zero && (!get(factOffset[T] + tt, factOffset[T] + tt) ||
+				                           !get(factOffset[T] + tt2, factOffset[T] + tt2))) {
+					BT[tt][tt2] = zero; zeroed++;
+				}
+		for (int S = 0; S < F && !timeout; S++) {
+			if (S == T) continue;
+			BDD cube = one;
+			int shared = 0;
+			for (int l : mentioned[S]) {
+				if (keep[T][l]) shared++;
+				else cube *= _manager->bddVar(ord.labelToBDDVar[l]);
+			}
+			if (!shared) continue;
+			pairs++;
+			const int SS = fts->get_ts(S).get_size();
+			vector<BDD> CS(ST, zero), CT(ST, zero);
+			for (int tt = 0; tt < ST; tt++) {
+				const int ft = factOffset[T] + tt;
+				for (int s = 0; s < SS; s++)
+					if (get(ft, factOffset[S] + s)) { CS[tt] += U[S][s]; CT[tt] += V[S][s]; }
+				CS[tt] = CS[tt].ExistAbstract(cube);
+				CT[tt] = CT[tt].ExistAbstract(cube);
+			}
+			for (int tt = 0; tt < ST; tt++) {
+				for (int tt2 = 0; tt2 < ST; tt2++) {
+					BDD & b = BT[tt][tt2];
+					if (b == zero || (CS[tt] == one && CT[tt2] == one)) continue;
+					const unsigned size = b.nodeCount();
+					const unsigned limit = max(1u, (unsigned)(mutexCutLimitFactor * size));
+					conj++;
+					try {
+						BDD r = b.And(CS[tt], limit).And(CT[tt2], limit);
+						if (r != b) {
+							if ((unsigned)r.nodeCount() <= limit) { b = r; changed++; }
+							else kept_out++;
+						}
+					} catch (const BDDError &) {
+						Cudd_ClearErrorCode(_manager->getManager());
+						kept_out++;
+					}
+				}
+				if (mutexCutTimeLimit >= 0 && t() > mutexCutTimeLimit) { timeout = true; break; }
+			}
+		}
+	}
+	cout << "BDDSTAT mutex_cut factor_pairs " << pairs << " conjunctions " << conj << " changed " << changed
+		 << " over_limit " << kept_out << " zeroed_pairs " << zeroed << " nodes_before " << nodes_before
+		 << " nodes_after " << encoded_nodes_sum(ord) << (timeout ? " stopped time" : "") << " time " << t() << endl;
 }
 
 
@@ -1823,6 +2323,10 @@ void BDDSATEncodingFactory::initialize() {
 
 		if (bddCutting)
 			for (auto & o : data->orderings) cut_bdds_to_fixpoint(o);
+		if (dumpFTSFile != "none") dump_fts();
+		if (mutexClauses || mutexCutting) compute_state_mutexes();
+		if (mutexCutting)
+			for (auto & o : data->orderings) mutex_cut(o);
 
 		// Reordering is part of building the BDDs that get encoded, so it is
 		// charged to construction_time, and reported on its own as well.
@@ -1912,6 +2416,7 @@ void BDDSATEncodingFactory::initialize() {
 		compute_state_clauses();
 	data->goalLastLabel = goalLastLabel;
 	data->moveClauseParts = moveClauseParts;
+	data->moveFrameSplit = moveFrameSplit;
 	if (goalLastLabel) compute_goal_achieving();
 	data->varLevel.resize(data->bdd_num_vars);
 	for (int i = 0; i < data->bdd_num_vars; i++) data->varLevel[i] = _manager->ReadPerm(i);
@@ -2311,6 +2816,10 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 	tseitsinVars.clear();
 	const int base_clauses = sat->get_number_of_clauses() - clauses_before_bdds;
 
+	// state mutexes (unreachable states and mutex pairs) at the end of the step
+	for (const auto & [f, st] : data->mutex_units) sat->notAll(vector<int>{nextStateVars[f][st]});
+	for (const auto & m : data->mutex_pairs) sat->notAll(vector<int>{nextStateVars[m[0]][m[1]], nextStateVars[m[2]][m[3]]});
+
 	// state clauses: source/target/pair/cross units, leave/enter clauses
 	if (!data->state_units.empty() || !data->move_infos.empty()) {
 		const size_t o = (fromTime - 1) % data->orderings.size();
@@ -2331,11 +2840,21 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 				const int here = (m.enter ? nextStateVars : previousStateVars)[m.fac][m.state];
 				const int there = (m.enter ? previousStateVars : nextStateVars)[m.fac][m.state];
 				// the factor changed state: some mover fired
-				if (data->moveClauseParts != 2) {
+				if (data->moveClauseParts != 2 && (!data->moveFrameSplit || m.movers.size() <= 1)) {
 					v = {here, -there};
 					for (int l : m.movers) v.push_back(-labelVars[l]);
 					sat->notAll(v);
 					st_frame++; st_frame_lits += v.size(); st_frame_max = max<long>(st_frame_max, v.size());
+				} else if (data->moveClauseParts != 2) {
+					// here & -there -> q1; q_j -> mover_j | q_{j+1}; q_k -> mover_k
+					const size_t k = m.movers.size();
+					vector<int> q(k);
+					for (size_t j = 0; j < k; j++) q[j] = sat->new_variable();
+					sat->notAll(vector<int>{here, -there, -q[0]});
+					for (size_t j = 0; j + 1 < k; j++)
+						sat->notAll(vector<int>{q[j], -labelVars[m.movers[j]], -q[j + 1]});
+					sat->implies(q[k - 1], labelVars[m.movers[k - 1]]);
+					st_frame += k + 1; st_frame_lits += 3 * k + 1; st_frame_max = max<long>(st_frame_max, 3);
 				}
 				if (data->moveClauseParts == 1) continue;
 				// P[j]: one of the first j movers fires

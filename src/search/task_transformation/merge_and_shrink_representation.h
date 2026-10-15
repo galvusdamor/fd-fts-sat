@@ -51,6 +51,9 @@ public:
     virtual int get_value(const State &state) const override;
     virtual int get_value(const GlobalState &state) const override;
     virtual void dump() const override;
+
+    int get_var_id() const {return var_id;}
+    const std::vector<int> &get_lookup_table() const {return lookup_table;}
 };
 
 

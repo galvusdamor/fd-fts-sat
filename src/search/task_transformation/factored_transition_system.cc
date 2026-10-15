@@ -488,7 +488,8 @@ FTSMapping FactoredTransitionSystem::cleanup(const set<int> &exclude_transition_
     if (!lossy_mapping && predecessor_fts_task) {
         plan_reconstruction_steps.push_back(
                 make_shared<PlanReconstructionMergeAndShrink>(
-                        predecessor_fts_task, move(old_mas_representations), move(label_map)));
+                        predecessor_fts_task, move(old_mas_representations), move(label_map),
+                        transition_system_mapping));
     }
 
     return FTSMapping(move(transition_system_mapping), move(transition_system_all_mapping), move(label_mapping));
