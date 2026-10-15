@@ -45,6 +45,9 @@ namespace task_transformation {
             find_shortest_path (int source, const std::vector<bool> & target) const;
 
         bool path_exists (int source, const std::vector<bool> & target) const;
+
+        int get_num_states() const {return adjacency_matrix.size();}
+        const std::vector<TauTransition> &get_transitions(int s) const {return adjacency_matrix[s];}
         
         void apply_label_mapping(const LabelMapping & label_mapping); 
     };

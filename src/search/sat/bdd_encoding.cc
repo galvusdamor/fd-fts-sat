@@ -27,6 +27,8 @@
 #include "../task_transformation/plan_reconstruction.h"
 #include "../task_transformation/plan_reconstruction_merge_and_shrink.h"
 #include "../task_transformation/merge_and_shrink_representation.h"
+#include "../task_transformation/plan_reconstruction_tau_path.h"
+#include "../task_transformation/tau_graph.h"
 
 #include "../options/option_parser.h"
 #include "../options/options.h"
@@ -1388,112 +1390,158 @@ bool BDDSATEncodingFactory::mutexes_from_sas() {
 	const int N = init_facts();
 	if (N < 0) { cout << "BDDSTAT state_mutexes skipped: too many facts" << endl; return false; }
 	auto sas = g_sas_task();
-	// the merge-and-shrink stages of the transformation, in order
-	vector<const task_transformation::PlanReconstructionMergeAndShrink *> stages;
+	/*
+	  Walk the transformation's reconstruction steps in transformation order, keeping for
+	  every factor state the set of concrete values (of the factor's SAS variable) the
+	  concrete factor can be in while an abstract plan is in that state:
+	  * merge-and-shrink step: a new state collects the sets of the states mapped onto it
+	    (pruned states never occur: the reconstruction matches states exactly). Its
+	    representations cover the factors active before the step's cleanup; if a tau-path
+	    step follows (same cleanup), that numbering is kept, else the factors are renumbered.
+	  * tau-path step (weak bisimulation): during reconstruction the concrete factor follows
+	    tau-paths from its current state while the abstract plan still shows the old state,
+	    so abstract state b collects the sets of all predecessor states tau-reachable from
+	    the states mapped onto b.
+	*/
+	vector<const task_transformation::PlanReconstruction *> steps;
 	function<void(const shared_ptr<task_transformation::PlanReconstruction> &)> find =
 		[&](const shared_ptr<task_transformation::PlanReconstruction> & pr) {
 			if (!pr) return;
-			if (auto m = dynamic_cast<const task_transformation::PlanReconstructionMergeAndShrink *>(pr.get()))
-				stages.push_back(m);
-			else if (auto q = dynamic_cast<const task_transformation::PlanReconstructionSequence *>(pr.get()))
+			if (auto q = dynamic_cast<const task_transformation::PlanReconstructionSequence *>(pr.get()))
 				for (const auto & sub : q->get_reconstructions()) find(sub);
+			else steps.push_back(pr.get());
 		};
 	find(g_plan_reconstruction);
-	// compose the stages: per current factor, the SAS variable and the map value -> state.
-	// Start with the atomic FTS (factor = variable, state = value); every stage maps the
-	// previous factors' states through leaves (no merging) to its own factors.
+	// the sequence lists the last transformation first
+	std::reverse(steps.begin(), steps.end());
+
 	vector<int> varOf(sas->get_num_variables());
-	vector<vector<int>> table(sas->get_num_variables());
+	vector<vector<vector<int>>> sets(sas->get_num_variables());   // factor -> state -> values
 	for (int v = 0; v < sas->get_num_variables(); v++) {
 		varOf[v] = v;
-		table[v].resize(sas->get_variable_domain_size(v));
-		for (int x = 0; x < (int)table[v].size(); x++) table[v][x] = x;
+		sets[v].resize(sas->get_variable_domain_size(v));
+		for (int x = 0; x < (int)sets[v].size(); x++) sets[v][x] = {x};
 	}
-	// the plan reconstruction lists the stages last transformation first
-	for (auto it = stages.rbegin(); it != stages.rend(); ++it) {
-		const auto & reps = (*it)->get_representations();
-		const auto & to_factor = (*it)->get_factor_of_representation();
-		if (to_factor.size() != reps.size()) {
-			cout << "BDDSTAT state_mutexes skipped: no factor mapping in the plan reconstruction" << endl;
-			return false;
-		}
-		int new_factors = 0;
-		for (int nf : to_factor) new_factors = max(new_factors, nf + 1);
-		vector<int> nvar(new_factors, -1);
-		vector<vector<int>> ntable(new_factors);
-		for (size_t r = 0; r < reps.size(); r++) {
-			const int f = to_factor[r];
-			if (f < 0) continue;   // dropped by this stage
-			auto leaf = dynamic_cast<const task_transformation::MergeAndShrinkRepresentationLeaf *>(reps[r].get());
-			if (!leaf) { cout << "BDDSTAT state_mutexes skipped: merged factors" << endl; return false; }
-			const int pf = leaf->get_var_id();   // factor of the previous stage
-			if (pf < 0 || pf >= (int)varOf.size()) {
-				cout << "BDDSTAT state_mutexes skipped: bad mapping" << endl;
-				return false;
-			}
-			const auto & lt = leaf->get_lookup_table();
-			nvar[f] = varOf[pf];
-			ntable[f].resize(table[pf].size());
-			for (size_t x = 0; x < table[pf].size(); x++) {
-				const int prev = table[pf][x];
-				ntable[f][x] = (prev < 0 || prev >= (int)lt.size()) ? -1 : lt[prev];
-			}
-		}
-		varOf.swap(nvar); table.swap(ntable);
-	}
-	if ((int)varOf.size() != F) {
-		cout << "BDDSTAT state_mutexes skipped: " << varOf.size() << " mapped factors for " << F << " factors" << endl;
+	auto fail = [&](const string & why) {
+		cout << "BDDSTAT state_mutexes skipped: " << why << endl;
 		return false;
+	};
+	int ms_steps = 0, tau_steps = 0;
+	for (size_t k = 0; k < steps.size(); k++) {
+		if (auto ms = dynamic_cast<const task_transformation::PlanReconstructionMergeAndShrink *>(steps[k])) {
+			ms_steps++;
+			const auto & reps = ms->get_representations();
+			const auto & to_factor = ms->get_factor_of_representation();
+			if (to_factor.size() != reps.size()) return fail("no factor mapping in the plan reconstruction");
+			vector<int> ovar(reps.size(), -1);
+			vector<vector<vector<int>>> osets(reps.size());
+			for (size_t r = 0; r < reps.size(); r++) {
+				auto leaf = dynamic_cast<const task_transformation::MergeAndShrinkRepresentationLeaf *>(reps[r].get());
+				if (!leaf) return fail("merged factors");
+				const int pf = leaf->get_var_id();
+				if (pf < 0 || pf >= (int)sets.size()) return fail("bad mapping");
+				const auto & lt = leaf->get_lookup_table();
+				if (lt.size() != sets[pf].size()) return fail("lookup table size");
+				int n = 0;
+				for (int a : lt) n = max(n, a + 1);
+				ovar[r] = varOf[pf];
+				osets[r].assign(n, {});
+				for (size_t q = 0; q < lt.size(); q++)
+					if (lt[q] >= 0) osets[r][lt[q]].insert(osets[r][lt[q]].end(), sets[pf][q].begin(), sets[pf][q].end());
+			}
+			const bool tau_next = k + 1 < steps.size() &&
+				dynamic_cast<const task_transformation::PlanReconstructionTauPath *>(steps[k + 1]);
+			if (tau_next) { varOf.swap(ovar); sets.swap(osets); continue; }
+			int nf = 0;
+			for (int f : to_factor) nf = max(nf, f + 1);
+			vector<int> nvar(nf, -1);
+			vector<vector<vector<int>>> nsets(nf);
+			for (size_t r = 0; r < reps.size(); r++)
+				if (to_factor[r] >= 0) { nvar[to_factor[r]] = ovar[r]; nsets[to_factor[r]] = std::move(osets[r]); }
+			varOf.swap(nvar); sets.swap(nsets);
+		} else if (auto tp = dynamic_cast<const task_transformation::PlanReconstructionTauPath *>(steps[k])) {
+			tau_steps++;
+			const auto & tm = tp->get_transition_system_mapping();
+			if (tm.size() != sets.size()) return fail("tau step factor count");
+			int nf = 0;
+			for (int f : tm) nf = max(nf, f + 1);
+			vector<int> nvar(nf, -1);
+			vector<vector<vector<int>>> nsets(nf);
+			vector<const task_transformation::TauShrinking *> shrink_of(sets.size(), nullptr);
+			for (const auto & ts : tp->get_tau_transformations()) {
+				const int i = ts->get_ts_index_predecessor();
+				if (i < 0 || i >= (int)sets.size()) return fail("tau step index");
+				shrink_of[i] = ts.get();
+			}
+			for (size_t i = 0; i < sets.size(); i++) {
+				const auto * ts = shrink_of[i];
+				if (!ts) {
+					if (tm[i] >= 0) { nvar[tm[i]] = varOf[i]; nsets[tm[i]] = std::move(sets[i]); }
+					continue;
+				}
+				const int succ = ts->get_ts_index_successor();
+				if (succ < 0) continue;   // shrunk to a single state and dropped
+				const auto & abs = ts->get_abstraction();
+				const auto & tg = ts->get_tau_graph();
+				if ((int)abs.size() != (int)sets[i].size() || tg.get_num_states() != (int)abs.size())
+					return fail("tau step state count");
+				int nb = 0;
+				for (int b : abs) nb = max(nb, b + 1);
+				nvar[succ] = varOf[i];
+				nsets[succ].assign(nb, {});
+				for (int b = 0; b < nb; b++) {
+					// tau-closure of the states mapped onto b
+					vector<char> seen(abs.size(), 0);
+					vector<int> stack;
+					for (size_t x = 0; x < abs.size(); x++) if (abs[x] == b) { seen[x] = 1; stack.push_back(x); }
+					while (!stack.empty()) {
+						const int x = stack.back(); stack.pop_back();
+						nsets[succ][b].insert(nsets[succ][b].end(), sets[i][x].begin(), sets[i][x].end());
+						for (const auto & tr : tg.get_transitions(x))
+							if (!seen[tr.target]) { seen[tr.target] = 1; stack.push_back(tr.target); }
+					}
+				}
+			}
+			varOf.swap(nvar); sets.swap(nsets);
+		} else {
+			return fail("unknown reconstruction step");
+		}
 	}
-	for (int f = 0; f < F; f++)
-		for (int a : table[f])
-			if (a >= fts->get_ts(f).get_size()) { cout << "BDDSTAT state_mutexes skipped: state out of range" << endl; return false; }
+	if ((int)sets.size() != F) return fail(to_string(sets.size()) + " mapped factors for " + to_string(F) + " factors");
+	for (int f = 0; f < F; f++) {
+		if ((int)sets[f].size() != fts->get_ts(f).get_size() || varOf[f] < 0)
+			return fail("factor " + to_string(f) + " state count");
+		for (auto & st : sets[f]) { sort(st.begin(), st.end()); st.erase(unique(st.begin(), st.end()), st.end()); }
+	}
+	cout << "BDDSTAT state_mutexes mapping ms_steps " << ms_steps << " tau_steps " << tau_steps << endl;
 	auto set = [&](int i, int j) {
 		reach[i][j >> 6] |= uint64_t(1) << (j & 63);
 		reach[j][i >> 6] |= uint64_t(1) << (i & 63);
 	};
 	for (int i = 0; i < N; i++) set(i, i);
-	/*
-	  The preimage of an abstract state is the set of values mapped onto it plus the values
-	  the transformation pruned: an abstract plan may sit in any abstract state of a factor
-	  while the concrete factor passes through a pruned value (e.g. childsnack: factor
-	  "location of sandw2" stays in {notexist} while the sandwich concretely is ontray, a
-	  pruned value). An abstract pair is mutex iff all pairs of its preimages are mutex.
-	*/
-	vector<vector<vector<int>>> pre(F);
-	for (int f = 0; f < F; f++) {
-		const int n = fts->get_ts(f).get_size();
-		pre[f].assign(n, {});
-		vector<int> pruned;
-		for (int x = 0; x < (int)table[f].size(); x++) {
-			if (table[f][x] < 0) pruned.push_back(x);
-			else pre[f][table[f][x]].push_back(x);
-		}
-		for (int a = 0; a < n; a++) pre[f][a].insert(pre[f][a].end(), pruned.begin(), pruned.end());
-	}
 	for (int f = 0; f < F; f++)
 		for (int g = f + 1; g < F; g++)
 			for (int a = 0; a < fts->get_ts(f).get_size(); a++)
 				for (int b = 0; b < fts->get_ts(g).get_size(); b++) {
 					// no preimage at all: no evidence, claim nothing
-					bool mutex = !pre[f][a].empty() && !pre[g][b].empty();
-					for (int x : pre[f][a]) {
+					bool mutex = !sets[f][a].empty() && !sets[g][b].empty();
+					for (int x : sets[f][a]) {
 						if (!mutex) break;
-						for (int y : pre[g][b])
+						for (int y : sets[g][b])
 							if (!sas->are_facts_mutex(task_representation::FactPair(varOf[f], x),
 							                          task_representation::FactPair(varOf[g], y))) { mutex = false; break; }
-						if (!mutex) break;
 					}
 					if (!mutex) set(factOffset[f] + a, factOffset[g] + b);
 				}
-	// FTS_MAPPING_DUMP=file: per factor its SAS variable and value -> state table (diagnostics)
+	// FTS_MAPPING_DUMP=file: per factor state its SAS variable and value set (diagnostics)
 	if (const char * dump = getenv("FTS_MAPPING_DUMP")) {
 		ofstream out(dump);
-		for (int f = 0; f < F; f++) {
-			out << f << " " << varOf[f];
-			for (int a : table[f]) out << " " << a;
-			out << "\n";
-		}
+		for (int f = 0; f < F; f++)
+			for (size_t a = 0; a < sets[f].size(); a++) {
+				out << f << " " << a << " " << varOf[f] << " :";
+				for (int x : sets[f][a]) out << " " << x;
+				out << "\n";
+			}
 	}
 	// safeguard: the initial states of all factors hold together, so a mutex between two of
 	// them means the mapping is wrong -- then no mutexes are used at all
@@ -1509,11 +1557,11 @@ bool BDDSATEncodingFactory::mutexes_from_sas() {
 				if (getenv("FTS_MUTEX_DEBUG")) {
 					for (int h : {f, g}) {
 						cout << "  factor " << h << " var " << varOf[h] << " sas_init " << sas->get_initial_state_data()[varOf[h]]
-						     << " fts_init " << fts->get_ts(h).get_init_state() << " table";
-						for (int x : table[h]) cout << " " << x;
+						     << " fts_init " << fts->get_ts(h).get_init_state() << " init set";
+						for (int x : sets[h][fts->get_ts(h).get_init_state()]) cout << " " << x;
 						cout << endl;
 					}
-					cout << "  stages " << stages.size() << endl;
+
 				}
 			}
 		}

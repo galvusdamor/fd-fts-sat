@@ -75,6 +75,8 @@ public:
     int get_ts_index_successor() const {
         return ts_index_successor;
     }
+    const std::vector<int> &get_abstraction() const {return abstraction;}
+    const TauGraph &get_tau_graph() const {return *tau_graph;}
     void apply_label_mapping(const LabelMapping & label_mapping);
 
         
@@ -113,6 +115,11 @@ PlanReconstructionTauPath(const FTSMapping & fts_mapping, PlanState initial_stat
     }
     
     virtual ~PlanReconstructionTauPath() = default;
+
+    const std::vector<std::unique_ptr<TauShrinking>> &get_tau_transformations() const {
+        return tau_transformations;
+    }
+    const std::vector<int> &get_transition_system_mapping() const {return transition_system_mapping;}
     virtual void reconstruct_plan(Plan &plan) const override;
 
     virtual void print(std::ostream& o) const override;
