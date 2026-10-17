@@ -1,38 +1,31 @@
-#ifndef TASK_TRANSFORMATION_TASK_TRANSFORMATION_COST_H
-#define TASK_TRANSFORMATION_TASK_TRANSFORMATION_COST_H
+#ifndef TASK_TRANSFORMATION_TASK_TRANSFORMATION_SEQ_H
+#define TASK_TRANSFORMATION_TASK_TRANSFORMATION_SEQ_H
 
-#include <utility>
-#include <memory>
 #include "task_transformation.h"
 
-#include "../option_parser.h"
-#include "../operator_cost.h"
-
-namespace task_representation {
-    class FTSTask;
-    class SASTask;
-}
+#include <memory>
+#include <utility>
+#include <vector>
 
 namespace task_transformation {
-class PlanReconstruction;
-class StateMapping;
-
-class CostTransformation : public TaskTransformation {
-
-    OperatorCost cost_type;
-    
+/*
+  seq(transformations=[t1, ..., tn]): applies t1, then t2 to its result, and so on. The
+  plan reconstruction undoes them in reverse order; nested sequences are flattened, so
+  the result lists the last transformation first, like every other reconstruction
+  sequence.
+*/
+class SequenceTransformation : public TaskTransformation {
+    std::vector<std::shared_ptr<TaskTransformation>> transformations;
 public:
-    CostTransformation(const Options & opts) ;
-    virtual ~CostTransformation() = default;
+    explicit SequenceTransformation(const options::Options &opts);
+    virtual ~SequenceTransformation() override = default;
     virtual std::pair<std::shared_ptr<task_representation::FTSTask>,
         std::shared_ptr<PlanReconstruction>> transform_task(
-            const std::shared_ptr<task_representation::FTSTask> &fts_task)  override;
+            const std::shared_ptr<task_representation::FTSTask> &fts_task) override;
 
-    //We do not care about plan reconstruction 
-    virtual std::pair<std::shared_ptr<task_representation::FTSTask>, 
-        Mapping> transform_task_lossy(
-            const std::shared_ptr<task_representation::FTSTask> &fts_task)  override;
-
+    virtual std::pair<std::shared_ptr<task_representation::FTSTask>, Mapping>
+        transform_task_lossy(
+            const std::shared_ptr<task_representation::FTSTask> &fts_task) override;
 };
 }
 #endif

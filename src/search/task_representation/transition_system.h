@@ -238,6 +238,10 @@ public:
         return num_states;
     }
 
+    int get_num_variables() const {
+        return num_variables;
+    }
+
     int get_init_state() const {
         return init_state;
     }

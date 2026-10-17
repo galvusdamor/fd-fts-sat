@@ -206,6 +206,11 @@ fast_downward_plugin(
         task_transformation/state_mapping
         task_transformation/task_transformation
         task_transformation/task_transformation_cost
+        task_transformation/task_transformation_seq
+        task_transformation/task_transformation_label_closure
+        task_transformation/task_transformation_tau_baking
+        task_transformation/task_transformation_dump
+        task_transformation/label_transformation_utils
         task_transformation/task_transformation_merge_and_shrink
         task_transformation/task_transformation_tau_path
         task_transformation/tau_graph
