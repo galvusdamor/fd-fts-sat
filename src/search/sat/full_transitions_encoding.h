@@ -4,6 +4,12 @@
 #include "transitions_encoding.h"
 #include "../task_representation/transition_system.h"
 
+#include <memory>
+
+namespace label_order_finder {
+class LabelOrderFinder;
+}
+
 namespace transitions_encoding {
 
 /**
@@ -52,7 +58,8 @@ public:
         const std::shared_ptr<task_representation::FTSTask>&  fts,
         bool                                                  forceAtLeastOneAction,
         bool                                                  useSelfloopOptimisation,
-        bool                                                  useLabelsInEffectsConstraints
+        bool                                                  useLabelsInEffectsConstraints,
+        const std::vector<int>&                               order
     );
     ~FullTransitionsEncoding() override = default;
 
@@ -84,6 +91,9 @@ class FullTransitionsEncodingFactory : public sat_search::SATEncodingFactory {
 	const bool useSelfloopOptimisation;
     const bool useLabelsInEffectsConstraints;
 	bool statisticsPrinted;
+	std::shared_ptr<label_order_finder::LabelOrderFinder> labelOrderFinder;
+	// label order of the step semantics (computed in initialize()); position = rank
+	std::vector<int> order;
 
 public:
 	explicit FullTransitionsEncodingFactory(const options::Options &opts);

@@ -7,6 +7,9 @@
 #include "sat_encoder.h"
 
 #include "../options/plugin.h"
+#include "../task_utils/label_order_finder.h"
+
+#include <algorithm>
 
 using namespace std;
 using namespace task_representation;
@@ -14,7 +17,8 @@ using namespace task_representation;
 namespace transitions_encoding {
 
 FullTransitionsEncodingFactory::FullTransitionsEncodingFactory(const options::Options &opts): SATEncodingFactory(opts.get<bool>("force_at_least_one_action")),
-	useSelfloopOptimisation(opts.get<bool>("use_self_loop_optimisation")), useLabelsInEffectsConstraints(opts.get<bool>("use_labels_in_effects_constraints"))
+	useSelfloopOptimisation(opts.get<bool>("use_self_loop_optimisation")), useLabelsInEffectsConstraints(opts.get<bool>("use_labels_in_effects_constraints")),
+	labelOrderFinder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order"))
 	 {
 	statisticsPrinted = false;
 }
@@ -38,6 +42,11 @@ static shared_ptr<sat_search::SATEncodingFactory> _parse_full_transitions_sat_fa
     	"force that every time step contains at least one action",
     	"false");
 
+	parser.add_option<shared_ptr<label_order_finder::LabelOrderFinder>>(
+		"label_order",
+		"order in which labels may be applied within one time step (the step semantics)",
+		"label_order_linear()");
+
     options::Options opts = parser.parse();
     if (parser.dry_run())
         return nullptr;
@@ -51,6 +60,8 @@ void FullTransitionsEncodingFactory::initialize() {
 	utils::Timer sat_init_timer;
 	cout << "Initialising" << fts << endl;
 	cout << "My FTS task has " << fts->get_size() << " systems and " << fts->get_num_labels() << " labels." << endl;
+	order = labelOrderFinder->find_order(*fts);
+	assert((int)order.size() == fts->get_num_labels());
 
     cout << "SAT init time: " << sat_init_timer << endl;
 }
@@ -60,7 +71,7 @@ void FullTransitionsEncodingFactory::initialize() {
 unique_ptr<sat_search::SATEncoding> FullTransitionsEncodingFactory::createEncodingInstance(std::shared_ptr<sat_capsule> capsule){
 	//bool oldStatisticsPrinted = statisticsPrinted;
 	statisticsPrinted = true;
-	return make_unique<FullTransitionsEncoding>(capsule, fts, forceAtLeastOneAction, useSelfloopOptimisation, useLabelsInEffectsConstraints);
+	return make_unique<FullTransitionsEncoding>(capsule, fts, forceAtLeastOneAction, useSelfloopOptimisation, useLabelsInEffectsConstraints, order);
 }
 
 
@@ -73,7 +84,8 @@ FullTransitionsEncoding::FullTransitionsEncoding(
     const shared_ptr<FTSTask>&                      fts,
     bool                                            forceAtLeastOneAction,
     bool                                            useSelfloopOptimisation,
-    bool                                            useLabelsInEffectsConstraints)
+    bool                                            useLabelsInEffectsConstraints,
+    const vector<int>&                              order)
     : TransitionsEncoding(capsule, fts, forceAtLeastOneAction,
                            useSelfloopOptimisation, useLabelsInEffectsConstraints)
 {
@@ -94,10 +106,16 @@ FullTransitionsEncoding::FullTransitionsEncoding(
             iota(relevantLabels[ts].begin(), relevantLabels[ts].end(), 0);
         }
     }
-    labelOrder.resize(fts->get_num_labels());
-    for (int label = 0; label < fts->get_num_labels(); label++) {
-        labelOrder[label] = label;
-    }
+    // The step semantics is the position of a label in relevantLabels[ts]: preconditions
+    // come from earlier labels, effects may be overwritten by later ones, and the r2 chains
+    // run along it. Every factor must therefore list its labels in the same global order.
+    labelOrder = order;
+    vector<int> position(fts->get_num_labels());
+    for (size_t k = 0; k < labelOrder.size(); k++)
+        position[labelOrder[k]] = k;
+    for (int ts = 0; ts < fts->get_size(); ts++)
+        sort(relevantLabels[ts].begin(), relevantLabels[ts].end(),
+             [&](int a, int b) { return position[a] < position[b]; });
 }
 
 // ---------------------------------------------------------------------------
@@ -128,7 +146,8 @@ void FullTransitionsEncoding::generateTransitionVars(int /*fromTime*/) {
         for (int label = 0; label < fts->get_num_labels(); label++) {
             if (useSelfloopOptimisation && isIrrelevantLabel(ts, label))
                 continue;
-            auto transitions = fts->get_ts(ts).get_transitions_with_label(getOrderedLabel(label));
+            // keyed by the label id, like every lookup in allTimesTransitionVars
+            auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
             vector<int> SATVars;
             for (size_t t = 0; t < transitions.size(); t++) {
                 if (useSelfloopOptimisation && transitions[t].src == transitions[t].target) {
@@ -212,7 +231,7 @@ vector<int> FullTransitionsEncoding::get_all_non_encoded_self_loop_states(int ts
     auto it = states_with_non_encoded_transitions.find(access);
     if (it == states_with_non_encoded_transitions.end()) {
         set<int> ret;
-        for (Transition transition : fts->get_ts(ts).get_transitions_with_label(getOrderedLabel(getRelevantLabel(ts, label))))
+        for (Transition transition : fts->get_ts(ts).get_transitions_with_label(getRelevantLabel(ts, label)))
             if (!has_to_encode_transition(transition))
                 ret.insert(transition.target);
         vector<int> ret_vec(ret.begin(), ret.end());

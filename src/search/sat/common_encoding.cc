@@ -2,6 +2,7 @@
 #include <thread>
 #include <ctime>
 #include <atomic>
+#include <algorithm>
 
 #include "label_based_encoding.h"
 
@@ -113,6 +114,14 @@ std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> Comm
 					}
 				}
 			}
+		}
+
+		// the labels of a step are executed in the order of the step semantics, not by id
+		if(selectedLabels.size() > 1 && !labelOrder.empty()){
+			vector<int> position(fts->get_num_labels());
+			for(size_t k = 0 ; k < labelOrder.size() ; k++) position[labelOrder[k]] = k;
+			sort(selectedLabels.begin(), selectedLabels.end(),
+			     [&](int a, int b){ return position[a] < position[b]; });
 		}
 
 		// intermediate states
