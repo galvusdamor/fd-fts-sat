@@ -11,6 +11,7 @@
 #include "../utils/memory.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <map>
 #include <iostream>
 #include <limits>
@@ -25,9 +26,11 @@ MergeStrategyLocalGuard::MergeStrategyLocalGuard(const FactoredTransitionSystem 
 
 vector<pair<int, int>> MergeStrategyLocalGuard::scan(const vector<int> &allowed_indices) const {
     const int L = fts.get_labels().get_size();
-    // moves[l]: factors in which l has a non-self-loop transition (at most 2 are kept)
+    // moves[l]: number of factors in which l has a non-self-loop transition
+    // own[f]: the labels that move f
     // guarded[l]: factors in which l is not a self-loop in every state
-    vector<vector<int>> moves(L), guarded(L);
+    vector<int> moves(L, 0);
+    vector<vector<int>> own(fts.get_size()), guarded(L);
     for (int f = 0; f < fts.get_size(); ++f) {
         if (!fts.is_active(f))
             continue;
@@ -41,7 +44,7 @@ vector<pair<int, int>> MergeStrategyLocalGuard::scan(const vector<int> &allowed_
             }
             const bool noop = !moving && loops == ts.get_size();
             for (int label : gat.label_group) {
-                if (moving && moves[label].size() < 2) moves[label].push_back(f);
+                if (moving) { ++moves[label]; own[f].push_back(label); }
                 if (!noop) guarded[label].push_back(f);
             }
         }
@@ -51,11 +54,6 @@ vector<pair<int, int>> MergeStrategyLocalGuard::scan(const vector<int> &allowed_
         allowed.assign(fts.get_size(), 0);
         for (int i : allowed_indices) allowed[i] = 1;
     }
-    // factor -> its moving labels
-    vector<vector<int>> own(fts.get_size());
-    for (int label = 0; label < L; ++label)
-        for (int f : moves[label])
-            own[f].push_back(label);
 
     vector<pair<long long, pair<int, int>>> candidates;
     vector<int> dependents(fts.get_size(), 0);   // local single-guard factors per guard
@@ -65,7 +63,7 @@ vector<pair<int, int>> MergeStrategyLocalGuard::scan(const vector<int> &allowed_
         int guard = -1;
         bool ok = true;
         for (int label : own[i]) {
-            if (moves[label].size() != 1) { ok = false; break; }
+            if (moves[label] != 1) { ok = false; break; }
             for (int g : guarded[label]) {
                 if (g == i) continue;
                 if (guard == -1) guard = g;
@@ -79,6 +77,12 @@ vector<pair<int, int>> MergeStrategyLocalGuard::scan(const vector<int> &allowed_
         if (!allowed.empty() && !allowed[guard])
             continue;
         const long long size = (long long)fts.get_ts(i).get_size() * fts.get_ts(guard).get_size();
+        if (getenv("FTS_GUARD_DEBUG")) {
+            cout << "GUARDDBG candidate " << i << " (" << fts.get_ts(i).get_size() << " states) guard "
+                 << guard << " (" << fts.get_ts(guard).get_size() << " states) labels";
+            for (int label : own[i]) cout << " " << label;
+            cout << endl;
+        }
         if (size <= max_states)
             candidates.emplace_back(size, make_pair(guard, i));
     }
