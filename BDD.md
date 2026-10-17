@@ -7,7 +7,7 @@ limits on the FTS benchmarks, label orders) is in `CLAUDE.md`. The option refere
 
 Branch `bdd`. Code: `src/search/sat/bdd_encoding.{h,cc}`. Last code commit:
 `c47442c04`. The FTS transformations of §5 are on branch `fts-transformations`
-(`164cb4563`, `5d15ee4a9`, `d17d456d7`). Everything below is **off by default** unless stated otherwise.
+(`164cb4563`, `5d15ee4a9`, `d17d456d7`, `eb715adac`). Everything below is **off by default** unless stated otherwise.
 
 ## 1. The encoding in one paragraph
 
@@ -482,34 +482,43 @@ pathways 82, tidybot 8, openstacks 7). In all of them except nomystery every gua
 dependent and the product has at most 12 states. In nomystery many packages hang on the
 same truck, so the products of a guard and all its dependents reach 10^27 states.
 
-**303 tasks** (`bdd_sat`, same setup as §5.3, limit 1,000 states, all plans valid; Σ horizon
-and time over the 286 tasks all four solve, time relative to `-shr`):
+**303 tasks** (`bdd_sat`, same setup as §5.3, limit 1,000 states, all 606 plans valid).
+Merges happen in exactly the 70 tasks the dump analysis predicts; on the other 233 the
+task is the one of `-shr` + `tau_baking`. Σ horizon and time over the 288 tasks all four
+solve, time relative to `-shr`:
 
 | configuration | solved | PAR-2 | Σ horizon | time |
 |---|---:|---:|---:|---:|
-| `-shr` | 292 | 53.7 | 775 | 1.00 |
-| `-shr` + `tau_baking` | **297** | **45.2** | 636 | 0.88 |
-| + merging, unrestricted | 293 | 51.0 | **626** | **0.86** |
-| + merging, `max_dependents=1` | **297** | 45.3 | 632 | **0.86** |
+| `-shr` | 292 | 53.7 | 777 | 1.00 |
+| `-shr` + `tau_baking` | 297 | 45.2 | 638 | 0.88 |
+| + merging, unrestricted | 295 | 47.6 | **629** | 0.87 |
+| + merging, `max_dependents=1` | **299** | **41.9** | 634 | **0.86** |
 
-* Unrestricted merging loses nomystery p04/p06/p07/p09: the stacked products make every
-  step's formula larger and kissat stalls at horizon 12. `max_dependents=1` keeps all 8.
-* Where it merges, it is slightly faster. Times are relative to `-shr`; "+ tau" is
-  `-shr` + `tau_baking`, "+ merging" adds `max_dependents=1` on top:
+On the 70 tasks where merging happens (time relative to `-shr` + `tau_baking`, 62 solved by
+all):
 
-  | domain | + tau | + merging | other |
-  |---|---:|---:|---|
-  | data-network | 1.02 | 0.90 | +1 task (p09), PAR-2 157 -> 106 |
-  | tidybot | 0.98 | 0.77 | |
-  | pathways | 1.00 | 0.91 | |
-  | rovers | 0.27 | 0.25 | |
-* It loses satellite p07/p08 to memory in the transform (both variants), although the dump
-  analysis found no local factors in satellite; see §6.
-* childsnack p26 and the small differences in elevators, ged and transport are noise: no
-  merge happens there, the task is the one of `-shr` + `tau_baking`.
+| domain | tasks | `-shr` + tau: solved / PAR-2 | + merging, `max_dependents=1`: solved / PAR-2 | time |
+|---|---:|---|---|---:|
+| data-network | 8 | 7 / 157.0 | **8 / 105.2** | 0.88 |
+| tidybot | 2 | 2 / 154.3 | 2 / **124.9** | 0.81 |
+| pathways | 26 | 26 / 36.9 | 26 / 36.6 | 0.92 |
+| rovers | 24 | 24 / 5.2 | 24 / 4.9 | 0.93 |
+| openstacks | 2 | 2 / 0.0 | 2 / 0.0 | - |
+| nomystery | 8 | 8 / 138.7 | 8 / 140.1 | 1.03 |
+| all 70 | 70 | 69 / 53.7 | **70 / 46.9** | **0.92** |
 
-Overall `max_dependents=1` is neutral: a little faster in five domains, two tasks lost in
-satellite.
+* `max_dependents=1` loses no task, gains data-network p09 (childsnack p26, also gained,
+  is noise: no merge happens there), and is 8 % faster where it merges. In nomystery it
+  merges nothing, as intended.
+* Unrestricted merging loses nomystery p04/p06/p07/p09: the stacked products of a truck and
+  its packages make every step's formula larger and kissat stalls at horizon 12.
+* The first runs of this experiment used a buggy strategy: the per-label list of moved
+  factors was capped at two, so a label moving three or more factors was missing from the
+  later factors' lists and they looked local. In satellite that produced merges the dump
+  analysis does not predict, and with 89,164 atomic labels (every merge step copies the
+  FTS for plan reconstruction) p07/p08 ran out of memory. Fixed in `eb715adac`. Merging as
+  a separate `transform_merge_and_shrink` step after the finished `-shr` gives identical
+  results.
 
 Raw data: `/home/gregor/data/claude-jobs/abf93c5f/trans/` (`camp_all.csv`, `nolr_all.csv`,
 `enc_{label,trans}_*.csv`, `lin.csv`, `tv2_*.csv`, `g303_all.csv`, `local_*.csv`,
@@ -530,9 +539,9 @@ Raw data: `/home/gregor/data/claude-jobs/abf93c5f/trans/` (`camp_all.csv`, `nolr
 * **h2 changes the transformed task** (§4.7). Mutexes from h2 come with a less
   compressed FTS on some domains.
 * Timed-out SAT calls report no conflict counts.
-* **satellite with `merge_local_guard`** (§5.6): merges happen in the main loop although the
-  dump analysis of the `-shr` FTS finds no local factor, and p07/p08 run out of memory
-  in the transform.
+* M&S plan reconstruction copies the whole FTS at every merge step, with label tables sized
+  by the atomic label count (satellite p07: 89,164). Merging in the main loop is only
+  affordable because `merge_local_guard` merges few factors.
 
 ## 7. Open ideas (parked unless noted)
 
