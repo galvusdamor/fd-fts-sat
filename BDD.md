@@ -1,4 +1,4 @@
-# The BDD encoding (`bdd_sat`): state of 2026-10-16
+# The BDD encoding (`bdd_sat`): state of 2026-10-17
 
 What `bdd_sat` is, every variant and add-on implemented so far, how each one did on
 the Autoscale benchmark set, and what is open. The background (the port, construction
@@ -6,7 +6,8 @@ limits on the FTS benchmarks, label orders) is in `CLAUDE.md`. The option refere
 `docs/bdd-sat/bdd-sat.tex`, and its tables are generated from the sources.
 
 Branch `bdd`. Code: `src/search/sat/bdd_encoding.{h,cc}`. Last code commit:
-`c47442c04`. Everything below is **off by default** unless stated otherwise.
+`c47442c04`. The FTS transformations of §5 are on branch `fts-transformations`
+(`164cb4563`). Everything below is **off by default** unless stated otherwise.
 
 ## 1. The encoding in one paragraph
 
@@ -329,7 +330,120 @@ Findings:
 * Global `eliminate=0` is worse for every configuration (table above). Tuning kissat per
   benchmark was ruled out as too hacky.
 
-## 5. Open issues
+## 5. Transformations of the FTS (branch `fts-transformations`, 2026-10-16/17)
+
+New task transformations, applied after `-shr` with `seq(transformations=[...])`. Each one
+has its own plan reconstruction; `bdd_sat` itself is unchanged. Code in
+`src/search/task_transformation/task_transformation_{seq,tau_baking,label_closure,dump}.*`.
+
+### 5.1 What they do
+
+* **`tau_baking()`.** A *tau label* of factor i is a self-loop in every state of every
+  other factor. Tau moves commute with every label that is a self-loop everywhere in i,
+  so they can be postponed to the next label that is not, or to the end of the plan. For
+  every transition (s,l,s') of such a following label l in i, add (s'',l,s') for every s''
+  from which s is tau-reachable. Every state from which a goal is tau-reachable becomes a
+  goal. Then remove the tau labels and labels that are no-ops everywhere, prune states that
+  became unreachable or dead, drop labels left without transitions, and repeat. It is
+  epsilon-elimination: no new labels, more transitions per label. Unlike weak bisimulation
+  it does not merge states, so it also removes tau labels on one-way tau paths, which
+  shrinking cannot merge.
+* **`label_closure()`.** For a label that moves one factor (self-loops elsewhere, possibly
+  only in some states), add the transitive closure of its transitions in that factor: one
+  closed transition stands for l^k. `multi_factor=true` also closes labels that move
+  several factors. An l-path is *elastic* if it visits a state with an l-self-loop, so it
+  can be stretched. This is sound if all moving factors are elastic (elastic closure
+  everywhere), or if exactly one is not (full closure there). With two or more rigid
+  factors the path lengths would have to match, which a product cannot express.
+* **`dump_fts(filename, exit_after)`** writes the FTS. The dumps of the 303 tasks (atomic,
+  `-shr`, `-shr` + `tau_baking`) are in `/home/gregor/data/fts-dumps/autoscale-21.11-agile-303/`.
+  The reader and analyses are in `experiments/fts_dumps/`.
+
+### 5.2 Where they apply (analysis of the dumps, 303 tasks)
+
+* **Tau labels after `-shr`: 83 tasks** (pegsol 30, rovers 23, pathways 14, childsnack 13,
+  openstacks 2, grid 1). On the atomic FTS there are 178 tasks. `-shr` removes all of them
+  in gripper, elevators, transport, tpp and satellite (tau cycles, which weak bisimulation
+  merges).
+* **Closure applies almost never.** After `-shr` only 97 single-factor labels in 9 tasks
+  have chains (driverlog, woodworking, openstacks), and only where label reduction merged
+  labels. Of the labels that move several factors, about 336k are rigid in two or more
+  factors and about 22.5k are rigid in exactly one, but with no chains there. One label is
+  elastic. Multi-factor closure adds **no transition in any task**.
+* **Locally driven factors** (moved only by labels that self-loop everywhere else):
+  2,191 in 83 tasks after `-shr` (data-network 1,023, pathways 624, rovers 241,
+  nomystery 110). Every one has a goal or is needed by other labels' preconditions. 1,471
+  have their labels' preconditions in a single other factor; the product would have 4
+  states at the median and at most 506. None of their labels is tau after `tau_baking`.
+
+### 5.3 Results with `bdd_sat`, 303 tasks
+
+300 s / 2500 MB, 4 jobs, all 1818 plans valid (VAL; data-network and floortile checked
+separately). Horizon is summed over the tasks a configuration and `-shr` both solve;
+conflicts and time are geometric means against `-shr` on those tasks where one of the two
+takes at least 1 s.
+
+| configuration | solved | PAR-2 | Σ horizon | clauses/step | conflicts | time | +/- |
+|---|---:|---:|---|---:|---:|---:|---:|
+| `-shr` | 292 | 53.7 | 838 | 1.00 | 1.00 | 1.00 | |
+| + `tau_baking` | **297** | **45.2** | 838 -> 699 | 0.98 | 0.52 | 0.89 | +5 / -0 |
+| + `label_closure` | 290 | 56.3 | 830 -> 824 | 1.00 | 0.98 | 1.01 | +0 / -2 |
+| + `tau_baking` + `label_closure` | 296 | 46.3 | 831 -> 689 | 0.98 | 0.51 | **0.88** | +5 / -1 |
+| + `tau_baking` + `-shr` | 293 | 52.1 | 824 -> 686 | **0.95** | 0.51 | 0.95 | +5 / -4 |
+| + `tau_baking` + `-shr` + `label_closure` | 292 | 53.5 | 817 -> **676** | 0.96 | **0.50** | 0.95 | +5 / -5 |
+| `-shr` **without label reduction** | 224 | 182.2 | 607 -> 615 | 6.39 | - | 3.78 | |
+| ... + `tau_baking` | 231 | 168.4 | 609 -> 446 | 6.20 | - | 2.63 | |
+
+* **`tau_baking` is the only clear win:** +5 tasks (childsnack p15/p25, pathways p18/p24,
+  rovers p12), no loss, conflicts halved. Where it helps, it packs more of the plan into
+  one step; the formula per step stays the same size or grows (grid: variables x1.8).
+  * rovers: every task at horizon 1, Σ 157 -> 23, time 0.27x;
+  * childsnack: the only domain where the formula per step shrinks (0.77x), time 0.64x;
+  * grid p01: 76 s -> 34 s;
+  * pathways: same horizon, but p18 and p24 newly solved (both near the limit, 238-295 s);
+  * pegsol: removes the tau label, otherwise no effect.
+* **`label_closure`** shortens a few horizons (driverlog 10 -> 8, woodworking 5 -> 4) but
+  loses driverlog p03 and childsnack p24.
+* **Re-shrinking after `tau_baking`** barely shortens the horizon further and loses grid
+  p01, airport p03 and pipesworld p07/p21. The last three have no tau labels, so the
+  second `-shr` alone causes it.
+* **Label reduction does not cost parallelism here.** Without it the horizon is slightly
+  *longer* (607 -> 615; weak bisimulation finds fewer equivalent labels to shrink with),
+  the formula per step is 6.4x larger, and 68 tasks are lost (nomystery p01: 12,852
+  labels instead of 143). Running it needed a fix: `transform_merge_and_shrink` crashed
+  on a null `label_reduction` (`8defe2e31`).
+
+### 5.4 Other encodings, on the 89 tasks the transformations change
+
+On the other 214 tasks every configuration gets the identical task. Encoders:
+`label_sat(encoding=CHAINS_PARALLEL, ...rcpol)` (`chains_slf____rcpol`) and
+`full_transitions_sat(use_self_loop_optimisation=true, use_labels_in_effects_constraints=false)`
+(`fulltransitions_slf_transeff`), both with `sat(one_by_one)`. Time is relative to `-shr`
+with the same encoder.
+
+| configuration | `bdd_sat` solved | PAR-2 | horizon | time | `label_sat` solved | PAR-2 | horizon | time | `full_transitions_sat` solved | PAR-2 | horizon | time |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `-shr` | 86 | 37.8 | 320 | 1.00 | 75 | 104.2 | 696 | 1.00 | **85** | 34.7 | 441 | 1.00 |
+| + `tau_baking` | **89** | **19.0** | 193 | 0.63 | **78** | **84.0** | 413 | **0.54** | **85** | **34.5** | 277 | **0.72** |
+| + `label_closure` | 85 | 42.3 | 308 | 1.00 | 75 | 104.6 | 689 | 1.02 | 84 | 40.0 | 430 | 1.03 |
+| + both | 88 | 22.8 | **184** | **0.61** | **78** | 84.2 | **411** | 0.55 | 84 | 39.8 | **268** | 0.73 |
+
+* `tau_baking` shortens the horizon by 37-41 % for every encoder; `label_sat` gains most
+  in time (0.54x). The two re-shrink configurations, run on 67 of the 89 tasks (deadline),
+  add nothing for any encoder.
+* **The encoders are not compared on equal terms.** `full_transitions_sat` and
+  `split_transitions_sat` hard-code the label order to the label ids
+  (`labelOrder[label] = label` in the constructor) and have no `label_order` option, while
+  `bdd_sat` runs with goal-chains v2. For `bdd_sat` alone, the label-id order needed Σ 910
+  steps against 503 for goal-chains v2 (192 tasks). Part of the gap between `bdd_sat` and
+  `full_transitions_sat` may therefore be the order, not the encoding. Open: `bdd_sat` with
+  `label_order_linear()`, and a `label_order` option for the transition encodings.
+
+Raw data: `/home/gregor/data/claude-jobs/abf93c5f/trans/` (`camp_all.csv`, `nolr_all.csv`,
+`enc_{label,trans}_*.csv`, `local_*.csv`, `closure_*.csv`); runner
+`scripts/trans_test.py`, report `scripts/trans_report.py`.
+
+## 6. Open issues
 
 * No variant improves **coverage** beyond noise. The gains are in conflicts and time on
   the tasks that are solved anyway.
@@ -344,7 +458,7 @@ Findings:
   compressed FTS on some domains.
 * Timed-out SAT calls report no conflict counts.
 
-## 6. Open ideas (parked unless noted)
+## 7. Open ideas (parked unless noted)
 
 * **h2 only as a mutex source** (parked 2026-10-16): run the transform and search on
   the unpreprocessed task and import h2's mutexes, mapped back to the original facts by
@@ -361,3 +475,8 @@ Findings:
 * Length strategies that do not probe every horizon (`by_iteration`, a tuned rintanen),
   which would help the large encodings most.
 * Per-instance or per-factor encoding selection: deliberately **not** pursued.
+* **Transformations** (§5): eliminating locally driven factors by merging them with the
+  single factor their labels depend on, so their labels become tau and can be baked
+  (judged risky, analysis only so far); splitting two single-factor labels with different
+  preconditions into a label for the intersection, which label reduction can then merge;
+  label reduction restricted to merges whose result moves one factor, followed by closure.
