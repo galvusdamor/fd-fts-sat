@@ -690,7 +690,7 @@ FactoredTransitionSystem MergeAndShrinkAlgorithm::build_factored_transition_syst
 
 
     apply_full_label_reduction_and_shrinking(fts,
-                                             label_reduction->reduce_atomic_fts(),
+                                             label_reduction && label_reduction->reduce_atomic_fts(),
                                              shrink_atomic_fts, run_atomic_loop, timer,
                                              verbosity) ;
 
