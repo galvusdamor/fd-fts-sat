@@ -153,7 +153,7 @@ bool LabelReduction::reduce(
     Verbosity verbosity) const {
     utils::Timer timer;
     assert(initialized());
-    assert(reduce_before_shrinking() || reduce_before_merging());
+    assert(reduce_before_shrinking() || reduce_before_merging() || reduce_atomic_fts());
     int num_transition_systems = fts.get_size();
 
     if (lr_method == TWO_TRANSITION_SYSTEMS) {
@@ -421,9 +421,10 @@ static shared_ptr<LabelReduction>_parse(OptionParser &parser) {
     } else if (parser.dry_run()) {
         bool lr_before_shrinking = opts.get<bool>("before_shrinking");
         bool lr_before_merging = opts.get<bool>("before_merging");
-        if (!lr_before_shrinking && !lr_before_merging) {
+        // atomic_fts alone is fine: label reduction only on the atomic FTS
+        if (!lr_before_shrinking && !lr_before_merging && !opts.get<bool>("atomic_fts")) {
             cerr << "Please turn on at least one of the options "
-                 << "before_shrinking or before_merging!" << endl;
+                 << "before_shrinking, before_merging or atomic_fts!" << endl;
             utils::exit_with(ExitCode::INPUT_ERROR);
         }
         return nullptr;
