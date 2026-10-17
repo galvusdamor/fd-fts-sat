@@ -7,7 +7,7 @@ limits on the FTS benchmarks, label orders) is in `CLAUDE.md`. The option refere
 
 Branch `bdd`. Code: `src/search/sat/bdd_encoding.{h,cc}`. Last code commit:
 `c47442c04`. The FTS transformations of §5 are on branch `fts-transformations`
-(`164cb4563`). Everything below is **off by default** unless stated otherwise.
+(`164cb4563`, `5d15ee4a9`, `d17d456d7`). Everything below is **off by default** unless stated otherwise.
 
 ## 1. The encoding in one paragraph
 
@@ -431,17 +431,90 @@ with the same encoder.
 * `tau_baking` shortens the horizon by 37-41 % for every encoder; `label_sat` gains most
   in time (0.54x). The two re-shrink configurations, run on 67 of the 89 tasks (deadline),
   add nothing for any encoder.
-* **The encoders are not compared on equal terms.** `full_transitions_sat` and
-  `split_transitions_sat` hard-code the label order to the label ids
-  (`labelOrder[label] = label` in the constructor) and have no `label_order` option, while
-  `bdd_sat` runs with goal-chains v2. For `bdd_sat` alone, the label-id order needed Σ 910
-  steps against 503 for goal-chains v2 (192 tasks). Part of the gap between `bdd_sat` and
-  `full_transitions_sat` may therefore be the order, not the encoding. Open: `bdd_sat` with
-  `label_order_linear()`, and a `label_order` option for the transition encodings.
+* The table compares the encoders under different label orders; §5.5 does it under equal
+  ones.
+
+### 5.5 Label order versus encoding (`bdd_sat` vs `full_transitions_sat`)
+
+`full_transitions_sat` had its label order hard-coded to the label ids, and the order was
+only half implemented: the step semantics is the position of a label in
+`relevantLabels[ts]`, but `labelOrder` was used in two places with mismatched keys, and plan
+extraction ran a step's labels by id. Fixed in `5d15ee4a9`. The encoder now has a
+`label_order` option, every factor sorts its labels by the global order, and extraction
+follows it. With the default `label_order_linear()` the formula is bit-identical (6 tasks,
+same clauses and conflicts).
+
+On the same 89 tasks (85 finished in all four configurations; Σ horizon over the tasks all
+four solve):
+
+| | `-shr` solved | PAR-2 | Σ horizon | + `tau_baking` solved | PAR-2 | Σ horizon |
+|---|---:|---:|---:|---:|---:|---:|
+| `bdd_sat`, goal-chains v2 | **82** | 36.7 | **272** | **85** | **17.1** | **160** |
+| `bdd_sat`, linear | 81 | 38.7 | 382 | 82 | 34.9 | 241 |
+| `full_transitions_sat`, linear | 81 | **34.7** | 382 | 81 | 34.4 | 241 |
+| `full_transitions_sat`, goal-chains v2 | 80 | 42.6 | **272** | 81 | 35.4 | **160** |
+
+* **The horizon depends only on the order, not on the encoding.** Under the same order both
+  encoders reach exactly the same Σ horizon in all four comparisons: they express the same
+  step semantics.
+* Under the label-id order they are level (81 / 81).
+* goal-chains v2 pays off only for `bdd_sat`. `full_transitions_sat` gets the shorter
+  horizon too, but becomes slower (PAR-2 34.7 -> 42.6).
+* The advantage of `bdd_sat` over the transition encoding is the combination of the order
+  with `tau_baking` (85 solved, PAR-2 17.1, against 81-82 and about 35 for the others).
+
+### 5.6 Merging local factors into their guard (`merge_local_guard`)
+
+A factor i is *locally driven* if every label that moves it moves no other factor. Its
+*guards* are the factors in which those labels have preconditions. With a single guard g,
+the labels of i move only the product g x i and self-loop everywhere else, i.e. they become
+tau labels of the product, which `tau_baking` removes. `merge_local_guard(max_states,
+max_dependents)` is an M&S merge strategy doing exactly these merges in the main loop of
+`-shr` (`run_main_loop=true`). It stops when no pair fits into `max_states`.
+`max_dependents` restricts it to guards on which at most that many local factors depend.
+Label reduction in the main loop is switched off (`before_shrinking=false`; label reduction
+on the atomic FTS only, newly allowed): in the loop it merged labels and cost parallelism
+(openstacks horizon 1 -> 3) and was too slow on data-network.
+
+**Dump analysis** (`experiments/fts_dumps/guard_merge.py`, after `-shr`): 70 tasks have
+local factors with a single guard (data-network 1,023 factors, rovers 241, nomystery 110,
+pathways 82, tidybot 8, openstacks 7). In all of them except nomystery every guard has one
+dependent and the product has at most 12 states. In nomystery many packages hang on the
+same truck, so the products of a guard and all its dependents reach 10^27 states.
+
+**303 tasks** (`bdd_sat`, same setup as §5.3, limit 1,000 states, all plans valid; Σ horizon
+and time over the 286 tasks all four solve, time relative to `-shr`):
+
+| configuration | solved | PAR-2 | Σ horizon | time |
+|---|---:|---:|---:|---:|
+| `-shr` | 292 | 53.7 | 775 | 1.00 |
+| `-shr` + `tau_baking` | **297** | **45.2** | 636 | 0.88 |
+| + merging, unrestricted | 293 | 51.0 | **626** | **0.86** |
+| + merging, `max_dependents=1` | **297** | 45.3 | 632 | **0.86** |
+
+* Unrestricted merging loses nomystery p04/p06/p07/p09: the stacked products make every
+  step's formula larger and kissat stalls at horizon 12. `max_dependents=1` keeps all 8.
+* Where it merges, it is slightly faster. Times are relative to `-shr`; "+ tau" is
+  `-shr` + `tau_baking`, "+ merging" adds `max_dependents=1` on top:
+
+  | domain | + tau | + merging | other |
+  |---|---:|---:|---|
+  | data-network | 1.02 | 0.90 | +1 task (p09), PAR-2 157 -> 106 |
+  | tidybot | 0.98 | 0.77 | |
+  | pathways | 1.00 | 0.91 | |
+  | rovers | 0.27 | 0.25 | |
+* It loses satellite p07/p08 to memory in the transform (both variants), although the dump
+  analysis found no local factors in satellite; see §6.
+* childsnack p26 and the small differences in elevators, ged and transport are noise: no
+  merge happens there, the task is the one of `-shr` + `tau_baking`.
+
+Overall `max_dependents=1` is neutral: a little faster in five domains, two tasks lost in
+satellite.
 
 Raw data: `/home/gregor/data/claude-jobs/abf93c5f/trans/` (`camp_all.csv`, `nolr_all.csv`,
-`enc_{label,trans}_*.csv`, `local_*.csv`, `closure_*.csv`); runner
-`scripts/trans_test.py`, report `scripts/trans_report.py`.
+`enc_{label,trans}_*.csv`, `lin.csv`, `tv2_*.csv`, `g303_all.csv`, `local_*.csv`,
+`closure_*.csv`, `guard_shr.csv`); runner `scripts/trans_test.py`, report
+`scripts/trans_report.py`.
 
 ## 6. Open issues
 
@@ -457,6 +530,9 @@ Raw data: `/home/gregor/data/claude-jobs/abf93c5f/trans/` (`camp_all.csv`, `nolr
 * **h2 changes the transformed task** (§4.7). Mutexes from h2 come with a less
   compressed FTS on some domains.
 * Timed-out SAT calls report no conflict counts.
+* **satellite with `merge_local_guard`** (§5.6): merges happen in the main loop although the
+  dump analysis of the `-shr` FTS finds no local factor, and p07/p08 run out of memory
+  in the transform.
 
 ## 7. Open ideas (parked unless noted)
 
