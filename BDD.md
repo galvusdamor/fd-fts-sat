@@ -520,8 +520,31 @@ all):
   a separate `transform_merge_and_shrink` step after the finished `-shr` gives identical
   results.
 
+**All combinations, 303 tasks** (same setup; merging = `merge_local_guard(max_states=1000,
+max_dependents=1)`; Σ horizon, conflicts and time over the 287 tasks all eight solve,
+relative to `-shr`; +/- against `-shr`):
+
+| configuration | solved | PAR-2 | Σ horizon | conflicts | time | +/- |
+|---|---:|---:|---:|---:|---:|---:|
+| `-shr` | 292 | 53.7 | 788 | 1.00 | 1.00 | |
+| + `tau_baking` | 297 | 45.2 | 673 | 0.61 | 0.92 | +5 / -0 |
+| + `label_closure` | 290 | 56.3 | 782 | 0.98 | 1.01 | +0 / -2 |
+| + `tau_baking` + `label_closure` | 296 | 46.3 | 670 | 0.60 | 0.92 | +5 / -1 |
+| merging | 291 | 54.5 | 783 | 0.97 | 0.96 | +1 / -2 |
+| merging + `tau_baking` | **299** | **41.9** | 669 | 0.60 | 0.90 | +7 / -0 |
+| merging + `label_closure` | 290 | 55.7 | 777 | 0.95 | 0.96 | +1 / -3 |
+| merging + `tau_baking` + `label_closure` | 297 | 43.6 | **666** | **0.59** | **0.89** | +7 / -2 |
+
+* **Merging pays off only together with `tau_baking`.** Alone it is level with `-shr`
+  (291 vs 292): the labels of a merged local factor are tau labels of the product, but
+  only `tau_baking` removes them. Without it, merging loses the tasks `tau_baking` gains
+  (childsnack p15/p25, pathways p18/p24, rovers p11/p23, data-network p09).
+* **`label_closure` adds nothing on top.** With merging and `tau_baking` it shortens the
+  horizon a little more (669 -> 666) but loses driverlog p03 and nomystery p07.
+* Best configuration: `-shr` + merging (`max_dependents=1`) + `tau_baking`.
+
 Raw data: `/home/gregor/data/claude-jobs/abf93c5f/trans/` (`camp_all.csv`, `nolr_all.csv`,
-`enc_{label,trans}_*.csv`, `lin.csv`, `tv2_*.csv`, `g303_all.csv`, `local_*.csv`,
+`enc_{label,trans}_*.csv`, `lin.csv`, `tv2_*.csv`, `g303_all.csv`, `g303b_all.csv`, `local_*.csv`,
 `closure_*.csv`, `guard_shr.csv`); runner `scripts/trans_test.py`, report
 `scripts/trans_report.py`.
 
