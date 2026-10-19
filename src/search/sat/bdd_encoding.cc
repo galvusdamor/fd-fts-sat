@@ -72,8 +72,10 @@ void exitOutOfMemory(size_t) {
 static state_mutexes::Options mutex_options(const options::Options &opts) {
 	state_mutexes::Options o;
 	const int source = opts.get_enum("mutex_source");
-	o.source = source == 0 ? state_mutexes::Source::SAS
-	         : source == 1 ? state_mutexes::Source::FILE : state_mutexes::Source::FTS_FIXPOINT;
+	// in the order of the mutex_source option
+	const state_mutexes::Source sources[] = {state_mutexes::Source::SAS, state_mutexes::Source::FILE,
+	                                         state_mutexes::Source::FTS_FIXPOINT, state_mutexes::Source::SAS_FILE};
+	o.source = sources[source];
 	o.file = opts.get<string>("mutex_file");
 	o.max_facts = opts.get<int>("mutex_max_facts");
 	o.time_limit = opts.get<double>("mutex_time_limit");
@@ -312,14 +314,15 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 		"split BDDs: cut the BDD of (t, t') of every factor with the label sets another factor permits "
 		"from states compatible with t and into states compatible with t' (needs the mutexes; "
 		"computes them, without adding clauses unless state_mutexes)", "false");
-	vector<string> mutex_sources {"SAS", "FILE", "FTS_FIXPOINT"};
+	vector<string> mutex_sources {"SAS", "FILE", "FTS_FIXPOINT", "SAS_FILE"};
 	vector<string> mutex_sources_doc {
 		"mutexes of the finite-domain task (translator mutex groups, or h2 if preprocessed) "
 		"mapped through the transformation's state mapping",
 		"read from mutex_file: lines 'f s g t' (mutex) or 'f s' (unreachable state)",
-		"h^2-style pairwise reachability fixpoint on the transformed FTS"};
+		"h^2-style pairwise reachability fixpoint on the transformed FTS",
+		"h2 mutexes from the SAS file in mutex_file (the h2 preprocessor's output, the task itself not preprocessed), mapped by fact names"};
 	parser.add_enum_option("mutex_source", mutex_sources, "where state mutexes come from", "SAS", mutex_sources_doc);
-	parser.add_option<string>("mutex_file", "mutex_source=FILE: the file", "none");
+	parser.add_option<string>("mutex_file", "mutex_source=FILE: the mutex list; SAS_FILE: the h2 output", "none");
 	parser.add_option<int>("mutex_max_facts",
 		"skip the mutex computation for more facts (factor states) than this", "20000");
 	parser.add_option<int>("mutex_clauses_max", "state_mutexes: at most this many pair clauses per step", "2000000");

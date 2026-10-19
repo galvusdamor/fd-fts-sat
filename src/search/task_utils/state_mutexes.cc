@@ -1,5 +1,7 @@
 #include "state_mutexes.h"
 
+#include "h2_information.h"
+
 #include "../globals.h"
 #include "../task_representation/fact.h"
 #include "../task_representation/fts_task.h"
@@ -10,6 +12,7 @@
 #include "../utils/timer.h"
 
 #include <cstdlib>
+#include <functional>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -49,7 +52,10 @@ static unique_ptr<StateMutexes> skipped(const string &why) {
   FTS by the plan-reconstruction steps (PlanReconstruction::map_state_sets). Two states of
   different factors are mutex iff every pair of their tuples contains a mutex pair of facts.
 */
-static unique_ptr<StateMutexes> from_sas(const FTSTask &fts) {
+static unique_ptr<StateMutexes> from_sas(const FTSTask &fts,
+                                         const function<bool(const FactPair &, const FactPair &)> &facts_mutex,
+                                         const function<bool(const FactPair &)> &fact_unreachable,
+                                         const string &name) {
     utils::Timer t;
     auto sas = g_sas_task();
     StateSets sets;
@@ -75,14 +81,26 @@ static unique_ptr<StateMutexes> from_sas(const FTSTask &fts) {
     }
 
     auto m = make_unique<StateMutexes>(fts, false);
-    const int N = m->num_facts();
-    for (int i = 0; i < N; ++i)
-        m->set_compatible(i, i);
+    // a tuple is impossible if one of its facts is unreachable; a state is unreachable if all
+    // its tuples are impossible
+    auto tuple_impossible = [&](int f, const StateSets::Tuple &x) {
+        for (size_t i = 0; i < x.size(); ++i)
+            if (fact_unreachable(FactPair(sets.vars[f][i], x[i]))) return true;
+        return false;
+    };
+    for (int f = 0; f < F; ++f)
+        for (int a = 0; a < fts.get_ts(f).get_size(); ++a) {
+            bool unreachable = !sets.tuples[f][a].empty();
+            for (const auto &x : sets.tuples[f][a])
+                if (!tuple_impossible(f, x)) { unreachable = false; break; }
+            if (!unreachable) m->set_compatible(m->fact(f, a), m->fact(f, a));
+        }
     // two tuples are incompatible if some fact of one is mutex with some fact of the other
     auto tuples_mutex = [&](int f, const StateSets::Tuple &x, int g, const StateSets::Tuple &y) {
+        if (tuple_impossible(f, x) || tuple_impossible(g, y)) return true;
         for (size_t i = 0; i < x.size(); ++i)
             for (size_t j = 0; j < y.size(); ++j)
-                if (sas->are_facts_mutex(FactPair(sets.vars[f][i], x[i]), FactPair(sets.vars[g][j], y[j])))
+                if (facts_mutex(FactPair(sets.vars[f][i], x[i]), FactPair(sets.vars[g][j], y[j])))
                     return true;
         return false;
     };
@@ -123,7 +141,7 @@ static unique_ptr<StateMutexes> from_sas(const FTSTask &fts) {
             if (!m->compatible(m->fact(f, fts.get_ts(f).get_init_state()), m->fact(g, fts.get_ts(g).get_init_state())))
                 return skipped("initial states of factors " + to_string(f) + " and " + to_string(g)
                                + " are mutex: inconsistent mapping");
-    m->set_source("sas", t());
+    m->set_source(name, t());
     return m;
 }
 
@@ -261,7 +279,20 @@ unique_ptr<StateMutexes> compute(const FTSTask &fts, const Options &opts) {
         return skipped("too many facts (" + to_string(N) + ")");
     unique_ptr<StateMutexes> m;
     switch (opts.source) {
-    case Source::SAS: m = from_sas(fts); break;
+    case Source::SAS: {
+        auto sas = g_sas_task();
+        m = from_sas(fts, [&](const FactPair &a, const FactPair &b) {return sas->are_facts_mutex(a, b);},
+                     [](const FactPair &) {return false;}, "sas");
+        break;
+    }
+    case Source::SAS_FILE: {
+        h2_information::H2Information info(opts.file);
+        vector<int> dead;
+        h2_information::dead_labels(fts, info, dead);   // reported only, not used yet
+        m = from_sas(fts, [&](const FactPair &a, const FactPair &b) {return info.mutex(a, b);},
+                     [&](const FactPair &a) {return info.unreachable(a);}, "sas_file");
+        break;
+    }
     case Source::FILE: m = from_file(fts, opts.file); break;
     case Source::FTS_FIXPOINT: m = fts_fixpoint(fts, opts.time_limit); break;
     }

@@ -129,6 +129,13 @@ PlanReconstructionTauPath(const FTSMapping & fts_mapping, PlanState initial_stat
       cleanup that created it, see FactoredTransitionSystem::add_plan_reconstruction).
     */
     virtual bool map_state_sets(StateSets &sets, std::string &why) const override;
+    /*
+      Labels are unchanged: the renumbering of the cleanup that created this step is part of
+      the label map of the merge-and-shrink step of the same cleanup.
+    */
+    virtual bool map_label_sets(LabelSets &, std::string &) const override {
+        return true;
+    }
 
     virtual void print(std::ostream& o) const override;
 };

@@ -344,6 +344,17 @@ bool PlanReconstructionTauBaking::map_state_sets(StateSets &sets, string &why) c
     return true;
 }
 
+bool PlanReconstructionTauBaking::map_label_sets(LabelSets &sets, string &why) const {
+    LabelSets after;
+    after.operators.resize(old_label.size());
+    for (size_t k = 0; k < old_label.size(); ++k) {
+        if (old_label[k] < 0 || old_label[k] >= (int)sets.operators.size()) { why = "tau baking label map"; return false; }
+        after.operators[k] = sets.operators[old_label[k]];
+    }
+    sets = move(after);
+    return true;
+}
+
 static shared_ptr<TaskTransformation> _parse(options::OptionParser &parser) {
     parser.document_synopsis(
         "Tau baking",

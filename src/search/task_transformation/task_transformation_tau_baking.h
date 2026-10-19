@@ -64,6 +64,8 @@ public:
       old state tau-reachable from its old state.
     */
     virtual bool map_state_sets(StateSets &sets, std::string &why) const override;
+    // kept labels are renumbered (old_label); removed tau and no-op labels disappear
+    virtual bool map_label_sets(LabelSets &sets, std::string &why) const override;
     virtual void print(std::ostream &o) const override {
         o << "TauBaking";
     }

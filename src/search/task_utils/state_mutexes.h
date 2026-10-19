@@ -50,12 +50,14 @@ public:
 enum class Source {
     SAS,           // mutexes of the finite-domain task (translator, or h2), mapped onto the FTS
     FILE,          // read from a file: lines "f s g t" (mutex) or "f s" (unreachable)
+    SAS_FILE,      // h2 mutexes from a separate SAS file (the h2 preprocessor's output), mapped
+                   // onto the original task by fact names (task_utils/h2_information)
     FTS_FIXPOINT   // h^2-style pairwise reachability fixpoint on the FTS itself
 };
 
 struct Options {
     Source source = Source::SAS;
-    std::string file;
+    std::string file;              // FILE: mutex list; SAS_FILE: the h2 preprocessor's output
     int max_facts = 20000;         // skip larger FTSs (the matrix is quadratic)
     double time_limit = 30;        // FTS_FIXPOINT: give up (and use nothing) after this
 };

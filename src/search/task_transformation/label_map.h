@@ -47,6 +47,10 @@ public:
         return reduced_labels[old_label];
     }
 
+    int get_num_old_labels() const {
+        return reduced_labels.size();
+    }
+
     void dump() const;
 
 //    int get_original_label(int reduced_label) const{

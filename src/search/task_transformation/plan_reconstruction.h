@@ -2,6 +2,8 @@
 #define TASK_TRANSFORMATION_PLAN_RECONSTRUCTION_H
 
 #include "../plan.h"
+#include <cstdlib>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -28,6 +30,16 @@ struct StateSets {
     std::vector<std::vector<std::vector<Tuple>>> tuples;  // factor -> state -> tuples
 };
 
+/*
+  Which operators of the SAS task each label of a task stands for (sorted operator ids),
+  handed down through the transformations step by step. In the atomic FTS, label l is
+  operator l. A label whose operators are all known to be useless (e.g. never applicable)
+  may be forbidden in the transformed task.
+*/
+struct LabelSets {
+    std::vector<std::vector<int>> operators;   // label -> SAS operators
+};
+
 // sort and remove duplicates
 void normalize(std::vector<StateSets::Tuple> &tuples);
 // the tuples of all states reachable from start along successors (start included)
@@ -47,6 +59,11 @@ public:
       cannot do it returns false and explains why; the caller then uses no mutexes at all.
     */
     virtual bool map_state_sets(StateSets &sets, std::string &why) const = 0;
+    /*
+      Maps the label sets of the task before this step onto the task after it (see
+      LabelSets). As for map_state_sets there is deliberately no default.
+    */
+    virtual bool map_label_sets(LabelSets &sets, std::string &why) const = 0;
     virtual void print(std::ostream& ) const { /* do your stuff */ }
 
     friend std::ostream& operator<<(std::ostream& o, const PlanReconstruction& b);
@@ -76,6 +93,21 @@ public:
         for (auto it = plan_reconstructions.rbegin(); it != plan_reconstructions.rend(); ++it)
             if (!(*it)->map_state_sets(sets, why))
                 return false;
+        return true;
+    }
+
+    virtual bool map_label_sets(LabelSets &sets, std::string &why) const override {
+        for (auto it = plan_reconstructions.rbegin(); it != plan_reconstructions.rend(); ++it) {
+            const size_t before = sets.operators.size();
+            const bool ok = (*it)->map_label_sets(sets, why);
+            if (getenv("FTS_LABELSETS_DEBUG")) {
+                std::cout << "LABELSETS step ";
+                (*it)->print(std::cout);
+                std::cout << " labels " << before << " -> " << sets.operators.size() << (ok ? "" : " FAILED " + why) << std::endl;
+            }
+            if (!ok)
+                return false;
+        }
         return true;
     }
 

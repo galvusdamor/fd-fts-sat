@@ -71,6 +71,10 @@ public:
     virtual bool map_state_sets(StateSets &, std::string &) const override {
         return true;
     }
+    // labels are unchanged
+    virtual bool map_label_sets(LabelSets &, std::string &) const override {
+        return true;
+    }
     virtual void print(std::ostream &o) const override {
         o << "LabelClosure";
     }

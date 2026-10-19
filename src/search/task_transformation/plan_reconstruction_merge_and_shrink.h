@@ -66,6 +66,8 @@ public:
       node the combinations of its children (cross product of their tuples).
     */
     virtual bool map_state_sets(StateSets &sets, std::string &why) const override;
+    // a label stands for the predecessor labels the label map reduces onto it
+    virtual bool map_label_sets(LabelSets &sets, std::string &why) const override;
     void set_renumbering_left_to_next_step() {
         renumbers_factors = false;
     }

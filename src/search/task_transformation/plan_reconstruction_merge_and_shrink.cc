@@ -250,6 +250,30 @@ bool PlanReconstructionMergeAndShrink::map_state_sets(StateSets &sets, string &w
     return true;
 }
 
+bool PlanReconstructionMergeAndShrink::map_label_sets(LabelSets &sets, string &why) const {
+    if (label_map->get_num_old_labels() != (int)sets.operators.size()) {
+        why = "label map size " + to_string(label_map->get_num_old_labels()) + " for "
+              + to_string(sets.operators.size()) + " labels";
+        return false;
+    }
+    int n = 0;
+    for (int l = 0; l < label_map->get_num_old_labels(); l++)
+        n = max(n, label_map->get_reduced_label(l) + 1);
+    LabelSets after;
+    after.operators.resize(n);
+    for (int l = 0; l < label_map->get_num_old_labels(); l++) {
+        const int r = label_map->get_reduced_label(l);
+        if (r >= 0)
+            after.operators[r].insert(after.operators[r].end(), sets.operators[l].begin(), sets.operators[l].end());
+    }
+    for (auto &ops : after.operators) {
+        sort(ops.begin(), ops.end());
+        ops.erase(unique(ops.begin(), ops.end()), ops.end());
+    }
+    sets = move(after);
+    return true;
+}
+
     void PlanReconstructionMergeAndShrink::print(std::ostream& o) const  {
         o << "MS";
     }
