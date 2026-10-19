@@ -581,6 +581,7 @@ fast_downward_plugin(
 		task_utils/label_order_finder
 		task_utils/state_mutexes
 		task_utils/h2_information
+		task_utils/dead_labels
 		task_utils/label_order_goal_chains
     DEPENDENCY_ONLY
 )

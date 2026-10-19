@@ -82,6 +82,15 @@ static state_mutexes::Options mutex_options(const options::Options &opts) {
 	return o;
 }
 
+// the options of task_utils/dead_labels, passed through from bdd_sat(...)
+static dead_labels::Options dead_label_options(const options::Options &opts) {
+	dead_labels::Options o;
+	const dead_labels::Source sources[] = {dead_labels::Source::NONE, dead_labels::Source::SAS_FILE};
+	o.source = sources[opts.get_enum("dead_labels")];
+	o.file = opts.get<string>("dead_labels_file");
+	return o;
+}
+
 BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	SATEncodingFactory(opts.get<bool>("force_at_least_one_action")),
 	oneStepOnly(opts.get<bool>("one_step_only")),
@@ -122,6 +131,7 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	mutexClauseMax(opts.get<int>("mutex_clauses_max")),
 	mutexCutTimeLimit(opts.get<double>("mutex_cut_time_limit")),
 	mutexCutLimitFactor(opts.get<double>("mutex_cut_limit_factor")),
+	deadLabelOptions(dead_label_options(opts)),
 	goalLastLabel(opts.get<bool>("goal_last_label")),
 	labelConjunctionLimit(opts.get<int>("label_conjunction_limit")),
 	bddCovering(opts.get<bool>("coverbdds")),
@@ -328,6 +338,13 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 	parser.add_option<int>("mutex_clauses_max", "state_mutexes: at most this many pair clauses per step", "2000000");
 	parser.add_option<double>("mutex_time_limit",
 		"seconds for the mutex fixpoint; if it does not converge, no mutexes are used", "30");
+	vector<string> dead_sources {"NONE", "SAS_FILE"};
+	vector<string> dead_sources_doc {"no dead labels",
+		"labels all of whose operators the h2 preprocessor removed; dead_labels_file is its output "
+		"(the task itself not preprocessed)"};
+	parser.add_enum_option("dead_labels", dead_sources,
+		"labels no plan needs: forced false at every step, the BDDs are cofactored by them", "NONE", dead_sources_doc);
+	parser.add_option<string>("dead_labels_file", "dead_labels=SAS_FILE: the h2 output", "none");
 	parser.add_option<double>("mutex_cut_time_limit", "seconds for mutex cutting (what is cut is kept)", "30");
 	parser.add_option<double>("mutex_cut_limit_factor",
 		"mutex cutting keeps a result only up to this factor times the original BDD size", "1");
@@ -1478,6 +1495,13 @@ void BDDSATEncodingFactory::report_covering_implications(const BDDEncodingData::
  * Labels that are irrelevant for this factor are skipped, so the cost is one
  * pass per *relevant* label, each pass touching |S|^2 entries.
  */
+BDD BDDSATEncodingFactory::deadLabelCube(const BDDEncodingData::Ordering & ord) const {
+	BDD cube = _manager->bddOne();
+	for (int l : data->dead_labels)
+		cube *= ~_manager->bddVar(ord.labelToBDDVar[l]);
+	return cube;
+}
+
 vector<vector<BDD>> BDDSATEncodingFactory::build_full_reachability_bdds(
 		int fac, const TransitionSystem & factor,
 		const BDDEncodingData::Ordering & ord, int & num_relevant_labels){
@@ -1494,6 +1518,9 @@ vector<vector<BDD>> BDDSATEncodingFactory::build_full_reachability_bdds(
 		int label = ord.labelOrder[l];
 		LabelID labelID (label);
 		if (!factor.is_relevant_label(labelID) && factor.is_selfloop_everywhere(labelID))
+			continue;
+		// a dead label is false: skipping it is the cofactor by its negation
+		if (deadLabels[label])
 			continue;
 		num_relevant_labels++;
 		check_budget(fac, "full_reachability_dp");
@@ -1814,6 +1841,14 @@ void BDDSATEncodingFactory::build_bdds_for_ordering(BDDEncodingData::Ordering & 
 			if (oneStepOnly || bddEncodingSizeLimit != -1)
 				oneStepPaths = build_one_step_bdds(fac, factor, matrix_for(fac), ord);
 
+			// dead labels are false at every step (unit clauses): drop them from the BDDs
+			// (the full reachability DP already skipped them)
+			if (!data->dead_labels.empty() && !oneStepPaths.empty()){
+				const BDD cube = deadLabelCube(ord);
+				for (auto & row : oneStepPaths)
+					for (BDD & b : row) b = b.Cofactor(cube);
+			}
+
 			// -----------------------------------------------------------------
 			// pick the representation that is actually encoded
 			// -----------------------------------------------------------------
@@ -2006,6 +2041,10 @@ void BDDSATEncodingFactory::initialize() {
 	long total_nodes_after_limit = 0;
 	int overall_max_pair_nodes = 0;
 	double construction_seconds = 0.0;
+
+	dead_labels::compute(*fts, deadLabelOptions, deadLabels);
+	for (int l = 0; l < fts->get_num_labels(); l++)
+		if (deadLabels[l]) data->dead_labels.push_back(l);
 
 	try {
 		for (size_t o = 0; o < data->orderings.size(); o++){
@@ -2512,6 +2551,9 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 	}
 	tseitsinVars.clear();
 	const int base_clauses = sat->get_number_of_clauses() - clauses_before_bdds;
+
+	// dead labels
+	for (int l : data->dead_labels) sat->notAll(vector<int>{labelVars[l]});
 
 	// state mutexes (unreachable states and mutex pairs) at the end of the step
 	for (const auto & [f, st] : data->mutex_units) sat->notAll(vector<int>{nextStateVars[f][st]});

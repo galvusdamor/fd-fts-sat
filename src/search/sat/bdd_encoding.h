@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "label_encoding.h"
+#include "../task_utils/dead_labels.h"
 #include "../task_utils/state_mutexes.h"
 
 // include for BDDs
@@ -136,6 +137,9 @@ struct BDDEncodingData {
 	std::vector<std::pair<int,int>> mutex_units;
 	std::vector<std::array<int,4>> mutex_pairs;
 	std::vector<char> goal_achieving;
+	// dead labels (task_utils/dead_labels): forced false at every step; the BDDs are
+	// cofactored by their negation and no longer mention them
+	std::vector<int> dead_labels;
 };
 
 
@@ -242,6 +246,9 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	std::unique_ptr<state_mutexes::StateMutexes> mutexes;
 	void mutex_clauses();
 	void mutex_cut(BDDEncodingData::Ordering & ord);
+	const dead_labels::Options deadLabelOptions;
+	std::vector<bool> deadLabels;       // label -> dead; all false without a source
+	BDD deadLabelCube(const BDDEncodingData::Ordering & ord) const;
 	const bool goalLastLabel;
 	/// source/target/pair/cross units and leave/enter clauses (see BDDEncodingData)
 	void compute_state_clauses();
