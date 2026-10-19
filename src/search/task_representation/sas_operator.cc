@@ -1,4 +1,5 @@
 #include "sas_operator.h"
+#include "sas_task.h"
 
 #include "../globals.h"
 
@@ -41,6 +42,17 @@ SASCondition::SASCondition(int variable, int value)
     g_sas_task()->check_fact(var, val);
 }
 
+SASCondition::SASCondition(istream &in, const SASTask &task) {
+    in >> var >> val;
+    task.check_fact(var, val);
+}
+
+SASCondition::SASCondition(int variable, int value, const SASTask &task)
+    : var(variable),
+      val(value) {
+    task.check_fact(var, val);
+}
+
 // TODO if the input file format has been changed, we would need something like this
 // Effect::Effect(istream &in) {
 //    int cond_count;
@@ -57,25 +69,33 @@ SASEffect::SASEffect(int variable, int value, const vector<SASCondition> &conds)
     g_sas_task()->check_fact(var, val);
 }
 
-void SASOperator::read_pre_post(istream &in) {
+SASEffect::SASEffect(int variable, int value, const vector<SASCondition> &conds, const SASTask &task)
+    : var(variable),
+      val(value),
+      conditions(conds) {
+    task.check_fact(var, val);
+}
+
+void SASOperator::read_pre_post(istream &in, const SASTask &task) {
     int cond_count, var, pre, post;
     in >> cond_count;
     vector<SASCondition> conditions;
     conditions.reserve(cond_count);
     for (int i = 0; i < cond_count; ++i)
-        conditions.push_back(SASCondition(in));
+        conditions.push_back(SASCondition(in, task));
     in >> var >> pre >> post;
     if (pre != -1) {
-        g_sas_task()->check_fact(var, pre);}
-    g_sas_task()->check_fact(var, post);
+        task.check_fact(var, pre);}
+    task.check_fact(var, post);
     if (pre != -1) {
-        preconditions.push_back(SASCondition(var, pre));
+        preconditions.push_back(SASCondition(var, pre, task));
     }
-    effects.push_back(SASEffect(var, post, conditions));
+    effects.push_back(SASEffect(var, post, conditions, task));
 }
 
 SASOperator::SASOperator(istream &in, bool axiom,
-                         bool g_use_metric, int & g_min_action_cost, int & g_max_action_cost ) {
+                         bool g_use_metric, int & g_min_action_cost, int & g_max_action_cost,
+                         const SASTask &task) {
     is_an_axiom = axiom;
     if (!is_an_axiom) {
         check_magic(in, "begin_operator");
@@ -84,10 +104,10 @@ SASOperator::SASOperator(istream &in, bool axiom,
         int count;
         in >> count;
         for (int i = 0; i < count; ++i)
-            preconditions.push_back(SASCondition(in));
+            preconditions.push_back(SASCondition(in, task));
         in >> count;
         for (int i = 0; i < count; ++i)
-            read_pre_post(in);
+            read_pre_post(in, task);
 
         int op_cost;
         in >> op_cost;
@@ -101,7 +121,7 @@ SASOperator::SASOperator(istream &in, bool axiom,
         name = "<axiom>";
         cost = 0;
         check_magic(in, "begin_rule");
-        read_pre_post(in);
+        read_pre_post(in, task);
         check_magic(in, "end_rule");
     }
 }

@@ -210,7 +210,7 @@ void SASTask::read_operators(istream &in) {
     int count;
     in >> count;
     for (int i = 0; i < count; ++i) {
-        SASOperator op (in, false, g_use_metric, g_min_action_cost, g_max_action_cost);
+        SASOperator op (in, false, g_use_metric, g_min_action_cost, g_max_action_cost, *this);
 
         set<int> condition_variables;
         for (const auto & eff : op.get_effects()) {
@@ -235,7 +235,7 @@ void SASTask::read_axioms(istream &in) {
     in >> count;
     for (int i = 0; i < count; ++i)
         g_axioms.push_back(SASOperator(in, true,
-                                          g_use_metric, g_min_action_cost, g_max_action_cost));
+                                          g_use_metric, g_min_action_cost, g_max_action_cost, *this));
 
     // g_axiom_evaluator = new AxiomEvaluator(TaskProxy(*g_root_task()));
 }

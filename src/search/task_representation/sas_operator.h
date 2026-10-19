@@ -8,6 +8,7 @@
 #include <vector>
 
 namespace task_representation {
+class SASTask;
 void check_magic(std::istream &in, std::string magic);
 
 struct SASCondition {
@@ -15,6 +16,9 @@ struct SASCondition {
     int val;
     explicit SASCondition(std::istream &in);
     SASCondition(int variable, int value);
+    // checked against the given task instead of g_sas_task() (for reading other SAS files)
+    SASCondition(std::istream &in, const SASTask &task);
+    SASCondition(int variable, int value, const SASTask &task);
 
     bool is_applicable(const GlobalState &state) const {
         return state[var] == val;
@@ -42,6 +46,7 @@ struct SASEffect {
     std::vector<SASCondition> conditions;
     explicit SASEffect(std::istream &in);
     SASEffect(int variable, int value, const std::vector<SASCondition> &conds);
+    SASEffect(int variable, int value, const std::vector<SASCondition> &conds, const SASTask &task);
 
     bool does_fire(const GlobalState &state) const {
         for (size_t i = 0; i < conditions.size(); ++i)
@@ -67,10 +72,12 @@ class SASOperator {
     std::string name;
     int cost;
 
-    void read_pre_post(std::istream &in);
+    void read_pre_post(std::istream &in, const SASTask &task);
 public:
+    // the facts are checked against task, the task the operator belongs to
     explicit SASOperator(std::istream &in, bool is_axiom,
-                         bool g_use_metric, int & g_min_action_cost, int & g_max_action_cost);
+                         bool g_use_metric, int & g_min_action_cost, int & g_max_action_cost,
+                         const SASTask &task);
     SASOperator (bool _is_an_axiom,
                  std::vector<SASCondition> && _preconditions,
                  std::vector<SASEffect> && _effects,
