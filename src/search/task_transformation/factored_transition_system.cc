@@ -1,5 +1,8 @@
 #include "factored_transition_system.h"
 
+#include "plan_reconstruction_tau_path.h"
+#include "tau_graph.h"
+
 #include "distances.h"
 #include "merge_and_shrink_representation.h"
 #include "utils.h"
@@ -485,11 +488,13 @@ FTSMapping FactoredTransitionSystem::cleanup(const set<int> &exclude_transition_
 
     assert((size_t) num_active_entries == transition_systems.size());
 
+    last_cleanup_step = nullptr;
     if (!lossy_mapping && predecessor_fts_task) {
         plan_reconstruction_steps.push_back(
                 make_shared<PlanReconstructionMergeAndShrink>(
                         predecessor_fts_task, move(old_mas_representations), move(label_map),
                         transition_system_mapping));
+        last_cleanup_step = plan_reconstruction_steps.back();
     }
 
     return FTSMapping(move(transition_system_mapping), move(transition_system_all_mapping), move(label_mapping));
@@ -521,6 +526,16 @@ void FactoredTransitionSystem::reinitialize_predecessor_task() {
     } else {
         predecessor_fts_task = nullptr;
     }
+}
+
+
+void FactoredTransitionSystem::add_plan_reconstruction(shared_ptr<PlanReconstruction> plan_reconstruction) {
+    if (dynamic_cast<PlanReconstructionTauPath *>(plan_reconstruction.get()) && last_cleanup_step &&
+        !plan_reconstruction_steps.empty() && plan_reconstruction_steps.back() == last_cleanup_step) {
+        static_cast<PlanReconstructionMergeAndShrink *>(last_cleanup_step.get())->set_renumbering_left_to_next_step();
+    }
+    last_cleanup_step = nullptr;
+    plan_reconstruction_steps.push_back(plan_reconstruction);
 }
 
 

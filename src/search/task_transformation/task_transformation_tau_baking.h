@@ -58,6 +58,12 @@ public:
     std::vector<int> old_initial_state;
 
     virtual void reconstruct_plan(Plan &plan) const override;
+    /*
+      Factors keep their numbering; states are renumbered (pruning). Before the next label a
+      baked factor walks a tau path forward from its state, so a new state stands for every
+      old state tau-reachable from its old state.
+    */
+    virtual bool map_state_sets(StateSets &sets, std::string &why) const override;
     virtual void print(std::ostream &o) const override {
         o << "TauBaking";
     }

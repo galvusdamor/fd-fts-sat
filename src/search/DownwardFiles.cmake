@@ -579,6 +579,7 @@ fast_downward_plugin(
 		sat/length_strategy
 		sat/fts_matrix
 		task_utils/label_order_finder
+		task_utils/state_mutexes
 		task_utils/label_order_goal_chains
     DEPENDENCY_ONLY
 )

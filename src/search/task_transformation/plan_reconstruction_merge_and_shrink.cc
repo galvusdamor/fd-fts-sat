@@ -1,5 +1,7 @@
 #include "plan_reconstruction_merge_and_shrink.h"
 
+#include <algorithm>
+
 #include "label_map.h"
 #include "merge_and_shrink_representation.h"
 #include "../task_representation/fts_task.h"
@@ -164,6 +166,89 @@ void PlanReconstructionMergeAndShrink::reconstruct_plan(Plan & plan) const {
     plan.set_plan(move(plan_states), move(new_label_path));
 }
 
+
+static bool representation_sets(const MergeAndShrinkRepresentation &rep, const StateSets &before,
+                                vector<int> &vars, vector<vector<StateSets::Tuple>> &tuples, string &why) {
+    const long tuple_limit = 1000000;
+    if (auto leaf = dynamic_cast<const MergeAndShrinkRepresentationLeaf *>(&rep)) {
+        const int pf = leaf->get_var_id();
+        if (pf < 0 || pf >= (int)before.tuples.size()) { why = "bad factor in a representation"; return false; }
+        const auto &table = leaf->get_lookup_table();
+        if (table.size() != before.tuples[pf].size()) { why = "lookup table size"; return false; }
+        int n = 0;
+        for (int a : table) n = max(n, a + 1);
+        vars = before.vars[pf];
+        tuples.assign(n, {});
+        for (size_t q = 0; q < table.size(); q++)
+            if (table[q] >= 0)
+                tuples[table[q]].insert(tuples[table[q]].end(), before.tuples[pf][q].begin(), before.tuples[pf][q].end());
+        return true;
+    }
+    auto merge = dynamic_cast<const MergeAndShrinkRepresentationMerge *>(&rep);
+    if (!merge) { why = "unknown merge-and-shrink representation"; return false; }
+    vector<int> lvars, rvars;
+    vector<vector<StateSets::Tuple>> ltuples, rtuples;
+    if (!representation_sets(merge->get_left_child(), before, lvars, ltuples, why) ||
+        !representation_sets(merge->get_right_child(), before, rvars, rtuples, why))
+        return false;
+    const auto &table = merge->get_lookup_table();
+    if (table.size() != ltuples.size()) { why = "merge table size"; return false; }
+    int n = 0;
+    for (const auto &row : table) {
+        if (row.size() != rtuples.size()) { why = "merge table size"; return false; }
+        for (int a : row) n = max(n, a + 1);
+    }
+    vars = lvars;
+    vars.insert(vars.end(), rvars.begin(), rvars.end());
+    tuples.assign(n, {});
+    long total = 0;
+    for (size_t a = 0; a < table.size(); a++)
+        for (size_t b = 0; b < table[a].size(); b++) {
+            const int s = table[a][b];
+            if (s < 0) continue;
+            total += (long)ltuples[a].size() * rtuples[b].size();
+            if (total > tuple_limit) { why = "too many tuples in a merged factor"; return false; }
+            for (const auto &x : ltuples[a])
+                for (const auto &y : rtuples[b]) {
+                    StateSets::Tuple t = x;
+                    t.insert(t.end(), y.begin(), y.end());
+                    tuples[s].push_back(move(t));
+                }
+        }
+    for (auto &ts : tuples) normalize(ts);
+    return true;
+}
+
+bool PlanReconstructionMergeAndShrink::map_state_sets(StateSets &sets, string &why) const {
+    if (factor_of_representation.size() != merge_and_shrink_representations.size()) {
+        why = "merge-and-shrink step without factor mapping";
+        return false;
+    }
+    const size_t R = merge_and_shrink_representations.size();
+    StateSets after;
+    after.vars.resize(R);
+    after.tuples.resize(R);
+    for (size_t r = 0; r < R; r++)
+        if (!representation_sets(*merge_and_shrink_representations[r], sets, after.vars[r], after.tuples[r], why))
+            return false;
+    if (!renumbers_factors) {
+        sets = move(after);
+        return true;
+    }
+    int nf = 0;
+    for (int f : factor_of_representation) nf = max(nf, f + 1);
+    StateSets renumbered;
+    renumbered.vars.resize(nf);
+    renumbered.tuples.resize(nf);
+    for (size_t r = 0; r < R; r++) {
+        const int f = factor_of_representation[r];
+        if (f < 0) continue;   // factor dropped by the transformation
+        renumbered.vars[f] = move(after.vars[r]);
+        renumbered.tuples[f] = move(after.tuples[r]);
+    }
+    sets = move(renumbered);
+    return true;
+}
 
     void PlanReconstructionMergeAndShrink::print(std::ostream& o) const  {
         o << "MS";

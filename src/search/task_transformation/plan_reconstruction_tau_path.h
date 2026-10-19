@@ -121,6 +121,14 @@ PlanReconstructionTauPath(const FTSMapping & fts_mapping, PlanState initial_stat
     }
     const std::vector<int> &get_transition_system_mapping() const {return transition_system_mapping;}
     virtual void reconstruct_plan(Plan &plan) const override;
+    /*
+      During reconstruction a shrunk factor follows tau paths from its current state while
+      the abstract plan still shows the old abstract state, so an abstract state stands for
+      every predecessor state tau-reachable from the states mapped onto it. The factors are
+      renumbered by transition_system_mapping (this step applies the renumbering of the
+      cleanup that created it, see FactoredTransitionSystem::add_plan_reconstruction).
+    */
+    virtual bool map_state_sets(StateSets &sets, std::string &why) const override;
 
     virtual void print(std::ostream& o) const override;
 };

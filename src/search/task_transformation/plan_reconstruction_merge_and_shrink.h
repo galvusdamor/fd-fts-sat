@@ -34,6 +34,10 @@ class PlanReconstructionMergeAndShrink : public PlanReconstruction {
     // of the transformed task, or a factor the transformation dropped (-1)
     std::vector<int> factor_of_representation;
 
+    // false if a tau-path step of the same cleanup follows and applies the renumbering of
+    // the factors (factor_of_representation) itself, see set_renumbering_left_to_next_step()
+    bool renumbers_factors = true;
+
 
     // This is the set of tau_labels, that we can use.
     //std::vector<int> tau_labels;
@@ -56,6 +60,15 @@ public:
         std::vector<int> factor_of_representation = {});
     virtual ~PlanReconstructionMergeAndShrink() = default;
     virtual void reconstruct_plan(Plan &plan) const override;
+    /*
+      A state of the successor task stands for the states of the predecessor task its
+      representation maps onto it: a leaf maps the states of one predecessor factor, a merge
+      node the combinations of its children (cross product of their tuples).
+    */
+    virtual bool map_state_sets(StateSets &sets, std::string &why) const override;
+    void set_renumbering_left_to_next_step() {
+        renumbers_factors = false;
+    }
 
     virtual void print(std::ostream& o) const override;
 

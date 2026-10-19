@@ -74,6 +74,10 @@ public:
     virtual int get_value(const State &state) const override;
     virtual int get_value(const GlobalState &state) const override;
     virtual void dump() const override;
+    const MergeAndShrinkRepresentation &get_left_child() const {return *left_child;}
+    const MergeAndShrinkRepresentation &get_right_child() const {return *right_child;}
+    // lookup_table[left value][right value] = abstract state (PRUNED_STATE if pruned)
+    const std::vector<std::vector<int>> &get_lookup_table() const {return lookup_table;}
 };
 }
 

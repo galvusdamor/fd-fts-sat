@@ -245,4 +245,50 @@ void PlanReconstructionTauPath::reconstruct_plan(Plan &plan) const {
         o << "Tau";
     }
 
+
+bool PlanReconstructionTauPath::map_state_sets(StateSets &sets, std::string &why) const {
+    const auto &tm = transition_system_mapping;
+    if (tm.size() != sets.tuples.size()) { why = "tau step factor count"; return false; }
+    int nf = 0;
+    for (int f : tm) nf = std::max(nf, f + 1);
+    StateSets after;
+    after.vars.resize(nf);
+    after.tuples.resize(nf);
+    std::vector<const TauShrinking *> shrink_of(sets.tuples.size(), nullptr);
+    for (const auto &ts : tau_transformations) {
+        const int i = ts->get_ts_index_predecessor();
+        if (i < 0 || i >= (int)sets.tuples.size()) { why = "tau step index"; return false; }
+        shrink_of[i] = ts.get();
+    }
+    for (size_t i = 0; i < sets.tuples.size(); ++i) {
+        const TauShrinking *ts = shrink_of[i];
+        if (!ts) {
+            if (tm[i] >= 0) { after.vars[tm[i]] = std::move(sets.vars[i]); after.tuples[tm[i]] = std::move(sets.tuples[i]); }
+            continue;
+        }
+        const int succ = ts->get_ts_index_successor();
+        if (succ < 0) continue;   // shrunk to a single state and dropped
+        const auto &abs = ts->get_abstraction();
+        const TauGraph &tg = ts->get_tau_graph();
+        if (abs.size() != sets.tuples[i].size() || tg.get_num_states() != (int)abs.size()) {
+            why = "tau step state count";
+            return false;
+        }
+        int nb = 0;
+        for (int b : abs) nb = std::max(nb, b + 1);
+        std::vector<std::vector<int>> successors(abs.size());
+        for (size_t x = 0; x < abs.size(); ++x)
+            for (const auto &tr : tg.get_transitions(x)) successors[x].push_back(tr.target);
+        after.vars[succ] = sets.vars[i];
+        after.tuples[succ].assign(nb, {});
+        for (size_t x = 0; x < abs.size(); ++x) {
+            if (abs[x] < 0) continue;
+            auto c = closure_tuples(sets.tuples[i], successors, x);
+            after.tuples[succ][abs[x]].insert(after.tuples[succ][abs[x]].end(), c.begin(), c.end());
+        }
+        for (auto &t : after.tuples[succ]) normalize(t);
+    }
+    sets = std::move(after);
+    return true;
+}
 }

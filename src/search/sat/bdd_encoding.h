@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "label_encoding.h"
+#include "../task_utils/state_mutexes.h"
 
 // include for BDDs
 #include "cuddObj.hh"
@@ -234,21 +235,12 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const int moveClauseParts;
 	const bool moveFrameSplit;
 	const bool mutexClauses, mutexCutting;
-	const std::string dumpFTSFile;
-	const int mutexSource;
-	const std::string mutexFile;
-	const int mutexMaxFacts, mutexClauseMax;
-	const double mutexTimeLimit, mutexCutTimeLimit, mutexCutLimitFactor;
-	// pairwise reachability of facts (factor states); empty if not computed / not converged
-	std::vector<int> factOffset;
-	std::vector<std::vector<uint64_t>> reach;
-	void compute_state_mutexes();
-	void dump_fts() const;
-	int init_facts();
-	bool mutexes_from_sas();
-	bool mutexes_from_file();
-	void mutexes_fts_fixpoint();
-	void finish_mutexes(const char * source, double seconds);
+	const state_mutexes::Options mutexOptions;
+	const int mutexClauseMax;
+	const double mutexCutTimeLimit, mutexCutLimitFactor;
+	// compatibility of the factor states (task_utils/state_mutexes); null if not computed
+	std::unique_ptr<state_mutexes::StateMutexes> mutexes;
+	void mutex_clauses();
 	void mutex_cut(BDDEncodingData::Ordering & ord);
 	const bool goalLastLabel;
 	/// source/target/pair/cross units and leave/enter clauses (see BDDEncodingData)

@@ -323,6 +323,27 @@ void PlanReconstructionTauBaking::reconstruct_plan(Plan &plan) const {
     plan.set_plan(move(new_states), move(new_labels));
 }
 
+bool PlanReconstructionTauBaking::map_state_sets(StateSets &sets, string &why) const {
+    if (old_state.size() != sets.tuples.size()) { why = "tau baking factor count"; return false; }
+    for (size_t f = 0; f < sets.tuples.size(); ++f) {
+        const auto &old = old_state[f];
+        const BakedFactor *b = baked[f].get();
+        vector<vector<int>> successors(sets.tuples[f].size());
+        if (b) {
+            if (b->tau_successors.size() != sets.tuples[f].size()) { why = "tau baking state count"; return false; }
+            for (size_t x = 0; x < successors.size(); ++x)
+                for (const auto &e : b->tau_successors[x]) successors[x].push_back(e.second);
+        }
+        vector<vector<StateSets::Tuple>> renumbered(old.size());
+        for (size_t s2 = 0; s2 < old.size(); ++s2) {
+            if (old[s2] < 0 || old[s2] >= (int)sets.tuples[f].size()) { why = "tau baking state map"; return false; }
+            renumbered[s2] = b ? closure_tuples(sets.tuples[f], successors, old[s2]) : sets.tuples[f][old[s2]];
+        }
+        sets.tuples[f].swap(renumbered);
+    }
+    return true;
+}
+
 static shared_ptr<TaskTransformation> _parse(options::OptionParser &parser) {
     parser.document_synopsis(
         "Tau baking",

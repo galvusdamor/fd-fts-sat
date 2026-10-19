@@ -63,6 +63,14 @@ public:
         closed[label] = std::move(data);
     }
     virtual void reconstruct_plan(Plan &plan) const override;
+    /*
+      States and factors are unchanged. A closed transition is expanded into l^K, whose
+      intermediate states lie between two time points of the plan, so the states at the
+      time points stand for themselves.
+    */
+    virtual bool map_state_sets(StateSets &, std::string &) const override {
+        return true;
+    }
     virtual void print(std::ostream &o) const override {
         o << "LabelClosure";
     }

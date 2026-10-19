@@ -80,6 +80,8 @@ class FactoredTransitionSystem {
     int num_active_entries;
 
     std::vector<std::shared_ptr<PlanReconstruction>> plan_reconstruction_steps;
+    // the merge-and-shrink step the last cleanup created (null if it created none)
+    std::shared_ptr<PlanReconstruction> last_cleanup_step;
 
     std::shared_ptr<task_representation::FTSTask> predecessor_fts_task;
 
@@ -234,9 +236,12 @@ public:
 
     void reinitialize_predecessor_task ();
 
-    void add_plan_reconstruction(std::shared_ptr<PlanReconstruction> plan_reconstruction) {
-        plan_reconstruction_steps.push_back(plan_reconstruction);
-    }
+    /*
+      Adds a reconstruction step. A tau-path step added directly after the merge-and-shrink
+      step of a cleanup applies that cleanup's renumbering of the factors itself, so the
+      merge-and-shrink step is told not to (for PlanReconstruction::map_state_sets).
+    */
+    void add_plan_reconstruction(std::shared_ptr<PlanReconstruction> plan_reconstruction);
     std::shared_ptr<PlanReconstruction> get_plan_reconstruction();
     std::shared_ptr<task_representation::FTSTask> get_transformed_fts_task();
     Mapping get_mapping();
