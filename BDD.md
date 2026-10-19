@@ -415,6 +415,8 @@ takes at least 1 s.
 
 ### 5.4 Other encodings, on the 89 tasks the transformations change
 
+*Superseded by §5.7 (all 303 tasks, both label orders for `full_transitions_sat`).*
+
 On the other 214 tasks every configuration gets the identical task. Encoders:
 `label_sat(encoding=CHAINS_PARALLEL, ...rcpol)` (`chains_slf____rcpol`) and
 `full_transitions_sat(use_self_loop_optimisation=true, use_labels_in_effects_constraints=false)`
@@ -543,8 +545,52 @@ relative to `-shr`; +/- against `-shr`):
   horizon a little more (669 -> 666) but loses driverlog p03 and nomystery p07.
 * Best configuration: `-shr` + merging (`max_dependents=1`) + `tau_baking`.
 
+### 5.7 All encoders and transformations, 303 tasks (2026-10-19)
+
+Same 303 tasks and setup as §5.3 (300 s / 2500 MB, 4 jobs, all plans valid; data-network
+and floortile checked separately). `full_transitions_sat` with its default label-id order
+(linear) and with goal-chains v2, the order `bdd_sat` uses. `label_sat` has no label order:
+its CHAINS_PARALLEL semantics is forall-step (chains built in both directions,
+`compute_guarded_forall_chains`), so the order only affects the clause construction.
+Merging = `merge_local_guard(max_states=1000, max_dependents=1)`.
+
+| configuration | `bdd_sat` v2 solved | PAR-2 | `full_transitions_sat` v2 solved | PAR-2 | `full_transitions_sat` linear solved | PAR-2 | `label_sat` solved | PAR-2 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `-shr` | 292 | 53.7 | 292 | 45.8 | **259** | 108.1 | 218 | 189.0 |
+| + `tau_baking` | 297 | 45.2 | **294** | 42.1 | **259** | 107.8 | **221** | **182.3** |
+| + `label_closure` | 290 | 56.3 | 291 | 47.8 | 258 | 109.8 | 217 | 190.6 |
+| + both | 296 | 46.3 | 293 | 43.7 | 258 | 109.3 | 220 | 184.1 |
+| merging + `tau_baking` | **299** | **41.9** | **294** | **41.5** | **259** | **106.7** | 220 | 184.1 |
+| merging + `tau_baking` + `label_closure` | 297 | 43.6 | 293 | 43.0 | 258 | 108.2 | 220 | 184.2 |
+
+Σ horizon over the 206 tasks all four solve in every configuration (rows in table order),
+and total time relative to each encoder's own `-shr` (geometric mean, tasks both solve,
+one of the two >= 1 s):
+
+| encoder | Σ horizon | time |
+|---|---|---|
+| `bdd_sat` v2 | 574 / 459 / 567 / 456 / 449 / 446 | 1.00 / 0.89 / 1.01 / 0.88 / 0.86 / 0.85 |
+| `full_transitions_sat` v2 | 574 / 459 / 567 / 456 / 449 / 446 | 1.00 / 0.94 / 1.02 / 0.94 / 0.93 / 0.92 |
+| `full_transitions_sat` linear | 989 / 841 / 983 / 839 / 823 / 821 | 1.00 / 0.91 / 1.01 / 0.92 / 0.89 / 0.90 |
+| `label_sat` | 2226 / 1940 / 2215 / 1937 / 1885 / 1882 | 1.00 / 0.87 / 1.01 / 0.88 / 0.88 / 0.89 |
+
+* **The label order, not the encoding, made the difference.** Under the same order
+  `full_transitions_sat` solves as many tasks as `bdd_sat` without transformation (292 /
+  292) with a better PAR-2 (45.8 vs 53.7), and both reach exactly the same horizon in every
+  configuration: they express the same step semantics. With its default label-id order
+  `full_transitions_sat` solves 33 fewer.
+* `bdd_sat` profits more from the transformations: +7 tasks and PAR-2 53.7 -> 41.9 with
+  merging + `tau_baking`, against +2 and 45.8 -> 41.5 for `full_transitions_sat` v2. In
+  the best configuration the two are level on PAR-2, `bdd_sat` solves 5 more.
+* The encoders fail on different tasks (best configuration): only `bdd_sat` solves
+  nomystery p04/p05/p06/p07/p09 and pathways p09/p14/p18; only `full_transitions_sat` v2
+  solves blocksworld p02 and childsnack p16/p17/p27 (§ on childsnack p16: same horizon 1,
+  but `bdd_sat` needs 100-850x the conflicts).
+* `tau_baking` shortens the horizon of every encoder by 13-20 % and the time by 6-13 %;
+  `label_closure` never helps.
+
 Raw data: `/home/gregor/data/claude-jobs/abf93c5f/trans/` (`camp_all.csv`, `nolr_all.csv`,
-`enc_{label,trans}_*.csv`, `lin.csv`, `tv2_*.csv`, `g303_all.csv`, `g303b_all.csv`, `local_*.csv`,
+`enc_{label,trans}_*.csv`, `lin.csv`, `tv2_*.csv`, `g303_all.csv`, `g303b_all.csv`, `enc303_{label,trans,tv2}_all.csv`, `local_*.csv`,
 `closure_*.csv`, `guard_shr.csv`); runner `scripts/trans_test.py`, report
 `scripts/trans_report.py`.
 
