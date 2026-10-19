@@ -278,20 +278,31 @@ removes few label sets that the encoding does not already rule out by itself.
     since the existing h2 is the preferred source.
 
 **Mapping SAS mutexes through the transformation.** An abstract state stands for a set
-of concrete values. A pair of abstract states is mutex only if **every** pair of values
-they can stand for is mutex. The sets are composed through **all** plan-reconstruction
-steps, in the order the transformations were applied:
+of concrete value tuples. A pair of abstract states is mutex only if **every** pair of
+tuples they can stand for contains a mutex pair of facts. The sets are handed down through
+**all** plan-reconstruction steps, in the order the transformations were applied.
 
-* merge-and-shrink steps go through the leaf lookup tables, renumbered by
-  `factor_of_representation`;
-* τ-path steps take the **τ-closure**: every state that may arise during reconstruction
-  via τ-labels must carry the mutex.
+Since `76a5b728c` every step does this itself: `PlanReconstruction::map_state_sets` is pure
+virtual, so a new transformation does not compile until it decides how mutex information
+passes through it, and a step that cannot map returns a reason (`STATEMUTEXES skipped:
+...`) instead of producing wrong clauses. The mutex sources live in
+`task_utils/state_mutexes.{h,cc}`; `bdd_encoding.cc` only turns the relation into clauses
+and `mutex_cut`. The steps:
+
+* merge-and-shrink: through the representation; a merge node takes the cross product of
+  its children's tuples (merged factors), and the factors are renumbered by
+  `factor_of_representation` unless a τ-path step of the same cleanup does it;
+* τ-path: the **τ-closure**: every state that may arise during reconstruction via
+  τ-labels must carry the mutex;
+* `tau_baking`: τ-closure forward from the old state, renumbering after pruning;
+* `label_closure`: identity (intermediate states lie between time points).
 
 Earlier versions were unsound (wrong step order, representations of dropped factors,
-pruned values). The current one was checked by projecting abstract plans: 0 mutex hits
-on 8 tasks, with and without h2. A safeguard rejects any mapping that makes initial
-states mutex. Debug environment variables: `FTS_MUTEX_DUMP`, `FTS_MAPPING_DUMP`,
-`FTS_PLAN_STATES_DUMP`, `FTS_MUTEX_DEBUG`.
+pruned values). Checks: plans projected onto the claimed mutexes hit none, on 8 tasks with
+`-shr` (with and without h2) and on 9 tasks with merging + `tau_baking` + h2; the refactored
+module gives the same counts as before on `-shr`. A safeguard rejects any mapping that makes
+initial states mutex. Debug environment variables: `FTS_MUTEX_DUMP`, `FTS_MAPPING_DUMP`,
+`FTS_PLAN_STATES_DUMP`.
 
 Findings:
 
