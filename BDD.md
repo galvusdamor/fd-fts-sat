@@ -681,6 +681,30 @@ operators there, but each label also stands for live ones.
   finds nothing usable. A time limit for h2 (and skipping it on tasks where it is
   slow) is the obvious fix; nothing here is evidence against the encoding side.
 
+**h2 time limit** (2026-10-20). `preprocess-h2 --h2_time_limit` was barely enforced: the
+clock was checked every 10,000 operators in the fixpoint only, never during
+disambiguation (`remove_spurious_operators`), which alone took 45 s on transport p15. It
+is now checked every 100 operators in both (`fcd551d3b`); a cut-off run keeps the results
+of the passes it completed and discards the unfinished one, so it stays sound. With a
+10 s limit (merging + `tau_baking`, 303 tasks; ratios over the 287 tasks all rows solve):
+
+| configuration | solved | PAR-2 | conflicts | time |
+|---|---:|---:|---:|---:|
+| merging + `tau_baking` | **299** | 41.9 | 0.50 | 0.86 |
+| + h2 mutexes only, h2 300 s | 295 | 42.6 | 0.31 | 0.78 |
+| + h2 mutexes only, h2 10 s | 296 | **41.7** | 0.31 | 0.80 |
+| + h2 dead labels, h2 300 s | 294 | 47.0 | 0.45 | 0.85 |
+| + h2 dead labels, h2 10 s | 296 | 44.5 | 0.45 | 0.86 |
+| + h2 mutexes + dead labels, h2 300 s | 293 | 45.3 | 0.28 | **0.77** |
+| + h2 mutexes + dead labels, h2 10 s | 296 | 42.0 | **0.27** | 0.79 |
+
+h2 is cut off on 28 tasks, and on those it loses information on exactly one (airport p03:
+52,064 -> 51,143 mutex pairs, dead labels unchanged); all others are elevators and
+transport tasks where h2 finds nothing. The limit wins back elevators p29/p30 and
+transport p15 and loses nothing. What remains against no h2 (childsnack p15/p26,
+nomystery p09, pathways p18/p24) took 250-281 s without h2: noise at the limit.
+Raw data `trans/h2tl_all.csv`.
+
 Raw data: `trans/combo_*_all.csv`, `trans/h2m_all.csv`, `trans/dead_all.csv`
 (`encoder` column), `trans/mutex_stages/`, `trans/h2m_verify/`, `trans/dead_verify/`.
 
