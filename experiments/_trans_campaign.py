@@ -113,11 +113,14 @@ def make_experiment(revision, benchmarks_dir, suite, config_names, fetch_from, n
     report_filters = [filters.remove_revision,
                       filters.filter_bdd_known_unexplained_errors,
                       filters.filter_kissat_known_unexplained_errors]
+    # filters.remove_revision drops the "<revision>-" prefix before filter_algorithm is
+    # applied, so the tables select by the bare configuration names (all unique)
     exp.add_report(AbsoluteReport(attributes=attributes, filter=report_filters,
-                                  filter_algorithm=new + old),
+                                  filter_algorithm=list(config_names) + list(OLD_ALGORITHMS) if fetch_from
+                                  else list(config_names)),
                    outfile=f"{name_prefix}-all.html")
     exp.add_report(AbsoluteReport(attributes=attributes, filter=report_filters,
-                                  filter_algorithm=new),
+                                  filter_algorithm=list(config_names)),
                    outfile=f"{name_prefix}-new.html")
 
     # each new configuration against its closest old one, and the new ones against #1
