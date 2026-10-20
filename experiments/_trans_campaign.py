@@ -219,4 +219,6 @@ PAIRS_RUN_2 = [
     # full_transitions_sat against bdd_sat
     ("A_1__fulltrans_gc2_h2info-mtau", "A_1__bdd_gc2_h2info-mtau"),
     ("A_1__fulltrans_gc2_h2pre-shr", "A_1__bdd_gc2_h2pre-shr"),
+    # the best configuration of each encoder (they differ in the h2 mode as well)
+    ("A_1__bdd_gc2_h2info-mtau", "A_1__fulltrans_gc2_h2pre-mtau"),
 ]
