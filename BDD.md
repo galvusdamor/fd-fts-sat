@@ -605,6 +605,85 @@ Raw data: `/home/gregor/data/claude-jobs/abf93c5f/trans/` (`camp_all.csv`, `nolr
 `closure_*.csv`, `guard_shr.csv`); runner `scripts/trans_test.py`, report
 `scripts/trans_report.py`.
 
+### 5.8 Add-ons on merging + `tau_baking`; h2 without preprocessing (2026-10-19/20)
+
+Same 303 tasks and setup as §5.7, `bdd_sat` v2. Conflicts and time are geometric means
+relative to `-shr` without add-ons, over the tasks all rows of a table solve where one of
+the two takes >= 1 s.
+
+**Add-ons of §4 on merging + `tau_baking`** (`combo_*_all.csv`):
+
+| add-on | solved | PAR-2 | conflicts | time |
+|---|---:|---:|---:|---:|
+| none | **299** | **41.9** | 0.49 | 0.86 |
+| implications (cap 300k, 10 s) | 296 | 44.8 | 0.35 | 0.93 |
+| state clauses (10 s, phased) | 294 | 47.7 | 0.13 | 1.35 |
+| h2 preprocessing + mutex clauses | 289 | 49.0 | 0.19 | **0.67** |
+| h2 preprocessing + mutex clauses + implications | 290 | 46.2 | 0.14 | 0.69 |
+| h2 preprocessing + mutex clauses + state clauses | 287 | 54.1 | **0.08** | 1.14 |
+
+**Mutexes per transformation stage** (`mutex_stages/`, 4 tasks): merging turns mutexes
+between factors into unreachable product states (rovers: 7 pairs -> 0, one per merge),
+`tau_baking` loses none.
+
+**Two ways of using h2 without letting it change the task.** h2 runs on a copy of the
+translated task (`preprocess-h2`); transformation and search run on the original. The
+h2 output is read into its own `SASTask` and mapped back by fact and operator names
+(`task_utils/h2_information`).
+
+* *h2 mutexes only* (`mutex_source=SAS_FILE, mutex_file=<h2 output>`): h2's mutexes
+  and unreachable facts, mapped through the transformation as in §4.7.
+* *h2 dead labels* (`dead_labels=SAS_FILE, dead_labels_file=<h2 output>`,
+  `task_utils/dead_labels`): a label is dead if h2 removed **all** of its operators
+  (label origins are handed down through every reconstruction step,
+  `PlanReconstruction::map_label_sets`). Dead labels get a unit clause at every step;
+  the full-reachability DP skips them (= cofactor by their negation) and one-step BDDs
+  are cofactored, so the BDDs no longer mention them. Sound: h2 only removes operators
+  that are never applicable or that relevance analysis drops, and dropping such an
+  operator from a plan never adds a break, so the horizon cannot grow.
+
+Verification: plans projected onto the claimed h2 mutexes hit none (6 tasks); on 8
+tasks with many dead labels no dead label occurs in the plan (`--internal-fts-plan-file`
+against `FTS_DEAD_LABELS_DUMP`), horizons equal. All 1818 runs below valid.
+
+Dead labels exist in 85 of the 303 tasks: parcprinter 30, pegsol 18, freecell 10,
+pipesworld 5, airport/woodworking 4, depots/floortile/tetris/sokoban 3, tidybot 2. Where
+they exist they can dominate: tidybot p01 6,986 of 7,683 labels, pegsol p07 70 of 76,
+airport p01 785 of 964, depots p01 480 of 774. Nomystery has none: h2 removes 1,048
+operators there, but each label also stands for live ones.
+
+| configuration | solved | PAR-2 | conflicts | time |
+|---|---:|---:|---:|---:|
+| `-shr` | 292 | 53.7 | 1.00 | 1.00 |
+| `-shr` + h2 mutexes only | 291 | 50.4 | 0.61 | 0.87 |
+| `-shr` + h2 dead labels | 292 | 51.9 | 0.90 | 0.97 |
+| `-shr` + h2 mutexes only + dead labels | 290 | 51.1 | 0.53 | 0.86 |
+| merging + `tau_baking` | **299** | **41.9** | 0.50 | 0.87 |
+| merging + `tau_baking` + h2 preprocessing + mutex clauses | 289 | 49.0 | — | — |
+| merging + `tau_baking` + h2 mutexes only | 295 | 42.6 | 0.31 | 0.78 |
+| merging + `tau_baking` + h2 dead labels | 294 | 47.0 | 0.45 | 0.85 |
+| merging + `tau_baking` + h2 mutexes only + dead labels | 293 | 45.3 | **0.27** | **0.77** |
+
+(Ratios over the 285 tasks all rows except the preprocessing row solve.)
+
+* **h2 mutexes only fixes what preprocessing broke.** Against h2 preprocessing it gets
+  nomystery p03-p07, mprime p26 and elevators p30 back and loses only pathways p18/p24.
+* **Dead labels help exactly where they exist.** On the 85 tasks with dead labels
+  coverage is unchanged (85 -> 85 in all four comparisons) and, on the 28 of them taking
+  >= 1 s, time drops to 0.85 and conflicts to 0.47-0.58, with or without mutexes,
+  horizons unchanged. Largest gains: sokoban p03 44 -> 11 s, tidybot p01 114 -> 33 s,
+  tidybot p02 136 -> 53 s, pipesworld p03 153 -> 85 s, depots p03 49 -> 28 s. Worst:
+  woodworking p04 120 -> 138 s, freecell p09 57 -> 72 s.
+* **The coverage loss is the h2 run, not the encoding.** Every task lost against plain
+  merging + `tau_baking` took >= 164 s there (childsnack p26, elevators p29/p30,
+  nomystery p07, transport p15, pathways p18/p24), and on elevators p29/p30 and
+  transport p15 h2 itself takes 113-127 s of the 300. h2 currently runs even when it
+  finds nothing usable. A time limit for h2 (and skipping it on tasks where it is
+  slow) is the obvious fix; nothing here is evidence against the encoding side.
+
+Raw data: `trans/combo_*_all.csv`, `trans/h2m_all.csv`, `trans/dead_all.csv`
+(`encoder` column), `trans/mutex_stages/`, `trans/h2m_verify/`, `trans/dead_verify/`.
+
 ## 6. Open issues
 
 * No variant improves **coverage** beyond noise. The gains are in conflicts and time on
@@ -616,8 +695,9 @@ Raw data: `/home/gregor/data/claude-jobs/abf93c5f/trans/` (`camp_all.csv`, `nolr
 * Label-implication extraction can be expensive, and caps are needed.
 * **Eliminating redundant clauses.** kissat may remove state clauses during elimination
   and still pays for them; clause shape (short vs long) matters.
-* **h2 changes the transformed task** (§4.7). Mutexes from h2 come with a less
-  compressed FTS on some domains.
+* **h2 changes the transformed task** (§4.7) when used as preprocessing. Using it only
+  as a source of mutexes and dead labels (§5.8) avoids that; what remains is h2's own run
+  time (up to 127 s), which has no limit yet.
 * Timed-out SAT calls report no conflict counts.
 * M&S plan reconstruction copies the whole FTS at every merge step, with label tables sized
   by the atomic label count (satellite p07: 89,164). Merging in the main loop is only
@@ -625,10 +705,8 @@ Raw data: `/home/gregor/data/claude-jobs/abf93c5f/trans/` (`camp_all.csv`, `nolr
 
 ## 7. Open ideas (parked unless noted)
 
-* **h2 only as a mutex source** (parked 2026-10-16): run the transform and search on
-  the unpreprocessed task and import h2's mutexes, mapped back to the original facts by
-  name. This would keep the mutex gain without nomystery's larger FTS. Mainly a
-  coverage fix.
+* ~~h2 only as a mutex source~~: done, §5.8 (also dead labels).
+* A time budget for the h2 run, falling back to no h2 information (§5.8).
 * Combinations not tried yet: implications + state clauses without h2;
   `AND_LIMITED` 30 s on top of the best add-ons.
 * A smaller domain-consistent encoding: edge variables only on skipping edges, or
