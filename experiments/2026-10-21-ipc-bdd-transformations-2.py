@@ -25,7 +25,7 @@ import _trans_campaign as T
 
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
 BENCHMARKS = os.environ["DOWNWARD_BENCHMARKS"]
-REVISION = "REVISION_PLACEHOLDER"
+REVISION = "7614c44e4410534034b560bd98b7765401b5d917"
 
 exp = T.make_experiment(REVISION, BENCHMARKS, common_setup.DEFAULT_SATISFICING_SUITE,
                         T.RUN_2,
