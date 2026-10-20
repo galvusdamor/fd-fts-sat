@@ -108,6 +108,10 @@ TRANSFORM_OPTS = {
              "prune_transitions_from_goal=true)"],
 }
 
+TRANSFORM_OPTS_NTR = {
+    "-ntr" : ["--transform", "cost(cost_type=one)"]
+}
+
 
 def driver_opts(h2):
     """Driver options. `h2` activates the h2 preprocessor.
