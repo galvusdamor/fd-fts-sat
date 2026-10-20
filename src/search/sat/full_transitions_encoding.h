@@ -94,6 +94,8 @@ class FullTransitionsEncodingFactory : public sat_search::SATEncodingFactory {
 	std::shared_ptr<label_order_finder::LabelOrderFinder> labelOrderFinder;
 	// label order of the step semantics (computed in initialize()); position = rank
 	std::vector<int> order;
+	const static_constraints::Options staticOptions;
+	std::shared_ptr<const static_constraints::StaticConstraints> staticConstraints;
 
 public:
 	explicit FullTransitionsEncodingFactory(const options::Options &opts);

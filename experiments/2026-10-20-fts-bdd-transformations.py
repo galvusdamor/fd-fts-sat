@@ -17,5 +17,7 @@ BENCHMARKS = os.environ["FTS_BENCHMARKS"]
 REVISION = "52efe061d80dcec607a31ba8224c0c7634f2fb1d"
 
 exp = T.make_experiment(REVISION, BENCHMARKS, common_setup.FTS_SUITE,
-                        [c for c in T.CONFIGS if not T.CONFIGS[c][2]], "data/2026-09-24-fts-bdd-A1-orders-eval", SCRIPT_NAME)
+                        [c for c in T.RUN_1 if T.CONFIGS[c][2] is None],
+                        [("data/2026-09-24-fts-bdd-A1-orders-eval", T.OLD_ALGORITHMS)],
+                        SCRIPT_NAME, pairs=T.PAIRS_RUN_1)
 exp.run_steps()

@@ -2,6 +2,7 @@
 #define COMMON_ENCODING
 
 #include "label_encoding.h"
+#include "static_constraints.h"
 
 namespace sat_search{
 
@@ -19,7 +20,13 @@ protected:
     virtual std::vector<std::vector<int>> extractIntermediateStates(std::vector<int> & selectedLabels, std::vector<int> & currentLastState, std::vector<int> & nextState, int labelTimestep) = 0;
     std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> extractSolution(int initTime, std::vector<std::pair<int,int>> time_step_order) override;
 
+    // unreachable states, state mutexes and dead labels (sat/static_constraints), added at
+    // every step; null if the encoder does not use them
+    std::shared_ptr<const static_constraints::StaticConstraints> staticConstraints;
+
 public:
+    void setStaticConstraints(std::shared_ptr<const static_constraints::StaticConstraints> c) {staticConstraints = c;}
+
     explicit CommonEncoding(
         std::shared_ptr<sat_capsule> capsule,
 		const std::shared_ptr<task_representation::FTSTask> & _fts,

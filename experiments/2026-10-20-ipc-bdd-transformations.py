@@ -17,5 +17,7 @@ BENCHMARKS = os.environ["DOWNWARD_BENCHMARKS"]
 REVISION = "52efe061d80dcec607a31ba8224c0c7634f2fb1d"
 
 exp = T.make_experiment(REVISION, BENCHMARKS, common_setup.DEFAULT_SATISFICING_SUITE,
-                        list(T.CONFIGS), "data/2026-09-24-ipc-bdd-A1-orders-eval", SCRIPT_NAME)
+                        T.RUN_1,
+                        [("data/2026-09-24-ipc-bdd-A1-orders-eval", T.OLD_ALGORITHMS)],
+                        SCRIPT_NAME, pairs=T.PAIRS_RUN_1)
 exp.run_steps()

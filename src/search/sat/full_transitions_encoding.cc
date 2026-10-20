@@ -18,7 +18,8 @@ namespace transitions_encoding {
 
 FullTransitionsEncodingFactory::FullTransitionsEncodingFactory(const options::Options &opts): SATEncodingFactory(opts.get<bool>("force_at_least_one_action")),
 	useSelfloopOptimisation(opts.get<bool>("use_self_loop_optimisation")), useLabelsInEffectsConstraints(opts.get<bool>("use_labels_in_effects_constraints")),
-	labelOrderFinder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order"))
+	labelOrderFinder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order")),
+	staticOptions(opts)
 	 {
 	statisticsPrinted = false;
 }
@@ -47,6 +48,8 @@ static shared_ptr<sat_search::SATEncodingFactory> _parse_full_transitions_sat_fa
 		"order in which labels may be applied within one time step (the step semantics)",
 		"label_order_linear()");
 
+	static_constraints::add_options(parser);
+
     options::Options opts = parser.parse();
     if (parser.dry_run())
         return nullptr;
@@ -62,6 +65,7 @@ void FullTransitionsEncodingFactory::initialize() {
 	cout << "My FTS task has " << fts->get_size() << " systems and " << fts->get_num_labels() << " labels." << endl;
 	order = labelOrderFinder->find_order(*fts);
 	assert((int)order.size() == fts->get_num_labels());
+	staticConstraints = static_constraints::compute(*fts, staticOptions);
 
     cout << "SAT init time: " << sat_init_timer << endl;
 }
@@ -71,7 +75,9 @@ void FullTransitionsEncodingFactory::initialize() {
 unique_ptr<sat_search::SATEncoding> FullTransitionsEncodingFactory::createEncodingInstance(std::shared_ptr<sat_capsule> capsule){
 	//bool oldStatisticsPrinted = statisticsPrinted;
 	statisticsPrinted = true;
-	return make_unique<FullTransitionsEncoding>(capsule, fts, forceAtLeastOneAction, useSelfloopOptimisation, useLabelsInEffectsConstraints, order);
+	auto encoding = make_unique<FullTransitionsEncoding>(capsule, fts, forceAtLeastOneAction, useSelfloopOptimisation, useLabelsInEffectsConstraints, order);
+	encoding->setStaticConstraints(staticConstraints);
+	return encoding;
 }
 
 

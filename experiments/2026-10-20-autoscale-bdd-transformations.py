@@ -18,5 +18,7 @@ BENCHMARKS = os.environ["AUTOSCALE_BENCHMARKS"]
 REVISION = "52efe061d80dcec607a31ba8224c0c7634f2fb1d"
 
 exp = T.make_experiment(REVISION, BENCHMARKS, sorted(d for d in os.listdir(BENCHMARKS) if os.path.isdir(os.path.join(BENCHMARKS, d))),
-                        list(T.CONFIGS), None, SCRIPT_NAME)
+                        T.RUN_1,
+                        [],
+                        SCRIPT_NAME, pairs=T.PAIRS_RUN_1)
 exp.run_steps()

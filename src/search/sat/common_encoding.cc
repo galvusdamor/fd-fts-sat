@@ -69,6 +69,10 @@ void CommonEncoding::encode(int fromTime, int toTime){
 	// 4. Step encode the state transition.
 	encode_transition(previousStateVars,nextStateVars,fromTime);
 
+	// 5. constraints that hold at every step (mutexes at the step's end, dead labels)
+	if (staticConstraints && !staticConstraints->empty())
+		static_constraints::encode(*sat, *staticConstraints, nextStateVars, labelVars);
+
 
 }
 

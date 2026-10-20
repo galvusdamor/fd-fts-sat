@@ -207,6 +207,7 @@ MERGE = ("transform_merge_and_shrink(shrink_strategy=shrink_weak_bisimulation("
          "merge_strategy=merge_local_guard(max_states=1000,max_dependents=1),"
          "max_time=900,cost_type=one,prune_transitions_from_goal=true)")
 TRANSFORM_OPTS_2026_10 = {
+    "-shr": TRANSFORM_OPTS["-shr"],
     "-mtau": ["--transform", f"seq(transformations=[{MERGE},tau_baking()])"],
     "-mtaucl": ["--transform", f"seq(transformations=[{MERGE},tau_baking(),label_closure()])"],
 }
