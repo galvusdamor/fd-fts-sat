@@ -193,7 +193,11 @@ bool H2Mutexes::set_unreachable(int var, int val, const vector <Variable *> &var
 bool H2Mutexes::remove_spurious_operators(vector<Operator> &operators) {
     int count = 0, totalCount = 0;
     bool spurious_detected = false;
+    int checked = 0;
     for (Operator &op : operators) {
+        // operators are disambiguated independently: stopping early leaves the rest as they are
+        if (++checked % 100 == 0 && time_exceeded())
+            break;
         if (!op.is_redundant()) {
             totalCount++;
             op.remove_ambiguity(*this);
@@ -488,7 +492,7 @@ int H2Mutexes::compute(const vector <Variable *> &variables,
 
         updated = false;
         for (unsigned op_i = 0; op_i < m_ops.size(); op_i++) {
-            if (op_i % 10000 == 0 && time_exceeded())
+            if (op_i % 100 == 0 && time_exceeded())
                 return TIMEOUT;
 
             // disregard spurious operators
