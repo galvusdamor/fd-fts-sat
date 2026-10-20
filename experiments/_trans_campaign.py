@@ -87,6 +87,41 @@ OLD_ALGORITHMS = {
 REVISION_RUN_1 = "52efe061d80dcec607a31ba8224c0c7634f2fb1d"
 
 
+def _compress_runs_dir(runs_dir):
+    """runs_dir -> runs_dir.tar.bz2, read back completely before anything is deleted."""
+    import subprocess
+    runs_dir = runs_dir.rstrip("/")
+    archive = runs_dir + ".tar.bz2"
+    parent, name = os.path.split(runs_dir)
+    subprocess.run(["tar", "-cjf", archive, "-C", parent, name], check=True)
+    subprocess.run(["tar", "-tjf", archive], check=True, stdout=subprocess.DEVNULL)
+    print(f"compressed {runs_dir} -> {archive}")
+
+
+def _delete_runs_dir(runs_dir):
+    """Deletes the run directory, but only next to a readable archive of it."""
+    import shutil
+    import subprocess
+    runs_dir = runs_dir.rstrip("/")
+    archive = runs_dir + ".tar.bz2"
+    if not os.path.isdir(runs_dir):
+        print(f"{runs_dir} does not exist, nothing to delete")
+        return
+    if not os.path.exists(archive):
+        raise SystemExit(f"no archive {archive}: run compress-runs-dir first")
+    subprocess.run(["tar", "-tjf", archive], check=True, stdout=subprocess.DEVNULL)
+    shutil.rmtree(runs_dir)
+    print(f"deleted {runs_dir} (archive: {archive})")
+
+
+def add_compress_and_delete_runs_steps(exp):
+    """After parse + fetch the run directories (logs) are only needed for debugging:
+    compress-runs-dir writes <exp>.tar.bz2, delete-runs-dir removes the directory only
+    if that archive exists and reads back. Unpack with tar -xjf to look at a run."""
+    exp.add_step("compress-runs-dir", _compress_runs_dir, exp.path)
+    exp.add_step("delete-runs-dir", _delete_runs_dir, exp.path)
+
+
 def make_experiment(revision, benchmarks_dir, suite, config_names, fetches, name_prefix, pairs=None):
     """fetches: list of (eval directory, {configuration name: revision}) merged into this
     experiment's eval directory (e.g. ("data/2026-09-24-ipc-bdd-A1-orders-eval",
@@ -124,6 +159,7 @@ def make_experiment(revision, benchmarks_dir, suite, config_names, fetches, name
     exp.add_step("start", exp.start_runs)
     exp.add_step("parse", exp.parse)
     exp.add_fetcher(name="fetch")
+    add_compress_and_delete_runs_steps(exp)
 
     # bare configuration name -> full algorithm name (all bare names are unique)
     full = {c: f"{revision}-{c}" for c in config_names}
