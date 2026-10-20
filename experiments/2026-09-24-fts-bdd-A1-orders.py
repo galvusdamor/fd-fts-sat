@@ -71,7 +71,7 @@ import _bdd_common as B
 DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
 BENCHMARKS_FTS_DIR = os.environ["FTS_BENCHMARKS"]
-REVISION = "2f1c9b269709923afeace631cd1082ed85278cb7"
+REVISION = "4e3fef24f4fd5dc45bad3b2402278e1ad0f43f48"
 REVISIONS = [REVISION]
 
 
@@ -160,7 +160,7 @@ for (idd, (expname, algos)) in enumerate(tofetch):
 LABEL_ORDER_ATTRIBUTES = ["lo_time", "lo_chains", "lo_pair_chains", "lo_leftover",
                           "lo_violated", "lo_explored_states", "lo_skipped_budget",
                           "lo_deep_fallbacks"]
-ATTRIBUTES = common_setup.ATTRIBUTES + LABEL_ORDER_ATTRIBUTES + ["time_steps_with_label"] + [
+ATTRIBUTES = common_setup.ATTRIBUTES + LABEL_ORDER_ATTRIBUTES + [
     Attribute(a, min_wins=True, function=arithmetic_mean, absolute=False)
     for a in B.ENCODING_ATTRIBUTES if a != "bdd_failure_reason"
 ] + ["bdd_failure_reason"]
