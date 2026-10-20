@@ -101,6 +101,10 @@ bool H2Information::mutex(const FactPair &a, const FactPair &b) const {
     return h2->are_facts_mutex(x, y);
 }
 
+bool available(const string &h2_sas_file) {
+    return ifstream(h2_sas_file).good();
+}
+
 bool dead_labels(const FTSTask &fts, const H2Information &info, vector<int> &dead) {
     auto sas = g_sas_task();
     task_transformation::LabelSets sets;

@@ -117,12 +117,58 @@ def add_label_order(content, props):
             props[prop] = v if key == "total_time" else int(v)
 
 
+def _last(pattern, content, cast=int):
+    m = re.findall(pattern, content)
+    return cast(m[-1]) if m else None
+
+
+def add_transformation_info(content, props):
+    """The transformed task, tau_baking / label_closure, h2 information
+    (--h2-information), mutexes and dead labels, kissat effort. Attributes are
+    only set when their line is present."""
+    def put(name, value):
+        if value is not None:
+            props[name] = value
+    m = re.findall(r"Main task: FTSTask with (\d+) variables, (\d+) labels, (\d+) facts, (\d+) transitions", content)
+    if m:
+        for name, v in zip(("fts_factors", "fts_labels", "fts_facts", "fts_transitions"), m[-1]):
+            props[name] = int(v)
+    props["solved_by_transformation"] = int("Task solved without search" in content)
+    if "TAUBAKING" in content:
+        props["tau_labels"] = sum(int(x) for x in re.findall(r"TAUBAKING round \d+ labels \d+ tau_labels (\d+)", content))
+        put("tau_rounds", _last(r"TAUBAKING rounds (\d+)", content))
+    put("closure_closed", _last(r"LABELCLOSURE .* closed (\d+)", content))
+    # h2 on a copy of the task (driver --h2-information)
+    if "h2 information:" in content:
+        props["h2_available"] = int("h2 information: written to" in content)
+        props["h2_timeout"] = int("h^mutexes could not be computed" in content)
+    put("h2_removed_operators", _last(r"H2INFO .* removed_operators (\d+)", content))
+    put("mutex_pairs", _last(r"BDDSTAT state_mutexes source \S+ .*?mutex_pairs (\d+)", content))
+    put("mutex_unreachable_facts", _last(r"BDDSTAT state_mutexes source \S+ .*?unreachable_facts (\d+)", content))
+    props["mutexes_skipped"] = int("STATEMUTEXES skipped" in content)
+    put("dead_labels", _last(r"DEADLABELS source \S+ labels \d+ dead (\d+)", content))
+    props["dead_labels_skipped"] = int("DEADLABELS skipped" in content)
+    steps = re.findall(r"^STEP .*?conflicts (\d+) decisions (\d+)", content, re.M)
+    if steps:
+        props["sat_conflicts"] = sum(int(c) for c, _ in steps)
+        props["sat_decisions"] = sum(int(d) for _, d in steps)
+
+
+TRANSFORMATION_ATTRIBUTES = [
+    "fts_factors", "fts_labels", "fts_facts", "fts_transitions", "solved_by_transformation",
+    "tau_labels", "tau_rounds", "closure_closed", "h2_available", "h2_timeout",
+    "h2_removed_operators", "mutex_pairs", "mutex_unreachable_facts", "mutexes_skipped",
+    "dead_labels", "dead_labels_skipped", "sat_conflicts", "sat_decisions",
+]
+
+
 class EncodingSizeParser(Parser):
     def __init__(self):
         Parser.__init__(self)
         self.add_function(add_encoding_size)
         self.add_function(add_bdd_construction)
         self.add_function(add_label_order)
+        self.add_function(add_transformation_info)
 
 
 if __name__ == "__main__":

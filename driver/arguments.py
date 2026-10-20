@@ -389,6 +389,14 @@ def parse_args():
         "--transform-task-options",
         help='comma-separated list of key-value option pairs for task transformation (e.g. h2_time_limit,10)')
     driver_other.add_argument(
+        "--h2-information", metavar="FILE",
+        help="run the h2 preprocessor on a copy of the translated task and keep its "
+             "output in FILE, without changing the task the search runs on (for "
+             "bdd_sat's mutex_source=SAS_FILE / dead_labels=SAS_FILE). FILE is only "
+             "written if h2 finishes; if it fails (memory, time), FILE does not exist "
+             "and the encoding runs without the h2 information. Options as for "
+             "--transform-task-options (e.g. h2_time_limit,300).")
+    driver_other.add_argument(
         "--validate", action="store_true",
         help='validate plans (implied by --debug); needs "validate" (VAL) on PATH')
     driver_other.add_argument(

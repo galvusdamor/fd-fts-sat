@@ -56,10 +56,12 @@ def _get_preexec_function(time_limit, memory_limit):
         return set_limits
 
 
-def check_call(nick, cmd, stdin=None, time_limit=None, memory_limit=None):
+def check_call(nick, cmd, stdin=None, time_limit=None, memory_limit=None, cwd=None):
     print_call_settings(nick, cmd, stdin, time_limit, memory_limit)
 
     kwargs = {"preexec_fn": _get_preexec_function(time_limit, memory_limit)}
+    if cwd is not None:
+        kwargs["cwd"] = cwd
 
     sys.stdout.flush()
     if stdin:

@@ -50,6 +50,9 @@ public:
   Returns false (and says why) if the label origins cannot be mapped.
 */
 bool dead_labels(const task_representation::FTSTask &fts, const H2Information &h2, std::vector<int> &dead);
+
+// whether h2_sas_file can be read; the driver (--h2-information) only writes it if h2 finished
+bool available(const std::string &h2_sas_file);
 }
 
 #endif

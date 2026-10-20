@@ -286,6 +286,8 @@ unique_ptr<StateMutexes> compute(const FTSTask &fts, const Options &opts) {
         break;
     }
     case Source::SAS_FILE: {
+        if (!h2_information::available(opts.file))
+            return skipped("no h2 information in " + opts.file + " (h2 failed or was not run)");
         h2_information::H2Information info(opts.file);
         vector<int> dead;
         h2_information::dead_labels(fts, info, dead);   // reported only, not used yet

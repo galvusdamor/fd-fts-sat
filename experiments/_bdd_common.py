@@ -9,6 +9,7 @@ to 111 on rubiks-cube without solving any of them, so its numbers for this
 encoding would say more about the scheduler than about the encoding.
 """
 
+import math
 import os
 
 # --- the two reference configurations we compare against --------------------
@@ -22,15 +23,31 @@ FULLTRANS = ("full_transitions_sat(use_self_loop_optimisation=true, "
              "use_labels_in_effects_constraints=false)")
 
 
-def make_environment(email):
-    """24 parallel runs per task on a 24-core / 42 GB partition.
+def make_environment(email, parallel_runs=24, cores=24, memory_per_cpu="1750M", runs_per_task=None):
+    """`parallel_runs` runs at a time in a task (SLURM job) of `cores` cores.
 
-    snellius.py defaults to 12 runs at 3500M each, which is the same 42 GB on
-    half the cores. Subclassed here rather than edited there so the other
-    scripts keep their settings. 42 GB / 24 = 1750M per cpu; the driver limit
-    in driver_opts() is set under that, so an over-budget run is killed by the
-    driver with a diagnosable error instead of by SLURM taking down the whole
-    24-run task.
+    The defaults are the 2026-09-21..24 setting: 24 runs on 24 cores, 1750M
+    per cpu = 42000M per task. snellius.py defaults to 12 runs at 3500M each,
+    which is the same 42 GB on half the cores. Subclassed here rather than
+    edited there so the other scripts keep their settings. The driver limit in
+    driver_opts() is set under the per-run share, so an over-budget run is
+    killed by the driver with a diagnosable error instead of by SLURM taking
+    down the whole task.
+
+    With parallel_runs < cores the task still requests all `cores` cores (and
+    so all their memory), but runs only `parallel_runs` at a time.
+
+    `runs_per_task` (default: parallel_runs, i.e. one wave) runs go into a
+    task. More than parallel_runs (e.g. 60 at 20 in parallel) keeps the slots
+    busy: a task is billed until its slowest run ends, so with one wave a
+    single timeout bills all cores for the full time limit. This relies on
+    the job body handing the next run to whichever slot becomes free, and on
+    DEFAULT_TIME_LIMIT_PER_TASK covering runs_per_task / parallel_runs time
+    limits (02:30:00 = 3 x 30 min + margin). Per-run
+    budget = cores * memory_per_cpu / parallel_runs; it must cover the driver
+    limit *plus* the processes that are not limited (lab's run wrapper and the
+    driver itself, a few tens of MB each), or runs can push each other over
+    the task's memory.
 
     Imported inside the function so that this module stays importable without
     lab installed -- which is what lets the configuration strings be checked
@@ -39,8 +56,18 @@ def make_environment(email):
     from snellius import SnelliusEnvironment
 
     class BDDSnelliusEnvironment(SnelliusEnvironment):
-        PARALLEL_RUNS_PER_TASK = 24
-        DEFAULT_MEMORY_PER_CPU = "1750M"
+        PARALLEL_RUNS_PER_TASK = parallel_runs
+        DEFAULT_MEMORY_PER_CPU = memory_per_cpu
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.cpus_per_task = cores
+
+        def _get_num_runs_per_task(self):
+            per_task = runs_per_task or self.PARALLEL_RUNS_PER_TASK
+            num_runs = len(self.exp.runs)
+            num_run_clusters = math.ceil(num_runs / per_task)
+            return math.ceil(num_run_clusters / self.MAX_TASKS) * per_task
 
     return BDDSnelliusEnvironment(email=email)
 
@@ -109,7 +136,7 @@ TRANSFORM_OPTS = {
 }
 
 
-def driver_opts(h2):
+def driver_opts(h2, memory_limit="1600m"):
     """Driver options. `h2` activates the h2 preprocessor.
 
     Pass the *bare name* `preprocess-h2`, not a path: when it is not on the
@@ -137,9 +164,9 @@ def driver_opts(h2):
     opts = []
     if h2:
         opts += ["--transform-task", "preprocess-h2"]
-    # under the 1750M per-cpu share, see BDDSnelliusEnvironment
+    # under the per-run share, see make_environment (1600m: 1750M per run)
     return opts + ["--overall-time-limit", "30m",
-                   "--overall-memory-limit", "1600m"]
+                   "--overall-memory-limit", memory_limit]
 
 
 def build_opts():
@@ -161,3 +188,39 @@ ENCODING_ATTRIBUTES = [
     "bdd_nodes_sum_encoded", "bdd_nodes_max_pair", "bdd_tseitin_nodes",
     "bdd_peak_nodes",
 ]
+
+
+# --- 2026-10 transformations campaign ---------------------------------------
+# goal-chains v2, the label order of the 2026-09-24 runs (bdd_full_gc2)
+GC2 = ("label_order_goal_chains(ancestor_depth=2,goal_pairs=2,leftover_layer=true,"
+       "state_budget=200000,max_states=20000,exact_time_limit=1)")
+FULLTRANS_GC2 = ("full_transitions_sat(use_self_loop_optimisation=true,"
+                 "use_labels_in_effects_constraints=false,label_order=" + GC2 + ")")
+
+# merging = merge_local_guard in the M&S main loop: a factor that only one other factor
+# depends on is merged into its guard (product <= 1000 states); label reduction only on
+# the atomic FTS (before_shrinking=false). Then tau_baking, optionally label_closure.
+MERGE = ("transform_merge_and_shrink(shrink_strategy=shrink_weak_bisimulation("
+         "ignore_irrelevant_tau_groups=false),label_reduction=exact(max_time=300,"
+         "atomic_fts=true,before_shrinking=false,before_merging=false),"
+         "shrink_atomic_fts=true,run_main_loop=true,"
+         "merge_strategy=merge_local_guard(max_states=1000,max_dependents=1),"
+         "max_time=900,cost_type=one,prune_transitions_from_goal=true)")
+TRANSFORM_OPTS_2026_10 = {
+    "-mtau": ["--transform", f"seq(transformations=[{MERGE},tau_baking()])"],
+    "-mtaucl": ["--transform", f"seq(transformations=[{MERGE},tau_baking(),label_closure()])"],
+}
+
+# h2 without preprocessing: the driver runs h2 on a copy (--h2-information) and the
+# encoding reads its mutexes and dead labels. The path is relative to the run directory
+# and lower-case (the option parser lower-cases --search).
+H2_FILE = "h2-information.sas"
+
+
+def driver_opts_h2_information(memory_limit):
+    """h2 at its default limit (300 s of h2 computation); the task is not changed."""
+    return ["--h2-information", H2_FILE] + driver_opts(h2=False, memory_limit=memory_limit)
+
+
+H2_ENCODER_OPTS = dict(state_mutexes="true", mutex_source="SAS_FILE", mutex_file=H2_FILE,
+                       dead_labels="SAS_FILE", dead_labels_file=H2_FILE)

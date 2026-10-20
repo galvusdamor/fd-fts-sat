@@ -37,6 +37,9 @@ def main():
             if continue_execution and args.transform_task:
                 print()
                 run_components.transform_task(args)
+            if continue_execution and args.h2_information:
+                print()
+                run_components.h2_information(args)
         elif component == "search":
             (exitcode, continue_execution) = run_components.run_search(args)
             if not args.keep_sas_file:

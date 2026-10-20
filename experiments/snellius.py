@@ -5,6 +5,12 @@ from lab.environments import SlurmEnvironment, is_build_step, is_run_step
 from lab import tools
 from pathlib import Path
 
+import lab
+
+_TEMPLATE_DIR = os.path.relpath(os.path.dirname(os.path.realpath(__file__)),
+                                os.path.join(os.path.dirname(os.path.realpath(lab.__file__)), "data"))
+
+
 class SnelliusEnvironment(SlurmEnvironment):
 
     DEFAULT_MEMORY_PER_CPU="3500M"
@@ -13,8 +19,12 @@ class SnelliusEnvironment(SlurmEnvironment):
     DEFAULT_QOS = "normal"
     DEFAULT_PARTITION = "genoa"
 
-    RUN_JOB_BODY_TEMPLATE_FILE="../../../../../../snellius-run-job-body"
-    JOB_HEADER_TEMPLATE_FILE="../../../../../../snellius-run-job-header"
+    # The templates next to this file. lab reads templates relative to its own data
+    # directory (lab/data/<name>.template, via pkgutil, which does not take absolute
+    # paths), so the path is made relative to that directory instead of hard-coding
+    # how many levels up the checkout sits.
+    RUN_JOB_BODY_TEMPLATE_FILE = os.path.join(_TEMPLATE_DIR, "snellius-run-job-body")
+    JOB_HEADER_TEMPLATE_FILE = os.path.join(_TEMPLATE_DIR, "snellius-run-job-header")
     DEFAULT_TIME_LIMIT_PER_TASK="02:30:00"
 
     #def run_steps(self, steps):

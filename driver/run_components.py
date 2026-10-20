@@ -130,6 +130,42 @@ def transform_task(args):
                 f"Task transformation returned exit status {err.returncode}")
 
 
+def h2_information(args):
+    """h2 on a copy: preprocess-h2 writes output.sas into its working directory,
+    so it runs in a directory of its own and its result is moved to
+    args.h2_information only if it succeeded. A failed or killed h2 leaves no
+    file behind, never a stale or partial one."""
+    target = os.path.abspath(args.h2_information)
+    workdir = target + ".dir"
+    if os.path.exists(target):
+        os.remove(target)
+    shutil.rmtree(workdir, ignore_errors=True)
+    os.makedirs(workdir)
+    logging.info("Run h2 on a copy of the task (result: %s)." % target)
+    time_limit = limits.get_time_limit(None, args.overall_time_limit)
+    memory_limit = limits.get_memory_limit(None, args.overall_memory_limit)
+    options = []
+    if args.transform_task_options:
+        options = args.transform_task_options.split(",")
+        for i, option in enumerate(options):
+            if i % 2 == 0:
+                options[i] = "--" + option
+    executable = get_executable(args.build, "preprocess-h2")
+    try:
+        call.check_call(
+            "h2-information",
+            [executable] + options,
+            stdin=os.path.abspath(args.sas_file),
+            time_limit=time_limit,
+            memory_limit=memory_limit,
+            cwd=workdir)
+        os.rename(os.path.join(workdir, "output.sas"), target)
+        print("h2 information: written to {}".format(target))
+    except (subprocess.CalledProcessError, OSError) as err:
+        print("h2 information: failed ({}), the search runs without it".format(err))
+    shutil.rmtree(workdir, ignore_errors=True)
+
+
 def run_search(args):
     logging.info("Running search (%s)." % args.build)
     time_limit = limits.get_time_limit(

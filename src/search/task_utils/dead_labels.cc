@@ -19,6 +19,10 @@ bool compute(const FTSTask &fts, const Options &opts, vector<bool> &dead) {
         return false;
     utils::Timer t;
     vector<int> ids;
+    if (!h2_information::available(opts.file)) {
+        cout << "DEADLABELS skipped: no h2 information in " << opts.file << " (h2 failed or was not run)" << endl;
+        return false;
+    }
     {
         h2_information::H2Information info(opts.file);
         if (!h2_information::dead_labels(fts, info, ids)) {
