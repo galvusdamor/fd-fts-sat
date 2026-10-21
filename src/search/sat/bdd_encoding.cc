@@ -38,6 +38,9 @@ namespace {
 struct BDDError {};
 
 /// raised when a construction budget (time or nodes) runs out
+// transition_factors=AUTO: a candidate factor's BDDs outgrew what it could keep them for
+struct FactorTooBig {};
+
 struct BDDBudgetExceeded {
 	const char * reason;   // "time_limit" or "node_limit"
 	int factor;
@@ -132,6 +135,9 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	mutexCutTimeLimit(opts.get<double>("mutex_cut_time_limit")),
 	mutexCutLimitFactor(opts.get<double>("mutex_cut_limit_factor")),
 	deadLabelOptions(dead_label_options(opts)),
+	transitionFactors(opts.get_enum("transition_factors")),
+	transitionFactorRatio(opts.get<double>("transition_factor_ratio")),
+	transitionFactorMinShare(opts.get<double>("transition_factor_min_share")),
 	goalLastLabel(opts.get<bool>("goal_last_label")),
 	labelConjunctionLimit(opts.get<int>("label_conjunction_limit")),
 	bddCovering(opts.get<bool>("coverbdds")),
@@ -155,6 +161,11 @@ BDDSATEncodingFactory::BDDSATEncodingFactory(const options::Options &opts):
 	if (oneStepOnly && bddEncodingSizeLimit != -1){
 		cerr << "bdd_size_limit only has an effect if one_step_only=false: it interpolates "
 			 << "between the full reachability BDDs and the one-step BDDs." << endl;
+		utils::exit_with(utils::ExitCode::INPUT_ERROR);
+	}
+	if (transitionFactors != 0 && (oneStepOnly || alternateLabelOrders)){
+		// full_transitions_sat's semantics is the full reachability along one label order
+		cerr << "transition_factors needs one_step_only=false and no alternate_label_orders." << endl;
 		utils::exit_with(utils::ExitCode::INPUT_ERROR);
 	}
 	if (bddReorderDynamic && bddReorderMethod == 0){
@@ -345,6 +356,21 @@ static shared_ptr<SATEncodingFactory> _parse_bdd_sat_factory(options::OptionPars
 	parser.add_enum_option("dead_labels", dead_sources,
 		"labels no plan needs: forced false at every step, the BDDs are cofactored by them", "NONE", dead_sources_doc);
 	parser.add_option<string>("dead_labels_file", "dead_labels=SAS_FILE: the h2 output", "none");
+	vector<string> tf_modes {"NONE", "ALL", "AUTO"};
+	vector<string> tf_doc {"every factor as BDDs",
+		"every factor with transition variables (full_transitions_sat's clauses, same semantics)",
+		"per factor: transition variables unless their estimated size exceeds "
+		"transition_factor_ratio times that of the factor's BDD encoding"};
+	parser.add_enum_option("transition_factors", tf_modes,
+		"hybrid encoding: which factors get full_transitions_sat's clauses instead of their BDDs. "
+		"Both constrain the same state and label variables with the same step semantics; plan "
+		"extraction reconstructs intermediate states by DFS for either", "NONE", tf_doc);
+	parser.add_option<double>("transition_factor_ratio",
+		"transition_factors=AUTO: a factor keeps its BDDs only if its transition encoding is "
+		"estimated at more than this times the literals of its Tseitin-translated BDDs ...", "1");
+	parser.add_option<double>("transition_factor_min_share",
+		"... and at least this share of the whole transition encoding (all factors); "
+		"0 = the ratio alone decides", "0");
 	parser.add_option<double>("mutex_cut_time_limit", "seconds for mutex cutting (what is cut is kept)", "30");
 	parser.add_option<double>("mutex_cut_limit_factor",
 		"mutex cutting keeps a result only up to this factor times the original BDD size", "1");
@@ -525,6 +551,8 @@ void BDDSATEncodingFactory::check_budget(int fac, const char * where) const {
 	if (bddNodeLimit >= 0 && _manager->ReadNodeCount() > bddNodeLimit)
 		throw BDDBudgetExceeded{"node_limit", fac, where, bdd_construction_timer(),
 			_manager->ReadNodeCount(), _manager->ReadPeakNodeCount()};
+	if (factorNodeBudget >= 0 && long(_manager->ReadNodeCount()) - factorNodeBase > factorNodeBudget)
+		throw FactorTooBig{};
 }
 
 
@@ -1252,6 +1280,59 @@ void BDDSATEncodingFactory::mutex_clauses() {
   pair instead of |T|^2 |S|^2 conjunctions. A pair (t, t') whose state is unreachable is cut
   to false. Results larger than mutex_cut_limit_factor times the BDD are not kept.
 */
+/*
+  transition_factors: which factors get full_transitions_sat's clauses instead of their BDDs.
+  AUTO compares estimated literals per step: the transition encoding's from
+  FullTransitionsEncoding::estimate_factor_literals, the BDDs' as 6 per distinct node of
+  the factor's BDDs (implicational Tseitin: two ternary clauses per node) plus 3 per state
+  pair (the guarded root clause).
+*/
+void BDDSATEncodingFactory::choose_transition_factors() {
+	if (transitionFactors == 0) return;
+	const int F = fts->get_size();
+	const auto & ord = data->orderings[0];
+	data->transition_factors.assign(F, transitionFactors == 1);
+	const vector<long long> & trans = transitionEstimate;
+	long long totalTrans = 0;
+	for (long long t : trans) totalTrans += t;
+	int chosen = 0;
+	long long sumTrans = 0, sumBDD = 0, sumHybrid = 0;
+	for (int f = 0; f < F; f++) {
+		const int S = fts->get_ts(f).get_size();
+		if (!bddCandidates[f]) {
+			data->transition_factors[f] = true;
+			chosen++; sumTrans += trans[f]; sumHybrid += trans[f];
+			continue;
+		}
+		vector<DdNode *> roots;
+		if (combineAllBDDsIntoOne)
+			roots.push_back(ord.transition_BDDs_per_factor[f].getNode());
+		else
+			for (int s = 0; s < S; s++)
+				for (int ss = 0; ss < S; ss++)
+					if (ord.transition_BDDs_per_factor_per_state_pair[f][s][ss] != _manager->bddZero())
+						roots.push_back(ord.transition_BDDs_per_factor_per_state_pair[f][s][ss].getNode());
+		const long long nodes = roots.empty() ? 0 : Cudd_SharingSize(roots.data(), int(roots.size()));
+		const long long bdd = 6 * nodes + 3LL * S * S;
+		// AUTO: BDDs only for a factor whose transition encoding is both much larger than its
+		// BDDs and a large share of the whole: the transition clauses propagate better, so a
+		// factor is given up to the BDDs only where the transition encoding explodes
+		if (transitionFactors == 2)
+			data->transition_factors[f] = !(trans[f] > transitionFactorRatio * bdd &&
+			                                trans[f] >= transitionFactorMinShare * totalTrans);
+		chosen += data->transition_factors[f];
+		sumTrans += trans[f]; sumBDD += bdd;
+		sumHybrid += data->transition_factors[f] ? trans[f] : bdd;
+		if (reportFactorStatistics)
+			cout << "FACTORCHOICE factor " << f << " states " << S << " est_transitions " << trans[f]
+				 << " est_bdd " << bdd << " transitions " << int(data->transition_factors[f]) << endl;
+	}
+	cout << "BDDSTAT transition_factors mode " << (transitionFactors == 1 ? "all" : "auto")
+		 << " ratio " << transitionFactorRatio << " min_share " << transitionFactorMinShare << " chosen " << chosen << " of " << F
+		 << " est_literals_transitions " << sumTrans << " est_literals_bdd " << sumBDD
+		 << " est_literals_hybrid " << sumHybrid << endl;
+}
+
 void BDDSATEncodingFactory::mutex_cut(BDDEncodingData::Ordering & ord) {
 	utils::Timer t;
 	if (!mutexes || combineAllBDDsIntoOne) {
@@ -1825,6 +1906,15 @@ void BDDSATEncodingFactory::build_bdds_for_ordering(BDDEncodingData::Ordering & 
 		for (int fac = 0; fac < fts->get_size(); fac++){
 			const TransitionSystem & factor = fts->get_ts(fac);
 			const int numStates = factor.get_size();
+			// transition_factors: a factor that can only be encoded with transition variables
+			// gets no BDDs. "Any label set" stands in for them, which the BDD-derived extras
+			// (implications, cutting, state clauses) can only read as "no information".
+			if (!bddCandidates.empty() && !bddCandidates[fac]) {
+				if (combineAllBDDsIntoOne) ord.transition_BDDs_per_factor[fac] = _manager->bddOne();
+				else ord.transition_BDDs_per_factor_per_state_pair[fac].assign(
+					numStates, vector<BDD>(numStates, _manager->bddOne()));
+				continue;
+			}
 			int num_relevant_labels = 0;
 			check_budget(fac, "factor_start");
 			const double factor_t_start = bdd_construction_timer();
@@ -1834,8 +1924,28 @@ void BDDSATEncodingFactory::build_bdds_for_ordering(BDDEncodingData::Ordering & 
 			// the two transition relations (see the header for what they mean)
 			// -----------------------------------------------------------------
 			vector<vector<BDD>> allPossiblePaths;
-			if (!oneStepOnly)
-				allPossiblePaths = build_full_reachability_bdds(fac, factor, ord, num_relevant_labels);
+			if (!oneStepOnly) {
+				// transition_factors=AUTO: the factor keeps its BDDs only if they are estimated at
+				// most 1/ratio of its transition encoding (6 literals per node); stop building
+				// once the live nodes exceed that with slack 4, and use transition variables
+				if (!bddCandidates.empty() && transitionFactorRatio > 0) {
+					factorNodeBudget = long(4.0 * transitionEstimate[fac] / (6.0 * transitionFactorRatio));
+					factorNodeBase = long(_manager->ReadNodeCount());
+				}
+				try {
+					allPossiblePaths = build_full_reachability_bdds(fac, factor, ord, num_relevant_labels);
+				} catch (const FactorTooBig &) {
+					factorNodeBudget = -1;
+					bddCandidates[fac] = false;
+					if (combineAllBDDsIntoOne) ord.transition_BDDs_per_factor[fac] = _manager->bddOne();
+					else ord.transition_BDDs_per_factor_per_state_pair[fac].assign(
+						numStates, vector<BDD>(numStates, _manager->bddOne()));
+					cout << "BDDSTAT transition_factor_abandoned factor " << fac << " time "
+						 << bdd_construction_timer() - factor_t_start << endl;
+					continue;
+				}
+				factorNodeBudget = -1;
+			}
 
 			vector<vector<BDD>> oneStepPaths;
 			if (oneStepOnly || bddEncodingSizeLimit != -1)
@@ -2043,6 +2153,20 @@ void BDDSATEncodingFactory::initialize() {
 	double construction_seconds = 0.0;
 
 	dead_labels::compute(*fts, deadLabelOptions, deadLabels);
+
+	// transition_factors: which factors may keep their BDDs at all (ALL: none; AUTO: those
+	// whose transition encoding is estimated at transition_factor_min_share of the whole);
+	// the others are never built
+	if (transitionFactors != 0) {
+		transitionEstimate = transitions_encoding::FullTransitionsEncoding::estimate_factor_literals(
+			*fts, data->orderings[0].labelOrder);
+		long long total = 0;
+		for (long long t : transitionEstimate) total += t;
+		bddCandidates.assign(fts->get_size(), false);
+		if (transitionFactors == 2)
+			for (int f = 0; f < fts->get_size(); f++)
+				bddCandidates[f] = transitionEstimate[f] >= transitionFactorMinShare * total;
+	}
 	for (int l = 0; l < fts->get_num_labels(); l++)
 		if (deadLabels[l]) data->dead_labels.push_back(l);
 
@@ -2063,6 +2187,7 @@ void BDDSATEncodingFactory::initialize() {
 		}
 		if (mutexCutting)
 			for (auto & o : data->orderings) mutex_cut(o);
+		choose_transition_factors();
 
 		// Reordering is part of building the BDDs that get encoded, so it is
 		// charged to construction_time, and reported on its own as well.
@@ -2213,6 +2338,10 @@ BDDSATEncoding::BDDSATEncoding(
 	LabelEncoding(capsule, _fts, _forceAtLeastOneAction, false, false),
 	data(_data)
 {
+	if (!data->transition_factors.empty())
+		// the step semantics of both parts is the label order (alternate orders are rejected)
+		transitionPart = make_unique<transitions_encoding::FullTransitionsEncoding>(
+			capsule, _fts, false, true, false, data->orderings[0].labelOrder);
 }
 
 
@@ -2501,9 +2630,13 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 	const int clauses_before_bdds = sat->get_number_of_clauses();
 	long st_units = 0, st_units_lits = 0, st_frame = 0, st_frame_lits = 0, st_frame_max = 0,
 		st_order = 0, st_order_lits = 0, st_impl = 0, st_impl_lits = 0;
+	static const bool factor_size = getenv("FTS_FACTOR_SIZE") != nullptr;
 	for(int fac = 0 ; fac < fts->get_size() ; fac++){
+		if (!data->transition_factors.empty() && data->transition_factors[fac]) continue;
 		// the Tseitin variables are only shared within one factor
 		tseitsinVars.clear();
+		const int fs_c0 = sat->get_number_of_clauses(); const long long fs_l0 = fts_ipasir_literals;
+		const int fs_v0 = sat->number_of_variables;
 
 		// a BDD with enumerated 0-cubes: one clause per cube, no Tseitin variables
 		auto encode_cubes = [&](DdNode * node, const vector<int> & conditions,
@@ -2548,8 +2681,18 @@ void BDDSATEncoding::encode(int fromTime, int toTime){
 			if (!shared_roots.empty())
 				bdd_to_cnf_paths(shared_roots, ord, noFactorVars, labelVars, noFactorVars);
 		}
+		// FTS_FACTOR_SIZE: clauses, literals and variables per factor of the first step
+		if (factor_size && stats)
+			cout << "FACTORSIZE enc bdd factor " << fac << " states " << fts->get_ts(fac).get_size()
+				 << " clauses " << sat->get_number_of_clauses() - fs_c0
+				 << " literals " << fts_ipasir_literals - fs_l0
+				 << " variables " << sat->number_of_variables - fs_v0 << endl;
 	}
 	tseitsinVars.clear();
+	// hybrid: the transition factors, over the same state and label variables
+	if (transitionPart)
+		transitionPart->encodeFactorsOf(fromTime, toTime, previousStateVars, nextStateVars, labelVars,
+		                                data->transition_factors);
 	const int base_clauses = sat->get_number_of_clauses() - clauses_before_bdds;
 
 	// dead labels

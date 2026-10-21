@@ -145,10 +145,28 @@ void FullTransitionsEncoding::appendNewTransitionVars(map<int, map<int, vector<p
     allTimesTransitionVars.push_back(newVars);
 }
 
-void FullTransitionsEncoding::generateTransitionVars(int /*fromTime*/) {
+// FTS_FACTOR_SIZE: clauses and literals per factor of the first step, one FACTORSIZE line each
+static bool factor_size_stats() {
+    static const bool on = getenv("FTS_FACTOR_SIZE") != nullptr;
+    return on;
+}
+
+void FullTransitionsEncoding::count_factor(int ts, int clauses_before, long long literals_before) {
+    if ((int)factorClauses.size() < fts->get_size()) {
+        factorClauses.assign(fts->get_size(), 0);
+        factorLiterals.assign(fts->get_size(), 0);
+    }
+    factorClauses[ts] += sat->get_number_of_clauses() - clauses_before;
+    factorLiterals[ts] += fts_ipasir_literals - literals_before;
+}
+
+void FullTransitionsEncoding::generateTransitionVars(int fromTime) {
     map<int, map<int, vector<pair<Transition, int>>>> transitionVars;
+    const bool stats = factor_size_stats() && fromTime == 1;
 
     for (int ts = 0; ts < fts->get_size(); ts++) {
+        if (!encodes(ts)) continue;
+        const int c0 = sat->get_number_of_clauses(); const long long l0 = fts_ipasir_literals;
         for (int label = 0; label < fts->get_num_labels(); label++) {
             if (useSelfloopOptimisation && isIrrelevantLabel(ts, label))
                 continue;
@@ -171,6 +189,7 @@ void FullTransitionsEncoding::generateTransitionVars(int /*fromTime*/) {
             }
             sat->atMostOne(SATVars);
         }
+        if (stats) count_factor(ts, c0, l0);
     }
     appendNewTransitionVars(transitionVars);
 }
@@ -270,19 +289,32 @@ void FullTransitionsEncoding::encode_label_consistency(int ts, int relevantLabel
 // ---------------------------------------------------------------------------
 
 void FullTransitionsEncoding::encode_transition(const vector<vector<int>>& previousStateVars, const vector<vector<int>>& nextStateVars, int fromTime){
+    const bool stats = factor_size_stats() && fromTime == 1;
     for (int ts = 0; ts < fts->get_size(); ts++) {
+        if (!encodes(ts)) continue;
+        const int c0 = sat->get_number_of_clauses(); const long long l0 = fts_ipasir_literals;
         for (size_t relevantLabel = 0; relevantLabel < relevantLabels[ts].size(); relevantLabel++){
             encodeRegularPreconditionsAndEffects(ts, relevantLabel, previousStateVars, nextStateVars, fromTime);
             encode_label_consistency(ts, relevantLabel, fromTime);
         }
         encode_r2_chains(ts, fromTime);
+        if (stats) count_factor(ts, c0, l0);
     }
+    // generateTransitionVars and encode_frame_axioms ran before, so this is the whole step
+    if (stats && !factorClauses.empty())
+        for (int ts = 0; ts < fts->get_size(); ts++)
+            if (encodes(ts)) cout << "FACTORSIZE enc full_transitions factor " << ts << " states " << fts->get_ts(ts).get_size()
+                 << " labels " << relevantLabels[ts].size() << " clauses " << factorClauses[ts]
+                 << " literals " << factorLiterals[ts] << endl;
 }
 
 void FullTransitionsEncoding::encode_frame_axioms(const vector<vector<int>>& previousStateVars, const vector<vector<int>>& nextStateVars, int fromTime){
     if(forceAtLeastOneAction && !useSelfloopOptimisation)
         return;
+    const bool stats = factor_size_stats() && fromTime == 1;
     for (int ts = 0; ts < fts->get_size(); ts++) {
+        if (!encodes(ts)) continue;
+        const int c0 = sat->get_number_of_clauses(); const long long l0 = fts_ipasir_literals;
         for (int state = 0; state < fts->get_ts(ts).get_size(); state++) {
             set<int> negatedLabelsOrTransitions;
             negatedLabelsOrTransitions.insert(previousStateVars[ts][state]);
@@ -310,6 +342,7 @@ void FullTransitionsEncoding::encode_frame_axioms(const vector<vector<int>>& pre
             }
             sat->andImplies(negatedLabelsOrTransitions, nextStateVars[ts][state]);
         }
+        if (stats) count_factor(ts, c0, l0);
     }
 }
 
@@ -399,6 +432,56 @@ void FullTransitionsEncoding::encode_r2_chains(int ts, int time){
         }
     }
 	
+}
+
+void FullTransitionsEncoding::encodeFactorsOf(int fromTime, int toTime,
+        const vector<vector<int>> &previousStateVars, const vector<vector<int>> &nextStateVars,
+        const vector<int> &labelVars, const vector<bool> &mask) {
+    factorMask = mask;
+    allTimesStateVars[fromTime] = previousStateVars;
+    allTimesStateVars[toTime] = nextStateVars;
+    allTimesLabelVars[fromTime] = labelVars;
+    // the order of CommonEncoding::encode
+    generateTransitionVars(fromTime);
+    encode_frame_axioms(previousStateVars, nextStateVars, fromTime);
+    encode_transition(previousStateVars, nextStateVars, fromTime);
+}
+
+vector<long long> FullTransitionsEncoding::estimate_factor_literals(const FTSTask &fts, const vector<int> &order) {
+    vector<long long> estimate(fts.get_size(), 0);
+    for (int ts = 0; ts < fts.get_size(); ts++) {
+        const TransitionSystem &factor = fts.get_ts(ts);
+        const int S = factor.get_size();
+        // non-self-loop transitions per label, in label order
+        vector<vector<Transition>> moves;
+        long long relevant = 0;
+        for (int label : order) {
+            vector<Transition> m;
+            bool any = false;
+            for (const Transition &t : factor.get_transitions_with_label(label)) {
+                any = true;
+                if (t.src != t.target) m.push_back(t);
+            }
+            if (any && !m.empty()) {moves.push_back(move(m)); relevant++;}
+        }
+        // into[s] / out[s]: non-self-loop transitions of labels before (after) the current one
+        vector<long long> into(S, 0), out(S, 0);
+        for (const auto &m : moves) for (const Transition &t : m) out[t.src]++;
+        long long lits = 0;
+        for (const auto &m : moves) {
+            for (const Transition &t : m) out[t.src]--;
+            for (const Transition &t : m) {
+                lits += 2 + into[t.src];          // precondition: t -> prev_src v earlier into src
+                lits += 2 + out[t.target];        // effect: t -> next_tgt v later out of tgt
+                lits += 2 + 2;                    // label consistency, at-most-one (about)
+            }
+            for (const Transition &t : m) into[t.target]++;
+        }
+        lits += (long long)S * (relevant + 2);    // frame axioms
+        lits += 4LL * S * relevant;               // r2 chains (about)
+        estimate[ts] = lits;
+    }
+    return estimate;
 }
 
 } // namespace transitions_encoding

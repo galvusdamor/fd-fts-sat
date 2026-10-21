@@ -12,6 +12,9 @@
 # define DEBUG(x)
 #endif
 
+// literals passed to ipasir_add over all solvers (counted by the kissat shim; statistics only)
+extern long long fts_ipasir_literals;
+
 struct sat_capsule{
 	void* solver;
 	int number_of_variables;

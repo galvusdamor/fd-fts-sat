@@ -1,5 +1,7 @@
 #include "../utils/markup.h"
 #include "sat_encoder.h"
+
+long long fts_ipasir_literals = 0;
 #include "ipasir.h"
 #include <iostream>
 #include <cassert>

@@ -84,6 +84,32 @@ public:
 
     void encode_r2_chains(int ts, int time);
 
+    // FTS_FACTOR_SIZE statistics of the first step
+    std::vector<long long> factorClauses, factorLiterals;
+    void count_factor(int ts, int clauses_before, long long literals_before);
+
+    /*
+      Hybrid use by another encoding (bdd_sat's transition_factors): the factors with
+      factorMask[ts] true are encoded here, over the host's state and label variables of the
+      step; the others are left to the host. Empty mask = all factors (normal use).
+    */
+    std::vector<bool> factorMask;
+    bool encodes(int ts) const {return factorMask.empty() || factorMask[ts];}
+    void encodeFactorsOf(int fromTime, int toTime,
+                         const std::vector<std::vector<int>> &previousStateVars,
+                         const std::vector<std::vector<int>> &nextStateVars,
+                         const std::vector<int> &labelVars,
+                         const std::vector<bool> &mask);
+
+    /*
+      Estimated literals per factor of one step of this encoding (self-loop optimisation on,
+      labels in the given order), without encoding anything. The precondition and effect
+      clauses dominate: the one of a transition lists every transition of an earlier
+      (later) label into (out of) its source (target), quadratic in the factor's labels.
+    */
+    static std::vector<long long> estimate_factor_literals(const task_representation::FTSTask &fts,
+                                                            const std::vector<int> &order);
+
 };
 
 class FullTransitionsEncodingFactory : public sat_search::SATEncodingFactory {

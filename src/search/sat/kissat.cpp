@@ -93,7 +93,11 @@ IPASIR_API void ipasir_release (void * solver){
  * negation overflow).  This applies to all the literal
  * arguments in API functions.
  */
+// literals added over all solvers (FTS_FACTOR_SIZE statistics), defined in sat_encoder.cc
+extern long long fts_ipasir_literals;
+
 IPASIR_API void ipasir_add (void * solver, int lit_or_zero){
+	if (lit_or_zero != 0) ++fts_ipasir_literals;
 #ifndef NDEBUG
 	curclause.push_back(lit_or_zero);
 	if (lit_or_zero > maxVar) maxVar = lit_or_zero;

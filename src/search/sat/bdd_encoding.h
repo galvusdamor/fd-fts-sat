@@ -8,6 +8,7 @@
 #include <array>
 #include <vector>
 
+#include "full_transitions_encoding.h"
 #include "label_encoding.h"
 #include "../task_utils/dead_labels.h"
 #include "../task_utils/state_mutexes.h"
@@ -140,6 +141,9 @@ struct BDDEncodingData {
 	// dead labels (task_utils/dead_labels): forced false at every step; the BDDs are
 	// cofactored by their negation and no longer mention them
 	std::vector<int> dead_labels;
+	// transition_factors: factors encoded with transition variables (full_transitions_sat's
+	// clauses over the same state and label variables) instead of their BDDs; empty if none
+	std::vector<bool> transition_factors;
 };
 
 
@@ -154,6 +158,8 @@ struct BDDEncodingData {
  */
 class BDDSATEncoding : public LabelEncoding {
 	std::shared_ptr<const BDDEncodingData> data;
+	// encodes data->transition_factors (hybrid); null if there are none
+	std::unique_ptr<transitions_encoding::FullTransitionsEncoding> transitionPart;
 
 	// Tseitin variables for the BDD nodes. Per encoding instance (the SAT
 	// variable numbering is per capsule) and reset for every factor.
@@ -249,6 +255,15 @@ class BDDSATEncodingFactory : public SATEncodingFactory {
 	const dead_labels::Options deadLabelOptions;
 	std::vector<bool> deadLabels;       // label -> dead; all false without a source
 	BDD deadLabelCube(const BDDEncodingData::Ordering & ord) const;
+	// transition_factors: 0 NONE, 1 ALL, 2 AUTO (by estimated size, transition_factor_ratio)
+	const int transitionFactors;
+	const double transitionFactorRatio;
+	const double transitionFactorMinShare;
+	void choose_transition_factors();
+	std::vector<long long> transitionEstimate;   // estimated literals per factor, transition encoding
+	std::vector<bool> bddCandidates;             // empty: all factors get BDDs
+	// node budget of the factor being built (-1: none), relative to factorNodeBase live nodes
+	long factorNodeBudget = -1, factorNodeBase = 0;
 	const bool goalLastLabel;
 	/// source/target/pair/cross units and leave/enter clauses (see BDDEncodingData)
 	void compute_state_clauses();
