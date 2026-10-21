@@ -45,6 +45,10 @@ SEARCH = "sat(encoder={},solver_quiet=true,length_strategy=one_by_one())"
 # 2026-09-24 runs: the task is changed, no mutex clauses)
 FULLTRANS_GC2_H2INFO = (B.FULLTRANS_GC2[:-1] + ","
                         + ",".join(f"{k}={v}" for k, v in B.H2_ENCODER_OPTS.items()) + ")")
+# hybrid (bdd_sat transition_factors=AUTO): full_transitions_sat's clauses for every factor
+# except one whose transition encoding explodes (> 5x its BDDs and >= 70% of the whole)
+HYB = dict(label_order=B.GC2, transition_factors="AUTO", transition_factor_ratio=5,
+           transition_factor_min_share=0.7)
 CONFIGS = {
     # first IPC run (2026-10-20)
     "A_1__bdd_gc2-mtau": (B.bdd(label_order=B.GC2), "-mtau", None),
@@ -58,8 +62,19 @@ CONFIGS = {
     "A_1__bdd_gc2_h2info-shr": (B.bdd(label_order=B.GC2, **B.H2_ENCODER_OPTS), "-shr", "info"),
     "A_1__bdd_gc2_h2pre-shr": (B.bdd(label_order=B.GC2), "-shr", "pre"),
     "A_1__fulltrans_gc2_h2pre-shr": (B.FULLTRANS_GC2, "-shr", "pre"),
+    # third IPC run (2026-10-21): the hybrid, with both h2 modes
+    "A_1__hyb_gc2_h2info-mtau": (B.bdd(**HYB, **B.H2_ENCODER_OPTS), "-mtau", "info"),
+    "A_1__hyb_gc2_h2pre-mtau": (B.bdd(**HYB), "-mtau", "pre"),
+    # FTS benchmarks (no h2 possible on .sas input): the -shr baselines at 2050 MB, the hybrid
+    "A_1__bdd_gc2-shr": (B.bdd(label_order=B.GC2), "-shr", None),
+    "A_1__fulltrans_gc2-shr": (B.FULLTRANS_GC2, "-shr", None),
+    "A_1__hyb_gc2-mtau": (B.bdd(**HYB), "-mtau", None),
 }
 RUN_1 = ["A_1__bdd_gc2-mtau", "A_1__bdd_gc2_h2info-mtau", "A_1__fulltrans_gc2-mtau", "A_1__bdd_gc2-mtaucl"]
+RUN_3 = ["A_1__hyb_gc2_h2info-mtau", "A_1__hyb_gc2_h2pre-mtau"]
+# FTS: every configuration without h2
+RUN_FTS = ["A_1__bdd_gc2-shr", "A_1__fulltrans_gc2-shr", "A_1__bdd_gc2-mtau", "A_1__bdd_gc2-mtaucl",
+           "A_1__fulltrans_gc2-mtau", "A_1__hyb_gc2-mtau"]
 RUN_2 = ["A_1__fulltrans_gc2_h2info-mtau", "A_1__fulltrans_gc2_h2pre-mtau", "A_1__bdd_gc2_h2info-shr",
          "A_1__bdd_gc2_h2pre-shr", "A_1__fulltrans_gc2_h2pre-shr"]
 
@@ -83,8 +98,9 @@ OLD_ALGORITHMS = {
 }
 
 
-# revision of the first IPC run (RUN_1)
+# revisions of the first and second IPC run
 REVISION_RUN_1 = "52efe061d80dcec607a31ba8224c0c7634f2fb1d"
+REVISION_RUN_2 = "7614c44e4410534034b560bd98b7765401b5d917"
 
 
 def _compress_runs_dir(runs_dir):
@@ -221,4 +237,23 @@ PAIRS_RUN_2 = [
     ("A_1__fulltrans_gc2_h2pre-shr", "A_1__bdd_gc2_h2pre-shr"),
     # the best configuration of each encoder (they differ in the h2 mode as well)
     ("A_1__bdd_gc2_h2info-mtau", "A_1__fulltrans_gc2_h2pre-mtau"),
+]
+
+# the hybrid against the encodings it combines, at the same h2 mode
+PAIRS_RUN_3 = [
+    ("A_1__fulltrans_gc2_h2info-mtau", "A_1__hyb_gc2_h2info-mtau"),
+    ("A_1__bdd_gc2_h2info-mtau", "A_1__hyb_gc2_h2info-mtau"),
+    ("A_1__fulltrans_gc2_h2pre-mtau", "A_1__hyb_gc2_h2pre-mtau"),
+    ("A_1__hyb_gc2_h2pre-mtau", "A_1__hyb_gc2_h2info-mtau"),
+]
+
+# FTS: each pair differs in one respect
+PAIRS_FTS = [
+    ("A_1__bdd_full_gc2-shr", "A_1__bdd_gc2-shr"),            # 1600 MB -> 2050 MB
+    ("A_1__bdd_gc2-shr", "A_1__bdd_gc2-mtau"),                # -shr -> merging + tau_baking
+    ("A_1__fulltrans_gc2-shr", "A_1__fulltrans_gc2-mtau"),
+    ("A_1__bdd_gc2-mtau", "A_1__bdd_gc2-mtaucl"),             # + label_closure
+    ("A_1__bdd_gc2-mtau", "A_1__fulltrans_gc2-mtau"),         # encoder
+    ("A_1__fulltrans_gc2-mtau", "A_1__hyb_gc2-mtau"),         # hybrid
+    ("A_1__bdd_gc2-mtau", "A_1__hyb_gc2-mtau"),
 ]
