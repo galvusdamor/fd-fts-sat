@@ -27,5 +27,5 @@ REVISION = "1011b8df74098730c0881a69bd3a24beb423ecd6"
 exp = T.make_experiment(REVISION, BENCHMARKS, common_setup.FTS_SUITE,
                         T.RUN_FTS,
                         [("data/2026-09-24-fts-bdd-A1-orders-eval", T.OLD_ALGORITHMS)],
-                        SCRIPT_NAME, pairs=T.PAIRS_FTS)
+                        SCRIPT_NAME, pairs=T.PAIRS_FTS, time_attribute="total_time")
 exp.run_steps()

@@ -144,11 +144,13 @@ def add_compress_and_delete_runs_steps(exp):
     exp.add_step("delete-runs-dir", _delete_runs_dir, exp.path)
 
 
-def make_experiment(revision, benchmarks_dir, suite, config_names, fetches, name_prefix, pairs=None):
+def make_experiment(revision, benchmarks_dir, suite, config_names, fetches, name_prefix, pairs=None,
+                    time_attribute="planner_time"):
     """fetches: list of (eval directory, {configuration name: revision}) merged into this
     experiment's eval directory (e.g. ("data/2026-09-24-ipc-bdd-A1-orders-eval",
     OLD_ALGORITHMS)). pairs: (configuration, configuration) scatter plots, by bare name;
-    names not in this experiment or a fetch are skipped."""
+    names not in this experiment or a fetch are skipped. time_attribute: the runtime of the
+    scatter plots -- FTS runs (.sas input, no translator) have no planner_time, use total_time."""
     from lab.reports import Attribute, arithmetic_mean
     from downward.reports.scatter import ScatterPlotReport
     from score_report import AbsoluteReport
@@ -212,11 +214,11 @@ def make_experiment(revision, benchmarks_dir, suite, config_names, fetches, name
     for c1, c2 in pairs or []:
         if c1 not in full or c2 not in full:
             continue
-        for attribute in ["planner_time", "time_steps_with_label", "sat_conflicts"]:
+        for attribute in [time_attribute, "time_steps_with_label", "sat_conflicts"]:
             exp.add_report(
                 ScatterPlotReport(attributes=[attribute], filter_algorithm=[full[c1], full[c2]],
                                   get_category=lambda x, y: x["domain"], format="png",
-                                  show_missing=attribute == "planner_time"),
+                                  show_missing=attribute == time_attribute),
                 name=f"{name_prefix}-scatter-{attribute}-{c1}-vs-{c2}")
     return exp
 
