@@ -69,9 +69,15 @@ CONFIGS = {
     "A_1__bdd_gc2-shr": (B.bdd(label_order=B.GC2), "-shr", None),
     "A_1__fulltrans_gc2-shr": (B.FULLTRANS_GC2, "-shr", None),
     "A_1__hyb_gc2-mtau": (B.bdd(**HYB), "-mtau", None),
+    # Autoscale: the label_sat baseline, h2 preprocessing as in the 2026-09 IPC runs
+    "A_1__chains_h2pre-shr": (B.CHAINS, "-shr", "pre"),
 }
 RUN_1 = ["A_1__bdd_gc2-mtau", "A_1__bdd_gc2_h2info-mtau", "A_1__fulltrans_gc2-mtau", "A_1__bdd_gc2-mtaucl"]
 RUN_3 = ["A_1__hyb_gc2_h2info-mtau", "A_1__hyb_gc2_h2pre-mtau"]
+# Autoscale (not run on the cluster before, nothing to fetch): the baselines and the best
+# configurations of the IPC runs, each with the h2 mode it was best with
+RUN_AUTOSCALE = ["A_1__chains_h2pre-shr", "A_1__bdd_gc2_h2pre-shr", "A_1__bdd_gc2_h2info-mtau",
+                 "A_1__fulltrans_gc2_h2pre-mtau", "A_1__hyb_gc2_h2pre-mtau", "A_1__hyb_gc2_h2info-mtau"]
 # FTS: every configuration without h2
 RUN_FTS = ["A_1__bdd_gc2-shr", "A_1__fulltrans_gc2-shr", "A_1__bdd_gc2-mtau", "A_1__bdd_gc2-mtaucl",
            "A_1__fulltrans_gc2-mtau", "A_1__hyb_gc2-mtau"]
@@ -242,6 +248,22 @@ PAIRS_RUN_2 = [
 # the hybrid against the encodings it combines, at the same h2 mode
 PAIRS_RUN_3 = [
     ("A_1__fulltrans_gc2_h2info-mtau", "A_1__hyb_gc2_h2info-mtau"),
+    ("A_1__bdd_gc2_h2info-mtau", "A_1__hyb_gc2_h2info-mtau"),
+    ("A_1__fulltrans_gc2_h2pre-mtau", "A_1__hyb_gc2_h2pre-mtau"),
+    ("A_1__hyb_gc2_h2pre-mtau", "A_1__hyb_gc2_h2info-mtau"),
+    # the hybrid against the 2026-09-24 baselines (-shr, 1600 MB, h2 preprocessing)
+    ("A_1__bdd_full_gc2-shr", "A_1__hyb_gc2_h2pre-mtau"),
+    ("A_1__fulltransitions_slf_transeff-shr", "A_1__hyb_gc2_h2pre-mtau"),
+    ("A_1__chains_slf____rcpol-shr", "A_1__hyb_gc2_h2pre-mtau"),
+    # and against the -shr runs at 2050 MB
+    ("A_1__bdd_gc2_h2pre-shr", "A_1__hyb_gc2_h2pre-mtau"),
+    ("A_1__fulltrans_gc2_h2pre-shr", "A_1__hyb_gc2_h2pre-mtau"),
+]
+
+# Autoscale
+PAIRS_AUTOSCALE = [
+    ("A_1__chains_h2pre-shr", "A_1__hyb_gc2_h2pre-mtau"),
+    ("A_1__bdd_gc2_h2pre-shr", "A_1__hyb_gc2_h2pre-mtau"),
     ("A_1__bdd_gc2_h2info-mtau", "A_1__hyb_gc2_h2info-mtau"),
     ("A_1__fulltrans_gc2_h2pre-mtau", "A_1__hyb_gc2_h2pre-mtau"),
     ("A_1__hyb_gc2_h2pre-mtau", "A_1__hyb_gc2_h2info-mtau"),
