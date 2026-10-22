@@ -708,6 +708,102 @@ Raw data `trans/h2tl_all.csv`.
 Raw data: `trans/combo_*_all.csv`, `trans/h2m_all.csv`, `trans/dead_all.csv`
 (`encoder` column), `trans/mutex_stages/`, `trans/h2m_verify/`, `trans/dead_verify/`.
 
+### 5.9 Cluster: IPC and FTS, and the hybrid encoding (2026-10-20..22)
+
+Snellius genoa, 30 min / 2050 MB (fetched 2026-09-24 runs: 1600 MB), 20 runs on 24 cores,
+algorithm A, goal-chains v2 unless noted. Scripts `experiments/2026-10-2{0,1}-*-bdd-transformations*.py`,
+configurations in `experiments/_trans_campaign.py`. h2 *information* = h2 on a copy of the task
+(driver `--h2-information`), mutex clauses + dead labels; h2 *preprocessing* = the task is
+replaced by h2's output (`--transform-task preprocess-h2`).
+
+**IPC satisficing suite** (2,026 tasks, 68 domains):
+
+| encoder | transformation | h2 | MB | coverage | NormCov | PAR-2 |
+|---|---|---|---:|---:|---:|---:|
+| label_sat (chains) | `-shr` | preprocessing | 1600 | 1211 | 34.77 | 1485.8 |
+| full_transitions, linear order | `-shr` | preprocessing | 1600 | 1283 | 37.20 | 1354.6 |
+| bdd_sat | `-shr` | preprocessing | 1600 | 1300 | 38.52 | 1318.1 |
+| bdd_sat | `-shr` | preprocessing | 2050 | 1306 | 38.74 | 1310.6 |
+| bdd_sat | `-shr` | information | 2050 | 1320 | 38.86 | 1295.5 |
+| bdd_sat | merging + `tau_baking` | — | 2050 | 1273 | 37.37 | 1370.9 |
+| bdd_sat | merging + `tau_baking` + `label_closure` | — | 2050 | 1271 | 37.21 | 1374.6 |
+| bdd_sat | merging + `tau_baking` | information | 2050 | 1337 | 39.42 | 1263.8 |
+| full_transitions | `-shr` | preprocessing | 2050 | 1358 | 40.55 | 1218.1 |
+| full_transitions | merging + `tau_baking` | — | 2050 | 1316 | 38.72 | 1297.0 |
+| full_transitions | merging + `tau_baking` | preprocessing | 2050 | 1363 | 40.70 | 1207.5 |
+| full_transitions | merging + `tau_baking` | information | 2050 | 1358 | 40.26 | 1217.3 |
+| hybrid | merging + `tau_baking` | preprocessing | 2050 | **1377** | **41.23** | **1183.3** |
+| hybrid | merging + `tau_baking` | information | 2050 | 1373 | 40.84 | 1191.0 |
+
+* **Encoder.** At the same order, transformation and h2 setting `full_transitions_sat` beats
+  `bdd_sat` by +44/-23 (information) and +59/-7 (`-shr`, preprocessing) at 0.6-0.7x the time,
+  identical horizons. `bdd_sat`'s formula is *smaller* (0.83x clauses, 0.67x variables per
+  step) but needs 8.6x the conflicts: the Tseitin translation of the BDDs propagates weakly
+  (scanalyzer-08 p11: 433,504 vs 30 conflicts; mprime prob06: 3.2M vs 3,119). `bdd_sat` wins
+  only where one factor's transition clauses explode, roughly quadratically in its labels:
+  openstacks (one factor: 20M literals per step vs 177k as BDDs, 99.9% of the formula) and
+  pathways (one factor, 78%). The path encoding (domain consistent) removes the conflicts
+  but is 5-40x larger and never beats `full_transitions_sat` outside those two domains.
+* **Transformation.** merging + `tau_baking` against `-shr`: `bdd_sat` +21/-4, `full_transitions`
+  +7/-2 (openstacks, rovers), horizons -3 to -4 %, time unchanged. `label_closure`: +2/-4.
+* **h2.** Any h2 beats none (+46 to +66). Information and preprocessing win different domains:
+  information blocks (14-16), quantum-layout, pipesworld; preprocessing tetris (18) and airport
+  (8-9), where pruning operators matters. Net about even (+51/-37 `bdd_sat` `-shr`, +36/-41
+  `full_transitions`). Preprocessing also shortens horizons (it changes the FTS); information
+  leaves them unchanged. The 11 mystery tasks reported unsolvable with preprocessing are
+  unsolvable (h2 proves it).
+* **Memory** 1600 -> 2050 MB: +6/-0.
+
+**The hybrid encoding** (`bdd_sat(transition_factors=AUTO, transition_factor_ratio=5,
+transition_factor_min_share=0.7)`, `1011b8df7`). Every factor gets `full_transitions_sat`'s
+clauses (transition variables) over the same state and label variables; a factor keeps its
+BDDs only if its transition encoding is estimated (`FullTransitionsEncoding::estimate_factor_literals`)
+at more than 5x its Tseitin-translated BDDs *and* at least 70% of the whole transition
+encoding. BDDs are built only for such candidates, and a candidate whose construction outgrows
+that budget is abandoned. Both encodings constrain each factor separately with the same step
+semantics, so they mix per factor; plan extraction reconstructs intermediate states by DFS over
+the FTS for either. The share threshold was tuned on 86 IPC tasks (local, 300 s): the factor's
+share separated the cases (0.75-1.0 where `bdd_sat` wins, 0.32-0.58 in blocks, freecell,
+pipesworld where giving the factor to the BDDs cost 1.5-3x), the ratio did not (blocks 16x,
+pathways 8x). On the cluster:
+
+| comparison | tasks | time |
+|---|---|---:|
+| information: `full_transitions` -> hybrid | +16 / -1 (openstacks 13, pathways 3) | 0.98 |
+| preprocessing: `full_transitions` -> hybrid | +16 / -2 | 0.99 |
+| information: `bdd_sat` -> hybrid | +44 / -8 | 0.65 |
+| hybrid: preprocessing -> information | +37 / -41 | 1.11 |
+
+The best of the two hybrid configurations per task would solve 1414.
+
+**FTS benchmarks** (431 tasks, no h2 possible):
+
+| encoder | label order | transformation | MB | coverage | NormCov | PAR-2 |
+|---|---|---|---:|---:|---:|---:|
+| label_sat (chains) | — | `-shr` | 1600 | 170 | 2.63 | 2213.5 |
+| full_transitions | linear | `-shr` | 1600 | 234 | 3.27 | 1689.4 |
+| bdd_sat | linear | `-shr` | 1600 | **257** | **3.50** | **1521.8** |
+| bdd_sat | relaxed | `-shr` | 1600 | **257** | **3.50** | 1522.2 |
+| bdd_sat | goal-chains v1 | `-shr` | 1600 | 211 | 3.04 | 1899.0 |
+| bdd_sat | goal-chains v2 | `-shr` | 1600 | 211 | 3.04 | 1898.7 |
+| bdd_sat | goal-chains v2 | `-shr` | 2050 | 214 | 3.31 | 1876.8 |
+| bdd_sat | goal-chains v2 | merging + `tau_baking` | 2050 | 214 | 3.31 | 1877.4 |
+| bdd_sat | goal-chains v2 | merging + `tau_baking` + `label_closure` | 2050 | 215 | 3.32 | 1871.7 |
+| full_transitions | goal-chains v2 | `-shr` | 2050 | 202 | 3.23 | 1953.6 |
+| full_transitions | goal-chains v2 | merging + `tau_baking` | 2050 | 202 | 3.23 | 1952.9 |
+| hybrid | goal-chains v2 | merging + `tau_baking` | 2050 | 202 | 3.23 | 1953.5 |
+
+* The transformations do nothing on these tasks: the FTS after merging + `tau_baking` equals
+  the `-shr` one on 410 of 431 (21 have tau labels baked), coverage identical.
+* On FTS `bdd_sat` beats `full_transitions_sat` (+14/-2): the permutation puzzles are the
+  domains where the BDDs win. The hybrid keeps no BDD factor there (no factor dominates), so it
+  equals `full_transitions_sat`.
+* **Goal-chains v2 is the wrong label order here**: linear 257, goal-chains 211. It loses
+  pancakes (87 -> 68) and burnt-pancakes (88 -> 61): fewer time steps on the tasks both solve,
+  but 2.3x the clauses per step (pancakes n18: 33,624 vs 76,860), so the long calls time out.
+  The label order is also the BDD variable order; `bdd_variable_order` can separate the two
+  (goal-chains steps, linear variable order) and is the obvious next test.
+
 ## 6. Open issues
 
 * No variant improves **coverage** beyond noise. The gains are in conflicts and time on
