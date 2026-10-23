@@ -194,6 +194,7 @@ fast_downward_plugin(
         task_transformation/merge_strategy_factory_precomputed
         task_transformation/merge_strategy_factory_stateless
         task_transformation/merge_strategy_local_guard
+        task_transformation/merge_strategy_label_unify
         task_transformation/merge_strategy_precomputed
         task_transformation/merge_strategy_stateless
         task_transformation/merge_tree
