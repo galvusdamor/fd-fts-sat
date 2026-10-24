@@ -804,6 +804,52 @@ The best of the two hybrid configurations per task would solve 1414.
   The label order is also the BDD variable order; `bdd_variable_order` can separate the two
   (goal-chains steps, linear variable order) and is the obvious next test.
 
+### 5.10 Label unification by merging (`merge_label_unify`, 2026-10-23/24)
+
+Idea: two labels that differ in exactly two factors a and b differ in one factor once a and b
+are merged, and exact label reduction then unifies them (their transitions in the product
+are the union): fewer labels, more branching. On the 302 Autoscale dumps (after `-shr`) there
+are 6.4M such label pairs in 291 tasks; a single merge saves e.g. 22% of the labels in
+scanalyzer (64-state product), 9% per 4-state merge in childsnack, 50% in gripper (but a
+4,356-state product). Dominated labels (transitions a subset of another label's in every
+factor) are practically absent (9 of 373,100), and on the FTS benchmarks there is nothing to
+unify: in the permutation puzzles every label moves every factor deterministically.
+
+`merge_label_unify(max_states=1000, require_exclusive)` (`02503b12b`) merges, in the M&S main
+loop, the factor pair that saves the most labels (labels minus distinct label signatures
+outside the pair), followed by exact label reduction. `require_exclusive` only counts label
+pairs that cannot fire in the same time step anyway (a shared moving factor in which neither
+label can fire after the other), so unification costs no parallelism. "Final shrinking" =
+`run_final_lr_shrink=true`.
+
+303 Autoscale tasks, 300 s / 2500 MB, 4 jobs, all plans valid. Time, horizon (summed over
+tasks both solve), labels and clauses per step are relative to the configuration without
+unification; labels and clauses only over the tasks where a merge happened.
+
+| encoder | transformation | solved | NormCov | PAR-2 | tasks | time | horizon | merged in | labels | clauses / step |
+|---|---|---:|---:|---:|---|---:|---|---:|---:|---:|
+| bdd_sat | `-shr` | 292 | 27.99 | 54.2 | — | — | — | — | — | — |
+| bdd_sat | + unification | 161 | 14.73 | 297.4 | +0 / -131 | 10.10 | 387 -> 595 | 256 | 0.45 | 44.7 |
+| bdd_sat | + unification + final shrinking | 163 | 15.28 | 294.1 | +0 / -129 | 8.75 | 395 -> 601 | 257 | 0.44 | 46.3 |
+| bdd_sat | + exclusive unification | 226 | 18.16 | 178.3 | +0 / -66 | 4.11 | 564 -> 660 | 183 | 0.50 | 32.3 |
+| hybrid, h2 preprocessing | merging + `tau_baking` | **293** | **28.02** | **37.8** | — | — | — | — | — | — |
+| hybrid, h2 preprocessing | + unification | 186 | 16.28 | 244.3 | +1 / -108 | 6.56 | 329 -> 660 | 233 | 0.40 | 72.4 |
+| hybrid, h2 preprocessing | + unification + final shrinking | 189 | 17.28 | 238.0 | +1 / -105 | 5.83 | 326 -> 658 | 233 | 0.39 | 73.3 |
+| hybrid, h2 preprocessing | + exclusive unification | 240 | 20.94 | 140.3 | +1 / -54 | 3.19 | 408 -> 463 | 146 | 0.49 | 80.9 |
+
+* Unification halves the labels, as intended, but the formula per time step grows 30-80x
+  (geometric mean over the tasks with a merge): every state of a product is a state variable
+  at every step, and both encodings grow with the number of states (state pairs for the BDDs,
+  frame axioms and transitions per state for the transition clauses). Fewer labels do not
+  make up for it.
+* Without `require_exclusive` the horizon grows by half or more: unified labels can fire only
+  once per step (childsnack: sandwiches from different breads, horizon 1 -> 4). With it the
+  horizon grows less (+13 to +17%) -- the remaining growth comes from the changed FTS, not
+  from lost parallelism -- but the size effect remains.
+* Final shrinking changes almost nothing.
+* Verdict: not with one-hot product states. A version that keeps the factors separate would
+  need a choice variable per unified label pair, which is what two labels already are.
+
 ## 6. Open issues
 
 * No variant improves **coverage** beyond noise. The gains are in conflicts and time on
