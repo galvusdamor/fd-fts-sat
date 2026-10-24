@@ -210,6 +210,7 @@ fast_downward_plugin(
         task_transformation/task_transformation_cost
         task_transformation/task_transformation_seq
         task_transformation/task_transformation_label_closure
+        task_transformation/task_transformation_label_union
         task_transformation/task_transformation_tau_baking
         task_transformation/task_transformation_dump
         task_transformation/label_transformation_utils

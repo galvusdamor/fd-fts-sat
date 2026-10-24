@@ -80,8 +80,6 @@ namespace task_representation {
             }
         }
 
-        create_fts_operators();
-
         initial_state.reserve(num_variables);
         for (size_t index = 0; index < num_variables; ++index) {
             const TransitionSystem &ts = fts_task.get_ts(index);
@@ -160,6 +158,7 @@ namespace task_representation {
     }
 
     void SearchTask::create_fts_operators() {
+        operators_created = true;
         size_t num_variables = fts_task.get_size();
         int num_labels = fts_task.get_num_labels();
         label_to_info.resize(num_labels);
@@ -283,6 +282,7 @@ namespace task_representation {
     }
 
     bool SearchTask::has_effect(const GlobalState &predecessor, OperatorID op_id, const FactPair &fact) const {
+        ensure_operators();
         // Ideally, we would assert that the operator is applicable.
         const FTSOperator &fts_op = operators[op_id.get_index()];
         LabelID label = fts_op.get_label();
@@ -320,6 +320,7 @@ namespace task_representation {
 // We only need predecessor to access certain variables' values.
     void SearchTask::apply_operator(
             const GlobalState &predecessor, OperatorID op_id, PackedStateBin *buffer) const {
+        ensure_operators();
         // Ideally, we would assert that the operator is applicable.
         const FTSOperator &fts_op = operators[op_id.get_index()];
 
@@ -348,6 +349,7 @@ namespace task_representation {
     // We only need predecessor to access certain variables' values.
     void SearchTask::apply_operator(
             const GlobalState &predecessor, OperatorID op_id, vector<int> &buffer) const {
+        ensure_operators();
         // Ideally, we would assert that the operator is applicable.
         const FTSOperator &fts_op = operators[op_id.get_index()];
 
@@ -376,6 +378,7 @@ namespace task_representation {
     // We only need predecessor to access certain variables' values.
     void SearchTask::apply_operator(
             const std::vector<int> &predecessor, const OperatorID &op_id, vector<int> &buffer) const {
+        ensure_operators();
         // Ideally, we would assert that the operator is applicable.
         const FTSOperator &fts_op = operators[op_id.get_index()];
 
@@ -402,6 +405,7 @@ namespace task_representation {
     }
 
     vector<int> SearchTask::generate_successor(const State &predecessor, OperatorID op_id) const {
+        ensure_operators();
         vector<int> successor(predecessor.get_values());
 
         const FTSOperator &fts_op = operators[op_id.get_index()];
@@ -433,6 +437,7 @@ namespace task_representation {
 
     void SearchTask::generate_applicable_ops(
             const GlobalState &state, vector<OperatorID> &applicable_ops) const {
+        ensure_operators();
         size_t var = 0;
 
         boost::dynamic_bitset<> activated_labels = activated_labels_by_var_by_state[var][state[var]];
@@ -480,6 +485,7 @@ namespace task_representation {
     }
 
     bool SearchTask::is_applicable(const GlobalState &state, OperatorID op) const {
+        ensure_operators();
         LabelID label = operators[op.get_index()].get_label();
         for (int var = 0; var < fts_task.get_size(); ++var) {
             int value = state[var];
@@ -492,10 +498,12 @@ namespace task_representation {
 
 
     int SearchTask::get_operator_cost(OperatorID op) const {
+        ensure_operators();
         return fts_task.get_label_cost(operators[op.get_index()].get_label());
     }
 
     string SearchTask::operator_names(__attribute__ ((unused))LabelID label) const {
+        ensure_operators();
 /*     const LabelMap &label_map = fts_task.get_label_map();
     vector<int> sas_op_ids;
     for (int sas_op_id = 0; sas_op_id < g_sas_task()->get_num_operators(); ++sas_op_id) {
@@ -516,6 +524,7 @@ namespace task_representation {
     }
 
     void SearchTask::dump_op(OperatorID op) const {
+        ensure_operators();
         const FTSOperator &fts_op = operators[op.get_index()];
         LabelID label = fts_op.get_label();
 //    const LabelMap &label_map = fts_task.get_label_map();

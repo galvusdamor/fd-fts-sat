@@ -116,7 +116,11 @@ namespace task_representation {
 
         std::vector<int> initial_state;
 
-        std::vector<FTSOperator> operators;
+        // operators and label_to_info are built on first use (ensure_operators): SAT search
+        // never needs them, and labels that move many factors nondeterministically (e.g.
+        // label_union) multiply out into exponentially many operators
+        mutable std::vector<FTSOperator> operators;
+        mutable bool operators_created = false;
         std::vector<std::vector<boost::dynamic_bitset<>>> activated_labels_by_var_by_state;
         //std::vector<OperatorTree> operator_tree;
 
@@ -143,7 +147,7 @@ namespace task_representation {
             // is applicable in the state.
             std::vector<std::vector<boost::dynamic_bitset<>>> applicable_ops_by_ts_index_by_state;
         };
-        std::vector<LabelInformation> label_to_info;
+        mutable std::vector<LabelInformation> label_to_info;
 
         std::vector<int> goal_relevant_transition_systems;
 
@@ -161,6 +165,9 @@ namespace task_representation {
                 std::vector<FactPair> &effects);
 
         void create_fts_operators();
+        void ensure_operators() const {
+            if (!operators_created) const_cast<SearchTask *>(this)->create_fts_operators();
+        }
 
     public:
         SearchTask(const FTSTask &fts_task, bool print_time);
@@ -191,6 +198,7 @@ namespace task_representation {
         }
 
         int num_operators() const {
+            ensure_operators();
             return operators.size();
         }
 
@@ -217,6 +225,7 @@ namespace task_representation {
         std::string operator_names(LabelID label) const;
 
         LabelID get_label(OperatorID op) const {
+            ensure_operators();
             assert(std::find(label_to_info[operators[op.get_index()].get_label()].fts_operators.begin(),
                              label_to_info[operators[op.get_index()].get_label()].fts_operators.end(), op) !=
                    label_to_info[operators[op.get_index()].get_label()].fts_operators.end());
@@ -226,14 +235,17 @@ namespace task_representation {
         }
 
         const task_representation::FTSOperator &get_fts_operator(OperatorID operatorID) const {
+            ensure_operators();
             return operators[operatorID.get_index()];
         }
 
         const std::vector<OperatorID> &get_operator_IDs_from_label(int label) const {
+            ensure_operators();
             return label_to_info[label].fts_operators;
         }
 
         const std::vector<FTSOperator> &get_fts_operators() const {
+            ensure_operators();
             return operators;
         }
 
