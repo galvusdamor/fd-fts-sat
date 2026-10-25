@@ -850,6 +850,66 @@ unification; labels and clauses only over the tasks where a merge happened.
 * Verdict: not with one-hot product states. A version that keeps the factors separate would
   need a choice variable per unified label pair, which is what two labels already are.
 
+### 5.11 Closure case 3 and label union (2026-10-24/25)
+
+**`label_closure(multi_factor=true)`** (cases 2 and 3, see the header) had only been
+smoke-tested; all earlier closure numbers are case 1 (`multi_factor=false`). **`label_union()`**
+(`f90f966c4`) replaces a group of labels that each move exactly one, different factor, have no
+precondition in each other's factors and the same transitions everywhere else by one label
+whose transitions are the union of theirs: it fires any subset of them, no factor is merged and
+no parallelism lost; the plan reconstruction fires the members whose factor moved. Search-task
+operators are now built lazily (union labels multiply out into exponentially many, and SAT
+search never needs them). Not possible yet: `label_union` before merge-and-shrink, whose plan
+reconstruction searches in its predecessor task.
+
+How often it applies (labels saved = sum over groups of size - 1), `union_groups.py`:
+
+| FTS | tasks with a group | labels saved | strongest domains |
+|---|---:|---:|---|
+| Autoscale 303, atomic | 248 | 17.3% | satellite 99%, driverlog 87%, rovers 73% |
+| Autoscale 303, `-shr` | 111 | 2.5% | driverlog 89%, nomystery 87%, satellite 68%, parcprinter 37% |
+| Autoscale 303, `-shr` + `tau_baking` | 80 | 2.4% | the same |
+| FTS benchmarks (21) | 1 | 0.1-0.3% | cavediving only |
+
+303 Autoscale tasks, 300 s / 2500 MB, 4 jobs, all plans valid (the configurations without
+add-ons from the run of 5.10):
+
+| encoder | transformation | solved | NormCov | PAR-2 | vs. without | time | Σ horizon |
+|---|---|---:|---:|---:|---|---:|---|
+| bdd_sat | `-shr` | 292 | 27.99 | 54.2 | — | — | — |
+| bdd_sat | + closure case 1 | 292 | 27.78 | 54.7 | +1 / -1 | 1.00 | 816 -> 810 |
+| bdd_sat | + closure case 3 | 291 | 27.65 | 55.6 | +0 / -1 | 1.00 | 816 -> 810 |
+| bdd_sat | + union | 293 | 27.52 | 51.2 | +4 / -3 | 0.96 | 809 -> 811 |
+| bdd_sat | + union + closure case 3 | 293 | 27.52 | 51.0 | +4 / -3 | 0.96 | 809 -> 807 |
+| hybrid, h2 preprocessing | merging + `tau_baking` | 293 | 28.02 | 37.8 | — | — | — |
+| hybrid, h2 preprocessing | + closure case 1 | 292 | 27.68 | 39.4 | +0 / -1 | 1.02 | 583 -> 581 |
+| hybrid, h2 preprocessing | + closure case 3 | 292 | 27.68 | 39.6 | +0 / -1 | 1.02 | 583 -> 581 |
+| hybrid, h2 preprocessing | + union | **297** | **28.31** | 30.1 | +5 / -1 | 0.98 | 583 -> 587 |
+| hybrid, h2 preprocessing | + union + closure case 3 | **297** | **28.31** | **29.9** | +5 / -1 | 0.98 | 583 -> 585 |
+| hybrid, h2 information | merging + `tau_baking` | 294 | 28.20 | 38.9 | — | — | — |
+| hybrid, h2 information | + union | 296 | 28.06 | 35.4 | +4 / -2 | 0.98 | 626 -> 622 |
+
+* **The union helps the hybrid**: +5 / -1 and PAR-2 37.8 -> 30.1, all gains in nomystery
+  (2 -> 7 of 8 solved); parcprinter 22 s -> 8.5 s summed. The one loss, driverlog p03, has a
+  smaller formula (1.38M vs 1.78M clauses per step) but harder SAT calls (length 6: 29 s,
+  222k conflicts), and length 7 no longer fits into 300 s (107 s without the union).
+* **With `bdd_sat` it is mixed**: +4 / -3; nomystery 825 s -> 339 s summed, but driverlog
+  loses 2 tasks: the union labels inflate the BDDs (p02: 10M instead of 1.1M clauses per
+  step). The transition clauses of the hybrid absorb the extra branching, the BDDs do not.
+* **Closure case 3 changes nothing**, alone or after the union (horizons -0 to -1 %).
+* satellite gains nothing in time although the union removes 68% of its labels.
+
+Generalisations, measured on the dumps only (`union_order_pairs.py`, `union_multi.py`):
+
+* An order among the members (the later one's precondition in the earlier one's factor holds
+  at the end of the earlier one's moves) cannot replace labels exactly -- a factor in which
+  its member does not fire cannot know whether a later member needing it fires -- only add a
+  union label. Pairs it would add beyond the exact ones: 1,329 complete (all satellite), 69
+  partial, against 63,919 exact pairs.
+* Members moving several factors are sound only if they are optional (self-loop in every
+  state) in all but one of their moving factors; 1 of 358,433 multi-factor labels is. Overlaps
+  in a factor would need two moves there in one firing.
+
 ## 6. Open issues
 
 * No variant improves **coverage** beyond noise. The gains are in conflicts and time on
