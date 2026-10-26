@@ -179,14 +179,15 @@ def add_compress_and_delete_runs_steps(exp):
 
 def make_experiment(revision, benchmarks_dir, suite, config_names, fetches, name_prefix, pairs=None,
                     time_attribute="planner_time", search=SEARCH, memory_limit=MEMORY_LIMIT,
-                    parallel_runs=PARALLEL_RUNS, runs_per_task=RUNS_PER_TASK):
+                    parallel_runs=PARALLEL_RUNS, runs_per_task=RUNS_PER_TASK, searches=None):
     """fetches: list of (eval directory, {configuration name: revision}) merged into this
     experiment's eval directory (e.g. ("data/2026-09-24-ipc-bdd-A1-orders-eval",
     OLD_ALGORITHMS)). pairs: (configuration, configuration) scatter plots, by bare name;
     names not in this experiment or a fetch are skipped. time_attribute: the runtime of the
     scatter plots -- FTS runs (.sas input, no translator) have no planner_time, use total_time.
     search: the --search string with {} for the encoder; memory_limit, parallel_runs and
-    runs_per_task override the campaign's defaults (2050m, 20, 60)."""
+    runs_per_task override the campaign's defaults (2050m, 20, 60). searches: {configuration
+    name: --search string with {}} for configurations that need a search other than `search`."""
     from lab.reports import Attribute, arithmetic_mean
     from downward.reports.scatter import ScatterPlotReport
     from score_report import AbsoluteReport
@@ -200,7 +201,7 @@ def make_experiment(revision, benchmarks_dir, suite, config_names, fetches, name
     for name in config_names:
         enc, transform, h2 = CONFIGS[name]
         configs.append(IssueConfig(
-            name, B.TRANSFORM_OPTS_2026_10[transform] + ["--search", search.format(enc)],
+            name, B.TRANSFORM_OPTS_2026_10[transform] + ["--search", (searches or {}).get(name, search).format(enc)],
             driver_options=driver_options(h2, memory_limit), build_options=B.build_opts()))
 
     environment = B.make_environment(email=EMAIL, parallel_runs=parallel_runs, cores=CORES,
@@ -336,15 +337,22 @@ SEARCH_C = ("rintanen(encoder={},solver_quiet=true,"
             "max_parallel_calls=4,gamma=0.5,scheduler_interval=1,memory_limit_mb=MEMORY_MB)")
 RUN_C = ["C_1__fulltrans_transeff-shr", "C_1__fulltrans_labeleff-shr", "C_1__chains_slf____rcpol-shr",
          "C_1__seq____slf____rcpol-shr", "C_1__hyb_gc2_h2pre-mtau", "C_1__hyb_gc2_h2pre-mtauun"]
-# the same two at 3500 MB (the memory of the January forall-step run, 1431); own names so the
-# report can hold both memory settings of the same revision
-CONFIGS["C_1__fulltrans_transeff_3500-shr"] = CONFIGS["C_1__fulltrans_transeff-shr"]
-CONFIGS["C_1__fulltrans_labeleff_3500-shr"] = CONFIGS["C_1__fulltrans_labeleff-shr"]
-RUN_C_3500 = ["C_1__fulltrans_transeff_3500-shr", "C_1__fulltrans_labeleff_3500-shr"]
-PAIRS_C_3500 = [
-    ("C_1__fulltrans_transeff-shr", "C_1__fulltrans_transeff_3500-shr"),   # 1669 MiB -> 3500 MB
-    ("C_1__fulltrans_labeleff-shr", "C_1__fulltrans_labeleff_3500-shr"),
-    ("C_1__fulltrans_transeff_3500-shr", "C_1__fulltrans_labeleff_3500-shr"),
+# TAV/TAC in the setting of the January forall-step run (1431): 3500 MB, no h2 preprocessing.
+# Two tuned Algorithm C versions: the one above (4 calls, gamma 0.5) and round-robin (gamma 1,
+# i.e. Madagascar's C) with 6 calls.
+SEARCH_C_G1 = SEARCH_C.replace("max_parallel_calls=4,gamma=0.5", "max_parallel_calls=6,gamma=1")
+for _enc, _name in [(TAV, "transeff"), (TAC, "labeleff")]:
+    CONFIGS[f"C_1__fulltrans_{_name}_jan-shr"] = (_enc, "-shr", None)
+    CONFIGS[f"C_g1p6_fulltrans_{_name}_jan-shr"] = (_enc, "-shr", None)
+RUN_C_JAN = ["C_1__fulltrans_transeff_jan-shr", "C_1__fulltrans_labeleff_jan-shr",
+             "C_g1p6_fulltrans_transeff_jan-shr", "C_g1p6_fulltrans_labeleff_jan-shr"]
+SEARCHES_C_JAN = {c: SEARCH_C_G1 for c in RUN_C_JAN if c.startswith("C_g1p6")}
+PAIRS_C_JAN = [
+    ("C_1__fulltrans_transeff-shr", "C_1__fulltrans_transeff_jan-shr"),    # 1669 MiB + h2 -> January
+    ("C_1__fulltrans_labeleff-shr", "C_1__fulltrans_labeleff_jan-shr"),
+    ("C_1__fulltrans_transeff_jan-shr", "C_1__fulltrans_labeleff_jan-shr"),
+    ("C_1__fulltrans_transeff_jan-shr", "C_g1p6_fulltrans_transeff_jan-shr"),  # gamma 0.5 -> 1
+    ("C_1__fulltrans_labeleff_jan-shr", "C_g1p6_fulltrans_labeleff_jan-shr"),
 ]
 PAIRS_C = [
     ("A_1__fulltransitions_slf_transeff-shr", "C_1__fulltrans_transeff-shr"),   # algorithm A -> C
