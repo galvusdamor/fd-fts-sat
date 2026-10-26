@@ -10,12 +10,17 @@ length_strategy by_iteration(start_length=1, multiplier=1.6, strictly_increasing
 max_parallel_calls=4, gamma=0.5 (Algorithm C's geometric time share); coverage 1035 against 994
 for algorithm A. The interval made no difference (0.05-5 s), 1 s here.
 
-Encodings, all with -shr and h2 preprocessing as in the tuning:
+Encodings, all with h2 preprocessing as in the tuning (the first four with -shr):
   C_1__fulltrans_transeff-shr    full_transitions_sat, linear label order, transition variables
                                  in the effect clauses (use_labels_in_effects_constraints=false)
   C_1__fulltrans_labeleff-shr    the same with label variables in the effect clauses
   C_1__chains_slf____rcpol-shr   label_sat CHAINS_PARALLEL (forall-step, best label encoding)
   C_1__seq____slf____rcpol-shr   label_sat SEQUENTIAL
+  C_1__hyb_gc2_h2pre-mtau        hybrid (bdd_sat transition_factors=AUTO, goal-chains v2), merging +
+                                 tau_baking, h2 preprocessing: the best configuration with algorithm A
+  C_1__hyb_gc2_h2pre-mtauun      the same + label_union
+The two full_transitions_sat configurations set no label_order, i.e. label_order_linear(), the
+behaviour before the option existed.
 
 Memory: 1.75 GB = 1.75e9 bytes = 1669 MiB per run (driver limit and rintanen's own
 memory_limit_mb), 24 runs at a time on the 24 cores of a task (1750M per core leaves ~80 MiB
@@ -39,7 +44,9 @@ MEMORY_MB = 1669
 
 exp = T.make_experiment(REVISION, BENCHMARKS, common_setup.DEFAULT_SATISFICING_SUITE,
                         T.RUN_C,
-                        [("data/2026-09-24-ipc-bdd-A1-orders-eval", T.OLD_ALGORITHMS)],
+                        [("data/2026-09-24-ipc-bdd-A1-orders-eval", T.OLD_ALGORITHMS),
+                         ("data/2026-10-21-ipc-bdd-transformations-3-eval",
+                          {c: T.REVISION_RUN_3 for c in T.RUN_3})],
                         SCRIPT_NAME, pairs=T.PAIRS_C,
                         search=T.SEARCH_C.replace("MEMORY_MB", str(MEMORY_MB)),
                         memory_limit=f"{MEMORY_MB}m", parallel_runs=24, runs_per_task=72)

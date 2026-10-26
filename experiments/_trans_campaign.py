@@ -83,6 +83,10 @@ CONFIGS = {
     "C_1__chains_slf____rcpol-shr": (B.CHAINS, "-shr", "pre"),
     "C_1__seq____slf____rcpol-shr": (B.CHAINS.replace("encoding=CHAINS_PARALLEL", "encoding=SEQUENTIAL"),
                                       "-shr", "pre"),
+    # the best configurations so far, with Algorithm C: the hybrid (goal-chains v2) with merging +
+    # tau_baking and h2 preprocessing, without (IPC 1377 with algorithm A) and with label_union
+    "C_1__hyb_gc2_h2pre-mtau": (B.bdd(**HYB), "-mtau", "pre"),
+    "C_1__hyb_gc2_h2pre-mtauun": (B.bdd(**HYB), "-mtauun", "pre"),
     # Autoscale: the label_sat baseline, h2 preprocessing as in the 2026-09 IPC runs
     "A_1__chains_h2pre-shr": (B.CHAINS, "-shr", "pre"),
 }
@@ -318,11 +322,13 @@ SEARCH_C = ("rintanen(encoder={},solver_quiet=true,"
             "length_strategy=by_iteration(start_length=1,multiplier=1.6,strictly_increasing=true),"
             "max_parallel_calls=4,gamma=0.5,scheduler_interval=1,memory_limit_mb=MEMORY_MB)")
 RUN_C = ["C_1__fulltrans_transeff-shr", "C_1__fulltrans_labeleff-shr", "C_1__chains_slf____rcpol-shr",
-         "C_1__seq____slf____rcpol-shr"]
+         "C_1__seq____slf____rcpol-shr", "C_1__hyb_gc2_h2pre-mtau", "C_1__hyb_gc2_h2pre-mtauun"]
 PAIRS_C = [
     ("A_1__fulltransitions_slf_transeff-shr", "C_1__fulltrans_transeff-shr"),   # algorithm A -> C
     ("A_1__chains_slf____rcpol-shr", "C_1__chains_slf____rcpol-shr"),
     ("C_1__fulltrans_transeff-shr", "C_1__fulltrans_labeleff-shr"),
     ("C_1__chains_slf____rcpol-shr", "C_1__fulltrans_transeff-shr"),
     ("C_1__seq____slf____rcpol-shr", "C_1__fulltrans_transeff-shr"),
+    ("A_1__hyb_gc2_h2pre-mtau", "C_1__hyb_gc2_h2pre-mtau"),                     # A -> C, best config
+    ("C_1__hyb_gc2_h2pre-mtau", "C_1__hyb_gc2_h2pre-mtauun"),
 ]
