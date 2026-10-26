@@ -34,7 +34,8 @@ LabelBasedEncodingFactory::LabelBasedEncodingFactory(const options::Options &opt
 	usePositiveOneForEmpty(opts.get<bool>("use_positive_one")),
 	oneEncodingThreshold(size_t(opts.get<int>("one_encoding_threshold"))),
 	oneEncodingThresholdPercent(opts.get<int>("one_encoding_threshold_percent")),
-	encoding(encoding_type(opts.get_enum("encoding")))
+	encoding(encoding_type(opts.get_enum("encoding"))),
+	chainsInterleaved(opts.get<bool>("chains_interleaved"))
 	 {
 	statisticsPrinted = false;
 	if (encoding != SEQUENTIAL && useSelfloopOptimisation == false){
@@ -100,6 +101,13 @@ static shared_ptr<SATEncodingFactory> _parse_label_based_sat_factory(options::Op
     	"force that every time step contains at least one action",
     	"false");
 
+	parser.add_option<bool>(
+    	"chains_interleaved",
+    	"CHAINS_PARALLEL: allocate the chain helper variables per (factor, state) together with their "
+    	"clauses (the variant from May 2026) instead of all forward, then all backward helpers first; "
+    	"same clauses, different variable numbering",
+    	"false");
+
 	parser.add_option<int>(
     	"one_encoding_threshold",
     	"if ones in src/target/label is less or equal to this number, use positive encoding instead of negative one",
@@ -136,6 +144,7 @@ LabelBasedEncoding::LabelBasedEncoding(
 	size_t _oneEncodingThreshold,
 	int _oneEncodingThresholdPercent,
 	const encoding_type & _encoding,
+	bool _chainsInterleaved,
 	const std::vector<shared_ptr<FTSMatrix>> & fts_matrix): CommonEncoding(capsule,_fts, forceAtLeastOneAction, _useLabelGroups, _useSelfloopOptimisation),
 	statisticsPrinted(_statisticsPrinted),
 	useEmptyRows(_useEmptyRows),
@@ -146,6 +155,7 @@ LabelBasedEncoding::LabelBasedEncoding(
 	oneEncodingThreshold(_oneEncodingThreshold),
 	oneEncodingThresholdPercent(_oneEncodingThresholdPercent),
 	encoding(_encoding),
+	chainsInterleaved(_chainsInterleaved),
 	fts_matrices(fts_matrix)
 {
 }
@@ -170,7 +180,7 @@ unique_ptr<SATEncoding> LabelBasedEncodingFactory::createEncodingInstance(std::s
 	return make_unique<LabelBasedEncoding>(capsule,fts,oldStatisticsPrinted,useLabelGroups,useSelfloopOptimisation,
 			useEmptyRows,useEmptyCols,useEmptyPillars,useOnesInLastDimension,usePositiveOneForEmpty,forceAtLeastOneAction,
 			oneEncodingThreshold,oneEncodingThresholdPercent,
-			encoding,fts_matrices);
+			encoding,chainsInterleaved,fts_matrices);
 }
 
 
@@ -191,7 +201,16 @@ void LabelBasedEncoding::encode_self_loop_parallel(const vector<int> & labelVars
  	}
 }
 
-/* void LabelBasedEncoding::encode_chains_parallel(const vector<int> & labelVars, const vector<vector<int>> & nextStateVars){
+/*
+  CHAINS_PARALLEL, as up to February 2026 (the January forall-step results, 1431 on the IPC):
+  all forward helper variables of all (factor, state) pairs are allocated first, then all
+  backward ones, then the clauses are emitted. encode_chains_parallel_interleaved (via
+  sat_capsule::compute_guarded_forall_chains) emits the same clauses up to variable renaming and
+  clause order, but allocates and emits per (factor, state); kissat behaves measurably worse on
+  that numbering (2026-10-27: forall-step Algorithm C 1392 instead of 1431, mostly memory-outs on
+  airport and hiking). Default: grouped; chains_interleaved=true selects the other one.
+*/
+void LabelBasedEncoding::encode_chains_parallel_grouped(const vector<int> & labelVars, const vector<vector<int>> & nextStateVars){
 	map<int, map<int, vector<int>>> topHelperVars = generateHelperVars();
 	map<int, map<int, vector<int>>> bottomHelperVars = generateHelperVars();
 
@@ -220,9 +239,10 @@ void LabelBasedEncoding::encode_self_loop_parallel(const vector<int> & labelVars
 			}
 		}
 	}
-} */
+}
 
-void LabelBasedEncoding::encode_chains_parallel(const vector<int> & labelVars, const vector<vector<int>> & nextStateVars){
+
+void LabelBasedEncoding::encode_chains_parallel_interleaved(const vector<int> & labelVars, const vector<vector<int>> & nextStateVars){
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		const TransitionSystem & tss = fts->get_ts(ts);
 		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
@@ -686,8 +706,12 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 		encode_sequential(allTimesLabelVars[fromTime]);
 	else if(encoding == SELF_LOOP_PARALLEL)
 		encode_self_loop_parallel(allTimesLabelVars[fromTime]);
-	else if(encoding == CHAINS_PARALLEL)
-		encode_chains_parallel(allTimesLabelVars[fromTime], nextStateVars);
+	else if(encoding == CHAINS_PARALLEL){
+		if (chainsInterleaved)
+			encode_chains_parallel_interleaved(allTimesLabelVars[fromTime], nextStateVars);
+		else
+			encode_chains_parallel_grouped(allTimesLabelVars[fromTime], nextStateVars);
+	}
 
 }
 

@@ -30,6 +30,7 @@ class LabelBasedEncoding : public CommonEncoding {
 	size_t oneEncodingThreshold;
 	int oneEncodingThresholdPercent;
 	encoding_type encoding;
+	bool chainsInterleaved;
 
 	std::vector<std::shared_ptr<FTSMatrix>> fts_matrices;
 
@@ -41,7 +42,8 @@ protected:
 	/// encoding functions for parallelism
 	void encode_sequential(const std::vector<int> & labelVars);
 	void encode_self_loop_parallel(const std::vector<int> & labelVars);
-	void encode_chains_parallel(const std::vector<int> & labelVars, const std::vector<std::vector<int>> & nextStateVars);
+	void encode_chains_parallel_grouped(const std::vector<int> & labelVars, const std::vector<std::vector<int>> & nextStateVars);
+	void encode_chains_parallel_interleaved(const std::vector<int> & labelVars, const std::vector<std::vector<int>> & nextStateVars);
 
 	/// encoding function for the main transition relation
 	void encode_transition(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<int>> & nextStateVars, int fromTime/*, int toTime*/);
@@ -70,6 +72,7 @@ public:
 		const size_t _oneEncodingThreshold,
 		const int _oneEncodingThresholdPercent,
 		const encoding_type & _encoding,
+		bool _chainsInterleaved,
 		const std::vector<std::shared_ptr<FTSMatrix>> & fts_matrices
 			);
 	~LabelBasedEncoding() override = default;
@@ -90,6 +93,7 @@ class LabelBasedEncodingFactory : public SATEncodingFactory {
 	const size_t oneEncodingThreshold;
 	const int oneEncodingThresholdPercent;
 	const encoding_type encoding;
+	const bool chainsInterleaved;
 	bool statisticsPrinted;
 	
 	std::vector<std::shared_ptr<FTSMatrix> > fts_matrices;
