@@ -351,6 +351,30 @@ for _enc, _name in [(TAV, "transeff"), (TAC, "labeleff")]:
 RUN_C_JAN = ["C_1__fulltrans_transeff_jan-shr", "C_1__fulltrans_labeleff_jan-shr",
              "C_g1p6m18_fulltrans_transeff_jan-shr", "C_g1p6m18_fulltrans_labeleff_jan-shr"]
 SEARCHES_C_JAN = {c: SEARCH_C_G1 for c in RUN_C_JAN if c.startswith("C_g1p6")}
+# Second January-setting run (3500m driver limit, no h2, -shr):
+# * the January forall-step Algorithm C configuration itself, with January's rintanen parameters
+#   (by_iteration(), 20 calls, rintanen memory_limit_mb=3500), as a check of the current setup
+#   against the 1431 of CMit_chains_slf____rcpol-shr;
+# * TAV/TAC with the tuned parameters but rintanen's own limit at 2000 MB: formula generation
+#   pauses at 1000 MB, leaving ~2.5 GB for the kissat calls (with 3500 the first run had 466
+#   memory-outs).
+SEARCH_C_JANUARY = ("rintanen(encoder={},solver_quiet=true,length_strategy=by_iteration(),"
+                    "memory_limit_mb=3500,max_parallel_calls=20,scheduler_interval=1,"
+                    "schedule_formula_as_one=true)")
+CONFIGS["CMit_chains_slf____rcpol_jan-shr"] = (B.CHAINS, "-shr", None)
+for _enc, _name in [(TAV, "transeff"), (TAC, "labeleff")]:
+    CONFIGS[f"C_1__fulltrans_{_name}_jan_m2000-shr"] = (_enc, "-shr", None)
+RUN_C_JAN2 = ["CMit_chains_slf____rcpol_jan-shr", "C_1__fulltrans_transeff_jan_m2000-shr",
+              "C_1__fulltrans_labeleff_jan_m2000-shr"]
+SEARCHES_C_JAN2 = {"CMit_chains_slf____rcpol_jan-shr": SEARCH_C_JANUARY,
+                   "C_1__fulltrans_transeff_jan_m2000-shr": SEARCH_C.replace("MEMORY_MB", "2000"),
+                   "C_1__fulltrans_labeleff_jan_m2000-shr": SEARCH_C.replace("MEMORY_MB", "2000")}
+PAIRS_C_JAN2 = [
+    ("C_1__fulltrans_transeff_jan-shr", "C_1__fulltrans_transeff_jan_m2000-shr"),   # rintanen 3500 -> 2000
+    ("C_1__fulltrans_labeleff_jan-shr", "C_1__fulltrans_labeleff_jan_m2000-shr"),
+    ("CMit_chains_slf____rcpol_jan-shr", "C_1__fulltrans_transeff_jan_m2000-shr"),
+    ("CMit_chains_slf____rcpol_jan-shr", "C_1__fulltrans_labeleff_jan_m2000-shr"),
+]
 PAIRS_C_JAN = [
     ("C_1__fulltrans_transeff-shr", "C_1__fulltrans_transeff_jan-shr"),    # 1669 MiB + h2 -> January
     ("C_1__fulltrans_labeleff-shr", "C_1__fulltrans_labeleff_jan-shr"),
