@@ -110,9 +110,15 @@ namespace label_order_finder {
       factor into a goal state are taken first, which addresses Balyo's own
       caveat that the ranking ignores the goal. Being depth-first, it keeps a
       label's supporter chain contiguous, which layering does not.
+      strict_enabling: l' supports l only through a transition that enables
+      l, i.e. starts in a state where l is not applicable and ends in one where
+      it is. The post-order respects the order between strongly connected
+      components (a label's supporters' components finish first); inside a
+      component the order follows the DFS.
     */
     class LabelOrderFinderTSort : public LabelOrderFinder{
         bool goal_first;
+        bool strict_enabling;
         public:
         LabelOrderFinderTSort(const options::Options &opts);
         std::vector<int> find_order(const task_representation::FTSTask &fts_task) override;

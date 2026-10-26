@@ -221,23 +221,31 @@ namespace  label_order_finder {
 
 
     LabelOrderFinderTSort::LabelOrderFinderTSort(const options::Options &opts)
-        : goal_first(opts.get<bool>("goal_first")) {
+        : goal_first(opts.get<bool>("goal_first")),
+          strict_enabling(opts.get<bool>("strict_enabling")) {
     }
 
     std::vector<int> LabelOrderFinderTSort::find_order(const task_representation::FTSTask &fts_task) {
         const int num_labels = fts_task.get_num_labels();
         const int num_factors = fts_task.get_size();
-        // producers[f][s]: labels with a non-self-loop transition into s in f
+        // producers[f][s]: labels with a non-self-loop transition into s in f;
+        // with strict_enabling also the sources of those transitions (sources[f][s][i]
+        // belongs to producers[f][s][i] before deduplication, kept as pairs)
         std::vector<std::vector<std::vector<int>>> producers(num_factors);
+        std::vector<std::vector<std::vector<std::pair<int, int>>>> producer_sources(num_factors);
         std::vector<std::vector<int>> pre_factors(num_labels);
         for (int f = 0; f < num_factors; f++) {
             const task_representation::TransitionSystem &ts = fts_task.get_ts(f);
             producers[f].assign(ts.get_size(), {});
+            if (strict_enabling) producer_sources[f].assign(ts.get_size(), {});
             for (int l = 0; l < num_labels; l++) {
                 if (ts.has_precondition_on(task_representation::LabelID(l))) pre_factors[l].push_back(f);
                 int last = -1;
-                for (const auto &t : ts.get_transitions_with_label(l))
-                    if (t.src != t.target && t.target != last) { producers[f][t.target].push_back(l); last = t.target; }
+                for (const auto &t : ts.get_transitions_with_label(l)) {
+                    if (t.src == t.target) continue;
+                    if (strict_enabling) producer_sources[f][t.target].emplace_back(l, t.src);
+                    if (t.target != last) { producers[f][t.target].push_back(l); last = t.target; }
+                }
             }
             for (auto &v : producers[f]) { std::sort(v.begin(), v.end()); v.erase(std::unique(v.begin(), v.end()), v.end()); }
         }
@@ -266,10 +274,24 @@ namespace  label_order_finder {
             auto enter = [&](int l) {
                 state[l] = 1;
                 std::vector<int> sup;
-                for (int f : pre_factors[l])
-                    for (int s : fts_task.get_ts(f).get_label_precondition(task_representation::LabelID(l)))
-                        for (int p : producers[f][s])
-                            if (p != l && stamp[p] != l) { stamp[p] = l; sup.push_back(p); }
+                for (int f : pre_factors[l]) {
+                    const auto &pre = fts_task.get_ts(f).get_label_precondition(task_representation::LabelID(l));
+                    if (strict_enabling) {
+                        // only transitions from a state where l is not applicable
+                        std::vector<char> applicable(fts_task.get_ts(f).get_size(), 0);
+                        for (int s : pre) applicable[s] = 1;
+                        for (int s : pre)
+                            for (const auto &ps : producer_sources[f][s])
+                                if (!applicable[ps.second] && ps.first != l && stamp[ps.first] != l) {
+                                    stamp[ps.first] = l; sup.push_back(ps.first);
+                                }
+                    } else {
+                        for (int s : pre)
+                            for (int p : producers[f][s])
+                                if (p != l && stamp[p] != l) { stamp[p] = l; sup.push_back(p); }
+                    }
+                }
+                if (strict_enabling) std::sort(sup.begin(), sup.end());
                 std::reverse(sup.begin(), sup.end());   // pop from the back = ascending label order
                 stack.push_back({l, std::move(sup)});
             };
@@ -286,7 +308,8 @@ namespace  label_order_finder {
                 }
             }
         }
-        std::cout << "TSort label order: " << num_labels << " labels" << (goal_first ? ", goal-achieving labels as first roots" : "") << std::endl;
+        std::cout << "TSort label order: " << num_labels << " labels" << (goal_first ? ", goal-achieving labels as first roots" : "")
+                  << (strict_enabling ? ", strict enabling" : "") << std::endl;
         return order;
     }
 
@@ -388,6 +411,9 @@ namespace  label_order_finder {
         parser.document_synopsis("Balyo's topological ranking", "");
         parser.add_option<bool>("goal_first",
             "start the depth-first search from the labels that move a goal factor into a goal state", "false");
+        parser.add_option<bool>("strict_enabling",
+            "a label supports another only through a transition from a state where the other is not "
+            "applicable into one where it is", "false");
         Options opts = parser.parse();
         if (parser.help_mode() || parser.dry_run())
             return nullptr;
