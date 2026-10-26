@@ -49,6 +49,10 @@ FULLTRANS_GC2_H2INFO = (B.FULLTRANS_GC2[:-1] + ","
 # except one whose transition encoding explodes (> 5x its BDDs and >= 70% of the whole)
 HYB = dict(label_order=B.GC2, transition_factors="AUTO", transition_factor_ratio=5,
            transition_factor_min_share=0.7)
+# full_transitions_sat with transition variables (TAV) or label variables (TAC) in the effect
+# clauses; label_order_linear() unless given
+TAV = B.FULLTRANS
+TAC = B.FULLTRANS.replace("use_labels_in_effects_constraints=false", "use_labels_in_effects_constraints=true")
 CONFIGS = {
     # first IPC run (2026-10-20)
     "A_1__bdd_gc2-mtau": (B.bdd(label_order=B.GC2), "-mtau", None),
@@ -87,6 +91,15 @@ CONFIGS = {
     # tau_baking and h2 preprocessing, without (IPC 1377 with algorithm A) and with label_union
     "C_1__hyb_gc2_h2pre-mtau": (B.bdd(**HYB), "-mtau", "pre"),
     "C_1__hyb_gc2_h2pre-mtauun": (B.bdd(**HYB), "-mtauun", "pre"),
+    # Balyo's topological ranking for full_transitions_sat, algorithm A (2026-10-26):
+    # transitions as variables (TAV, transeff) and as clauses (TAC, labeleff), -shr, h2 preprocessing
+    "A_1__fulltrans_transeff_tsort-shr": (TAV[:-1] + ",label_order=label_order_tsort())", "-shr", "pre"),
+    "A_1__fulltrans_transeff_tsortstrict-shr": (TAV[:-1] + ",label_order=label_order_tsort(strict_enabling=true))",
+                                                "-shr", "pre"),
+    "A_1__fulltrans_labeleff_tsort-shr": (TAC[:-1] + ",label_order=label_order_tsort())", "-shr", "pre"),
+    "A_1__fulltrans_labeleff_tsortstrict-shr": (TAC[:-1] + ",label_order=label_order_tsort(strict_enabling=true))",
+                                                "-shr", "pre"),
+    "A_1__fulltrans_labeleff-shr": (TAC, "-shr", "pre"),   # linear; TAV linear is the fetched 09-24 run
     # Autoscale: the label_sat baseline, h2 preprocessing as in the 2026-09 IPC runs
     "A_1__chains_h2pre-shr": (B.CHAINS, "-shr", "pre"),
 }
@@ -331,4 +344,16 @@ PAIRS_C = [
     ("C_1__seq____slf____rcpol-shr", "C_1__fulltrans_transeff-shr"),
     ("A_1__hyb_gc2_h2pre-mtau", "C_1__hyb_gc2_h2pre-mtau"),                     # A -> C, best config
     ("C_1__hyb_gc2_h2pre-mtau", "C_1__hyb_gc2_h2pre-mtauun"),
+]
+
+# Balyo's topological ranking for full_transitions_sat (algorithm A)
+RUN_TSORT = ["A_1__fulltrans_transeff_tsort-shr", "A_1__fulltrans_transeff_tsortstrict-shr",
+             "A_1__fulltrans_labeleff_tsort-shr", "A_1__fulltrans_labeleff_tsortstrict-shr",
+             "A_1__fulltrans_labeleff-shr"]
+PAIRS_TSORT = [
+    ("A_1__fulltransitions_slf_transeff-shr", "A_1__fulltrans_transeff_tsort-shr"),        # linear -> tsort
+    ("A_1__fulltrans_transeff_tsort-shr", "A_1__fulltrans_transeff_tsortstrict-shr"),      # strict
+    ("A_1__fulltrans_labeleff-shr", "A_1__fulltrans_labeleff_tsort-shr"),
+    ("A_1__fulltrans_labeleff_tsort-shr", "A_1__fulltrans_labeleff_tsortstrict-shr"),
+    ("A_1__fulltrans_transeff_tsortstrict-shr", "A_1__fulltrans_labeleff_tsortstrict-shr"),  # TAV vs TAC
 ]
