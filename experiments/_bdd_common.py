@@ -210,6 +210,9 @@ TRANSFORM_OPTS_2026_10 = {
     "-shr": TRANSFORM_OPTS["-shr"],
     "-mtau": ["--transform", f"seq(transformations=[{MERGE},tau_baking()])"],
     "-mtaucl": ["--transform", f"seq(transformations=[{MERGE},tau_baking(),label_closure()])"],
+    # label_union(): labels that each move one, different factor and share their
+    # preconditions elsewhere become one label firing any subset of them
+    "-mtauun": ["--transform", f"seq(transformations=[{MERGE},tau_baking(),label_union()])"],
 }
 
 # h2 without preprocessing: the driver runs h2 on a copy (--h2-information) and the

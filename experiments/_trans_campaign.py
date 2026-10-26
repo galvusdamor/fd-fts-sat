@@ -69,11 +69,16 @@ CONFIGS = {
     "A_1__bdd_gc2-shr": (B.bdd(label_order=B.GC2), "-shr", None),
     "A_1__fulltrans_gc2-shr": (B.FULLTRANS_GC2, "-shr", None),
     "A_1__hyb_gc2-mtau": (B.bdd(**HYB), "-mtau", None),
+    # fourth IPC run (2026-10-26): label_union on each encoder's best IPC configuration
+    "A_1__hyb_gc2_h2pre-mtauun": (B.bdd(**HYB), "-mtauun", "pre"),
+    "A_1__bdd_gc2_h2info-mtauun": (B.bdd(label_order=B.GC2, **B.H2_ENCODER_OPTS), "-mtauun", "info"),
+    "A_1__fulltrans_gc2_h2pre-mtauun": (B.FULLTRANS_GC2, "-mtauun", "pre"),
     # Autoscale: the label_sat baseline, h2 preprocessing as in the 2026-09 IPC runs
     "A_1__chains_h2pre-shr": (B.CHAINS, "-shr", "pre"),
 }
 RUN_1 = ["A_1__bdd_gc2-mtau", "A_1__bdd_gc2_h2info-mtau", "A_1__fulltrans_gc2-mtau", "A_1__bdd_gc2-mtaucl"]
 RUN_3 = ["A_1__hyb_gc2_h2info-mtau", "A_1__hyb_gc2_h2pre-mtau"]
+RUN_4 = ["A_1__hyb_gc2_h2pre-mtauun", "A_1__bdd_gc2_h2info-mtauun", "A_1__fulltrans_gc2_h2pre-mtauun"]
 # Autoscale (not run on the cluster before, nothing to fetch): the baselines and the best
 # configurations of the IPC runs, each with the h2 mode it was best with
 RUN_AUTOSCALE = ["A_1__chains_h2pre-shr", "A_1__bdd_gc2_h2pre-shr", "A_1__bdd_gc2_h2info-mtau",
@@ -107,6 +112,7 @@ OLD_ALGORITHMS = {
 # revisions of the first and second IPC run
 REVISION_RUN_1 = "52efe061d80dcec607a31ba8224c0c7634f2fb1d"
 REVISION_RUN_2 = "7614c44e4410534034b560bd98b7765401b5d917"
+REVISION_RUN_3 = "1011b8df74098730c0881a69bd3a24beb423ecd6"
 
 
 def _compress_runs_dir(runs_dir):
@@ -280,4 +286,13 @@ PAIRS_FTS = [
     ("A_1__bdd_gc2-mtau", "A_1__fulltrans_gc2-mtau"),         # encoder
     ("A_1__fulltrans_gc2-mtau", "A_1__hyb_gc2-mtau"),         # hybrid
     ("A_1__bdd_gc2-mtau", "A_1__hyb_gc2-mtau"),
+]
+
+# each encoder with union against itself without, and the encoders against each other
+PAIRS_RUN_4 = [
+    ("A_1__hyb_gc2_h2pre-mtau", "A_1__hyb_gc2_h2pre-mtauun"),
+    ("A_1__bdd_gc2_h2info-mtau", "A_1__bdd_gc2_h2info-mtauun"),
+    ("A_1__fulltrans_gc2_h2pre-mtau", "A_1__fulltrans_gc2_h2pre-mtauun"),
+    ("A_1__fulltrans_gc2_h2pre-mtauun", "A_1__hyb_gc2_h2pre-mtauun"),
+    ("A_1__bdd_gc2_h2info-mtauun", "A_1__hyb_gc2_h2pre-mtauun"),
 ]
