@@ -9,14 +9,14 @@ IPC satisficing suite, 2026-10-27.
                                           rintanen with by_iteration(), 20 calls, memory_limit_mb=3500,
                                           scheduler_interval=1): checks the current revision and setup
                                           against the 1431
-  C_1__fulltrans_{transeff,labeleff}_jan_m2000-shr
-                                          TAV/TAC with the tuned parameters (start 1 x1.6, 4 calls,
+  C_1__fulltrans_transeff_jan_m2000-shr   TAV with the tuned parameters (start 1 x1.6, 4 calls,
                                           gamma 0.5) and rintanen's own memory_limit_mb=2000, i.e.
                                           formula generation pauses at 1000 MB. In
                                           2026-10-27-ipc-algorithm-c-january.py (memory_limit_mb=3500)
                                           466 of the TAV runs ended in memory-outs.
 
-Fetched: the four configurations of 2026-10-27-ipc-algorithm-c-january.
+TAC (labeleff) is left out for now. Fetched: the two TAV configurations of
+2026-10-27-ipc-algorithm-c-january.
 """
 
 import os
@@ -32,7 +32,7 @@ MEMORY_MB = 3500
 exp = T.make_experiment(REVISION, BENCHMARKS, common_setup.DEFAULT_SATISFICING_SUITE,
                         T.RUN_C_JAN2,
                         [("data/2026-10-27-ipc-algorithm-c-january-eval",
-                          {c: REVISION for c in T.RUN_C_JAN})],
+                          {c: REVISION for c in T.FETCH_C_JAN2})],
                         SCRIPT_NAME, pairs=T.PAIRS_C_JAN2,
                         searches=T.SEARCHES_C_JAN2,
                         memory_limit=f"{MEMORY_MB}m", parallel_runs=12, runs_per_task=36)

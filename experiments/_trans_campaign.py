@@ -364,16 +364,15 @@ SEARCH_C_JANUARY = ("rintanen(encoder={},solver_quiet=true,length_strategy=by_it
 CONFIGS["CMit_chains_slf____rcpol_jan-shr"] = (B.CHAINS, "-shr", None)
 for _enc, _name in [(TAV, "transeff"), (TAC, "labeleff")]:
     CONFIGS[f"C_1__fulltrans_{_name}_jan_m2000-shr"] = (_enc, "-shr", None)
-RUN_C_JAN2 = ["CMit_chains_slf____rcpol_jan-shr", "C_1__fulltrans_transeff_jan_m2000-shr",
-              "C_1__fulltrans_labeleff_jan_m2000-shr"]
+# TAC (labeleff) is defined but not run for now
+RUN_C_JAN2 = ["CMit_chains_slf____rcpol_jan-shr", "C_1__fulltrans_transeff_jan_m2000-shr"]
+FETCH_C_JAN2 = ["C_1__fulltrans_transeff_jan-shr", "C_g1p6m18_fulltrans_transeff_jan-shr"]
 SEARCHES_C_JAN2 = {"CMit_chains_slf____rcpol_jan-shr": SEARCH_C_JANUARY,
                    "C_1__fulltrans_transeff_jan_m2000-shr": SEARCH_C.replace("MEMORY_MB", "2000"),
                    "C_1__fulltrans_labeleff_jan_m2000-shr": SEARCH_C.replace("MEMORY_MB", "2000")}
 PAIRS_C_JAN2 = [
     ("C_1__fulltrans_transeff_jan-shr", "C_1__fulltrans_transeff_jan_m2000-shr"),   # rintanen 3500 -> 2000
-    ("C_1__fulltrans_labeleff_jan-shr", "C_1__fulltrans_labeleff_jan_m2000-shr"),
     ("CMit_chains_slf____rcpol_jan-shr", "C_1__fulltrans_transeff_jan_m2000-shr"),
-    ("CMit_chains_slf____rcpol_jan-shr", "C_1__fulltrans_labeleff_jan_m2000-shr"),
 ]
 PAIRS_C_JAN = [
     ("C_1__fulltrans_transeff-shr", "C_1__fulltrans_transeff_jan-shr"),    # 1669 MiB + h2 -> January
