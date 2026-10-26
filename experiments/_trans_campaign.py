@@ -336,6 +336,16 @@ SEARCH_C = ("rintanen(encoder={},solver_quiet=true,"
             "max_parallel_calls=4,gamma=0.5,scheduler_interval=1,memory_limit_mb=MEMORY_MB)")
 RUN_C = ["C_1__fulltrans_transeff-shr", "C_1__fulltrans_labeleff-shr", "C_1__chains_slf____rcpol-shr",
          "C_1__seq____slf____rcpol-shr", "C_1__hyb_gc2_h2pre-mtau", "C_1__hyb_gc2_h2pre-mtauun"]
+# the same two at 3500 MB (the memory of the January forall-step run, 1431); own names so the
+# report can hold both memory settings of the same revision
+CONFIGS["C_1__fulltrans_transeff_3500-shr"] = CONFIGS["C_1__fulltrans_transeff-shr"]
+CONFIGS["C_1__fulltrans_labeleff_3500-shr"] = CONFIGS["C_1__fulltrans_labeleff-shr"]
+RUN_C_3500 = ["C_1__fulltrans_transeff_3500-shr", "C_1__fulltrans_labeleff_3500-shr"]
+PAIRS_C_3500 = [
+    ("C_1__fulltrans_transeff-shr", "C_1__fulltrans_transeff_3500-shr"),   # 1669 MiB -> 3500 MB
+    ("C_1__fulltrans_labeleff-shr", "C_1__fulltrans_labeleff_3500-shr"),
+    ("C_1__fulltrans_transeff_3500-shr", "C_1__fulltrans_labeleff_3500-shr"),
+]
 PAIRS_C = [
     ("A_1__fulltransitions_slf_transeff-shr", "C_1__fulltrans_transeff-shr"),   # algorithm A -> C
     ("A_1__chains_slf____rcpol-shr", "C_1__chains_slf____rcpol-shr"),
