@@ -84,6 +84,7 @@ exp.add_parser(fts_parser.FTSParser())
 exp.add_parser(encoding_size_parser.EncodingSizeParser())
 
 exp.add_fetcher(name="fetch")
+common_setup.add_compress_and_delete_runs_step(exp)
 
 ATTRIBUTES = common_setup.ATTRIBUTES + [
     Attribute(a, min_wins=True, function=arithmetic_mean, absolute=False)

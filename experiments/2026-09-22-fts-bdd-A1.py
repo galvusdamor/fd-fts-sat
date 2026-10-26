@@ -96,6 +96,7 @@ exp.add_parser(fts_parser.FTSParser())
 exp.add_parser(encoding_size_parser.EncodingSizeParser())
 
 exp.add_fetcher(name="fetch")
+common_setup.add_compress_and_delete_runs_step(exp)
 
 tofetch = [
         ("2026-09-21-fts-bdd-A1", ["f27d845858ae0001bfb375289e6b5b72a7b70b11-A_1__chains_slf____rcpol-shr", "f27d845858ae0001bfb375289e6b5b72a7b70b11-A_1__bdd_full-shr","f27d845858ae0001bfb375289e6b5b72a7b70b11-A_1__fulltransitions_slf_transeff-shr"])

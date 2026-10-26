@@ -481,25 +481,35 @@ class IssueExperiment(FastDownwardExperiment):
         self.add_step(step_name, make_scatter_plots)
 
 
+def _compress_runs_dir(runs_dir):
+    """runs_dir -> runs_dir.tar.bz2, read back completely before anything is deleted."""
+    runs_dir = runs_dir.rstrip("/")
+    archive = runs_dir + ".tar.bz2"
+    parent, name = os.path.split(runs_dir)
+    subprocess.run(["tar", "-cjf", archive, "-C", parent, name], check=True)
+    subprocess.run(["tar", "-tjf", archive], check=True, stdout=subprocess.DEVNULL)
+    print(f"compressed {runs_dir} -> {archive}")
+
+
+def _delete_runs_dir(runs_dir):
+    """Deletes the run directory, but only next to a readable archive of it."""
+    import shutil
+    runs_dir = runs_dir.rstrip("/")
+    archive = runs_dir + ".tar.bz2"
+    if not os.path.isdir(runs_dir):
+        print(f"{runs_dir} does not exist, nothing to delete")
+        return
+    if not os.path.exists(archive):
+        raise SystemExit(f"no archive {archive}: run compress-runs-dir first")
+    subprocess.run(["tar", "-tjf", archive], check=True, stdout=subprocess.DEVNULL)
+    shutil.rmtree(runs_dir)
+    print(f"deleted {runs_dir} (archive: {archive})")
+
+
 def add_compress_and_delete_runs_step(exp):
-    runs_dir = exp.path
-    exp.add_step(
-        "compress-runs-dir",
-        subprocess.call,
-        [
-            "tar",
-            "-cjf",
-            f"{runs_dir[:-1] if runs_dir.endswith('/') else runs_dir}.tar.gz",
-            f"{runs_dir if runs_dir.endswith('/') else runs_dir + '/'}",
-        ],
-    )
-    exp.add_step(
-        "delete-runs-dir",
-        subprocess.call,
-        [
-            "rm",
-            "-rf",
-            runs_dir
-        ],
-    )
+    """After parse + fetch the run directories (logs) are only needed for debugging:
+    compress-runs-dir writes <exp>.tar.bz2 and reads it back, delete-runs-dir removes the
+    directory only if that archive exists and reads back. Unpack with tar -xjf."""
+    exp.add_step("compress-runs-dir", _compress_runs_dir, exp.path)
+    exp.add_step("delete-runs-dir", _delete_runs_dir, exp.path)
 

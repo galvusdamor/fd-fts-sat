@@ -142,6 +142,7 @@ exp.add_step("parse", exp.parse)
 exp.add_parser(FTSParser())
 
 exp.add_fetcher(name='fetch', filter=[filters.remove_revision])
+common_setup.add_compress_and_delete_runs_step(exp)
 
 
 FORMAT = "html"

@@ -139,6 +139,7 @@ exp.add_parser(fts_parser.FTSParser())
 exp.add_parser(encoding_size_parser.EncodingSizeParser())
 
 exp.add_fetcher(name="fetch")
+common_setup.add_compress_and_delete_runs_step(exp)
 
 # already-run baselines, merged into this experiment's eval directory
 tofetch = [
