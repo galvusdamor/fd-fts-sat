@@ -713,6 +713,11 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 			encode_chains_parallel_grouped(allTimesLabelVars[fromTime], nextStateVars);
 	}
 
+	// Only needed while encoding this step. Without use_label_group it holds one entry per
+	// (factor, label) -- about 12 MB per step on airport p25 (1179 factors, 2594 labels) --
+	// and kept for every step it doubled the memory of a formula (the January code had it as
+	// a local of encode()).
+	allTimesLabelGroupVars.erase(fromTime);
 }
 
 
