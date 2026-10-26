@@ -73,6 +73,16 @@ CONFIGS = {
     "A_1__hyb_gc2_h2pre-mtauun": (B.bdd(**HYB), "-mtauun", "pre"),
     "A_1__bdd_gc2_h2info-mtauun": (B.bdd(label_order=B.GC2, **B.H2_ENCODER_OPTS), "-mtauun", "info"),
     "A_1__fulltrans_gc2_h2pre-mtauun": (B.FULLTRANS_GC2, "-mtauun", "pre"),
+    # Algorithm C run (2026-10-26): the original full_transitions_sat (linear label order) with
+    # transition variables (transeff) or label variables (labeleff) in the effect clauses
+    "C_1__fulltrans_transeff-shr": (B.FULLTRANS, "-shr", "pre"),
+    "C_1__fulltrans_labeleff-shr": (B.FULLTRANS.replace("use_labels_in_effects_constraints=false",
+                                                        "use_labels_in_effects_constraints=true"), "-shr", "pre"),
+    # the label encodings for comparison: forall-step (CHAINS_PARALLEL, the best label encoding,
+    # chains_slf____rcpol of the cluster runs) and fully sequential (seq____slf____rcpol, IJCAI)
+    "C_1__chains_slf____rcpol-shr": (B.CHAINS, "-shr", "pre"),
+    "C_1__seq____slf____rcpol-shr": (B.CHAINS.replace("encoding=CHAINS_PARALLEL", "encoding=SEQUENTIAL"),
+                                      "-shr", "pre"),
     # Autoscale: the label_sat baseline, h2 preprocessing as in the 2026-09 IPC runs
     "A_1__chains_h2pre-shr": (B.CHAINS, "-shr", "pre"),
 }
@@ -90,10 +100,10 @@ RUN_2 = ["A_1__fulltrans_gc2_h2info-mtau", "A_1__fulltrans_gc2_h2pre-mtau", "A_1
          "A_1__bdd_gc2_h2pre-shr", "A_1__fulltrans_gc2_h2pre-shr"]
 
 
-def driver_options(h2):
+def driver_options(h2, memory_limit=MEMORY_LIMIT):
     if h2 == "info":
-        return B.driver_opts_h2_information(MEMORY_LIMIT)
-    return B.driver_opts(h2=(h2 == "pre"), memory_limit=MEMORY_LIMIT)
+        return B.driver_opts_h2_information(memory_limit)
+    return B.driver_opts(h2=(h2 == "pre"), memory_limit=memory_limit)
 
 # the 2026-09-24 experiments and the revisions their algorithms carry
 REVISION_0921 = "f27d845858ae0001bfb375289e6b5b72a7b70b11"
@@ -151,12 +161,15 @@ def add_compress_and_delete_runs_steps(exp):
 
 
 def make_experiment(revision, benchmarks_dir, suite, config_names, fetches, name_prefix, pairs=None,
-                    time_attribute="planner_time"):
+                    time_attribute="planner_time", search=SEARCH, memory_limit=MEMORY_LIMIT,
+                    parallel_runs=PARALLEL_RUNS, runs_per_task=RUNS_PER_TASK):
     """fetches: list of (eval directory, {configuration name: revision}) merged into this
     experiment's eval directory (e.g. ("data/2026-09-24-ipc-bdd-A1-orders-eval",
     OLD_ALGORITHMS)). pairs: (configuration, configuration) scatter plots, by bare name;
     names not in this experiment or a fetch are skipped. time_attribute: the runtime of the
-    scatter plots -- FTS runs (.sas input, no translator) have no planner_time, use total_time."""
+    scatter plots -- FTS runs (.sas input, no translator) have no planner_time, use total_time.
+    search: the --search string with {} for the encoder; memory_limit, parallel_runs and
+    runs_per_task override the campaign's defaults (2050m, 20, 60)."""
     from lab.reports import Attribute, arithmetic_mean
     from downward.reports.scatter import ScatterPlotReport
     from score_report import AbsoluteReport
@@ -170,11 +183,11 @@ def make_experiment(revision, benchmarks_dir, suite, config_names, fetches, name
     for name in config_names:
         enc, transform, h2 = CONFIGS[name]
         configs.append(IssueConfig(
-            name, B.TRANSFORM_OPTS_2026_10[transform] + ["--search", SEARCH.format(enc)],
-            driver_options=driver_options(h2), build_options=B.build_opts()))
+            name, B.TRANSFORM_OPTS_2026_10[transform] + ["--search", search.format(enc)],
+            driver_options=driver_options(h2, memory_limit), build_options=B.build_opts()))
 
-    environment = B.make_environment(email=EMAIL, parallel_runs=PARALLEL_RUNS, cores=CORES,
-                                     runs_per_task=RUNS_PER_TASK)
+    environment = B.make_environment(email=EMAIL, parallel_runs=parallel_runs, cores=CORES,
+                                     runs_per_task=runs_per_task)
     exp = IssueExperiment(revisions=[revision], configs=configs, environment=environment)
     exp.add_suite(benchmarks_dir, suite)
 
@@ -295,4 +308,21 @@ PAIRS_RUN_4 = [
     ("A_1__fulltrans_gc2_h2pre-mtau", "A_1__fulltrans_gc2_h2pre-mtauun"),
     ("A_1__fulltrans_gc2_h2pre-mtauun", "A_1__hyb_gc2_h2pre-mtauun"),
     ("A_1__bdd_gc2_h2info-mtauun", "A_1__hyb_gc2_h2pre-mtauun"),
+]
+
+# Algorithm C with the parameters of the offline tuning (rintanen campaign, 2026-10-03, simulated on
+# profiles of bdd_sat goal-chains v2 + -shr + h2 preprocessing): by_iteration from 1 with x1.6,
+# 4 parallel lengths, geometric share gamma 0.5 (coverage 1035 vs 994 for algorithm A); the
+# interval made no difference (0.05-5 s). memory_limit_mb is set per experiment.
+SEARCH_C = ("rintanen(encoder={},solver_quiet=true,"
+            "length_strategy=by_iteration(start_length=1,multiplier=1.6,strictly_increasing=true),"
+            "max_parallel_calls=4,gamma=0.5,scheduler_interval=1,memory_limit_mb=MEMORY_MB)")
+RUN_C = ["C_1__fulltrans_transeff-shr", "C_1__fulltrans_labeleff-shr", "C_1__chains_slf____rcpol-shr",
+         "C_1__seq____slf____rcpol-shr"]
+PAIRS_C = [
+    ("A_1__fulltransitions_slf_transeff-shr", "C_1__fulltrans_transeff-shr"),   # algorithm A -> C
+    ("A_1__chains_slf____rcpol-shr", "C_1__chains_slf____rcpol-shr"),
+    ("C_1__fulltrans_transeff-shr", "C_1__fulltrans_labeleff-shr"),
+    ("C_1__chains_slf____rcpol-shr", "C_1__fulltrans_transeff-shr"),
+    ("C_1__seq____slf____rcpol-shr", "C_1__fulltrans_transeff-shr"),
 ]
