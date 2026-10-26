@@ -14,9 +14,10 @@ Two tuned Algorithm C versions (scheduler_interval=1 in both):
   C_1__fulltrans_{transeff,labeleff}_jan-shr     the tuning result: by_iteration(start_length=1,
                                                  multiplier=1.6, strictly_increasing=true),
                                                  max_parallel_calls=4, gamma=0.5
-  C_g1p6i4_fulltrans_{transeff,labeleff}_jan-shr round-robin: by_increment(start_length=4,
-                                                 increment=4), max_parallel_calls=6, gamma=1
-                                                 (increment: see SEARCH_C_G1 in _trans_campaign)
+  C_g1p6m18_fulltrans_{transeff,labeleff}_jan-shr round-robin: by_iteration(start_length=1,
+                                                 multiplier=1.8, strictly_increasing=true),
+                                                 max_parallel_calls=6, gamma=1
+                                                 (multiplier: see SEARCH_C_G1 in _trans_campaign)
 transeff = TAV (transition variables in the effect clauses), labeleff = TAC; label_order_linear().
 
 12 runs at a time on the 24 cores of a task (42000M / 12 = 3500M per run, as in January), 36 runs

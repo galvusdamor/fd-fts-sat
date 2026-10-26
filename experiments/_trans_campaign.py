@@ -338,25 +338,25 @@ SEARCH_C = ("rintanen(encoder={},solver_quiet=true,"
 RUN_C = ["C_1__fulltrans_transeff-shr", "C_1__fulltrans_labeleff-shr", "C_1__chains_slf____rcpol-shr",
          "C_1__seq____slf____rcpol-shr", "C_1__hyb_gc2_h2pre-mtau", "C_1__hyb_gc2_h2pre-mtauun"]
 # TAV/TAC in the setting of the January forall-step run (1431): 3500 MB, no h2 preprocessing.
-# Two tuned Algorithm C versions: the one above (4 calls, gamma 0.5) and round-robin (gamma 1)
-# with 6 calls over lengths 4, 8, 12, ... Increment 4 from the TAV horizons (algorithm A, IPC,
-# 2026-09-24: median 5, p75 9, p90 19, p95 29, max 58): the first six lengths reach 24 (~p90),
-# and a plan is found at most 3 steps above its shortest horizon, which costs TAV/TAC little.
+# Two tuned Algorithm C versions: the one above (start 1 x1.6, 4 calls, gamma 0.5) and round-robin
+# (gamma 1) with 6 calls and start 1 x1.8: lengths 1, 2, 4, 6, 11, 19, 35, 62, 111, ... Multiplier
+# from the TAV horizons (algorithm A, IPC, 2026-09-24: median 5, p75 9, p90 19, p95 29, max 58):
+# the first six lengths reach 19 (p90), the next two 35 (> p95) and 62 (> max); x1.6 needs
+# eight lengths for 27 and nine for 43.
 SEARCH_C_G1 = (SEARCH_C.replace("max_parallel_calls=4,gamma=0.5", "max_parallel_calls=6,gamma=1")
-               .replace("by_iteration(start_length=1,multiplier=1.6,strictly_increasing=true)",
-                        "by_increment(start_length=4,increment=4)"))
+               .replace("multiplier=1.6", "multiplier=1.8"))
 for _enc, _name in [(TAV, "transeff"), (TAC, "labeleff")]:
     CONFIGS[f"C_1__fulltrans_{_name}_jan-shr"] = (_enc, "-shr", None)
-    CONFIGS[f"C_g1p6i4_fulltrans_{_name}_jan-shr"] = (_enc, "-shr", None)
+    CONFIGS[f"C_g1p6m18_fulltrans_{_name}_jan-shr"] = (_enc, "-shr", None)
 RUN_C_JAN = ["C_1__fulltrans_transeff_jan-shr", "C_1__fulltrans_labeleff_jan-shr",
-             "C_g1p6i4_fulltrans_transeff_jan-shr", "C_g1p6i4_fulltrans_labeleff_jan-shr"]
+             "C_g1p6m18_fulltrans_transeff_jan-shr", "C_g1p6m18_fulltrans_labeleff_jan-shr"]
 SEARCHES_C_JAN = {c: SEARCH_C_G1 for c in RUN_C_JAN if c.startswith("C_g1p6")}
 PAIRS_C_JAN = [
     ("C_1__fulltrans_transeff-shr", "C_1__fulltrans_transeff_jan-shr"),    # 1669 MiB + h2 -> January
     ("C_1__fulltrans_labeleff-shr", "C_1__fulltrans_labeleff_jan-shr"),
     ("C_1__fulltrans_transeff_jan-shr", "C_1__fulltrans_labeleff_jan-shr"),
-    ("C_1__fulltrans_transeff_jan-shr", "C_g1p6i4_fulltrans_transeff_jan-shr"),  # gamma 0.5 -> 1
-    ("C_1__fulltrans_labeleff_jan-shr", "C_g1p6i4_fulltrans_labeleff_jan-shr"),
+    ("C_1__fulltrans_transeff_jan-shr", "C_g1p6m18_fulltrans_transeff_jan-shr"),  # gamma 0.5 -> 1
+    ("C_1__fulltrans_labeleff_jan-shr", "C_g1p6m18_fulltrans_labeleff_jan-shr"),
 ]
 PAIRS_C = [
     ("A_1__fulltransitions_slf_transeff-shr", "C_1__fulltrans_transeff-shr"),   # algorithm A -> C
