@@ -374,6 +374,12 @@ PAIRS_C_JAN2 = [
     ("C_1__fulltrans_transeff_jan-shr", "C_1__fulltrans_transeff_jan_m2000-shr"),   # rintanen 3500 -> 2000
     ("CMit_chains_slf____rcpol_jan-shr", "C_1__fulltrans_transeff_jan_m2000-shr"),
 ]
+# The January forall-step configuration at the revision with both label_sat fixes (c8f7f7b5b:
+# grouped chain helpers as before c88344cda, per-step label group table freed again).
+CONFIGS["CMit_chains_slf____rcpol_janfix-shr"] = (B.CHAINS, "-shr", None)
+RUN_C_JANFIX = ["CMit_chains_slf____rcpol_janfix-shr"]
+SEARCHES_C_JANFIX = {"CMit_chains_slf____rcpol_janfix-shr": SEARCH_C_JANUARY}
+PAIRS_C_JANFIX = [("CMit_chains_slf____rcpol_jan-shr", "CMit_chains_slf____rcpol_janfix-shr")]
 PAIRS_C_JAN = [
     ("C_1__fulltrans_transeff-shr", "C_1__fulltrans_transeff_jan-shr"),    # 1669 MiB + h2 -> January
     ("C_1__fulltrans_labeleff-shr", "C_1__fulltrans_labeleff_jan-shr"),
