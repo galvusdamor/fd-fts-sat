@@ -30,6 +30,9 @@ class RintanenSATSearch : public SearchEngine, std::enable_shared_from_this<Rint
 	const size_t max_parallel_calls;
 	const int scheduler_interval_ms;
 	const double gamma;
+	// > 0: a turn ends after this many conflicts (times gamma^position) instead of after
+	// scheduler_interval; Madagascar's time slice (60 learned clauses per step)
+	const int slice_conflicts;
 	const bool trace_schedule;
 	const bool dont_schedule_formula_generation;
 	const int memory_limit_mbs;

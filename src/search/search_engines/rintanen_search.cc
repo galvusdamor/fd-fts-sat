@@ -30,6 +30,7 @@ extern "C"{
 
 	typedef struct kissat kissat;
 	void kissat_set_external_scheduler(kissat * solver, bool (*scheduler) (void *));
+	uint64_t fts_kissat_conflicts (void *solver);
 }
 
 
@@ -46,6 +47,8 @@ struct SAT_Call_Data{
 	const int timesteps;
 	bool terminated; // set to true if *this* call needs to be terminated
 	std::binary_semaphore run_mutex;
+	// slice_conflicts: the solver's conflict count when this call's current turn began
+	uint64_t turn_start_conflicts = 0;
 	std::string identifier;
 
 	SAT_Call_Data(std::shared_ptr<sat_capsule> _capsule, sat_search::RintanenSATSearch* _search, const std::shared_ptr<SAT_Scheduler> & _scheduler, std::unique_ptr<sat_search::SATEncoding> _encoding,
@@ -67,6 +70,8 @@ struct SAT_Scheduler{
 	// turn length of the open call at position p (0 = shortest length) is
 	// schedule_interval * gamma^p; gamma = 1 is plain round-robin
 	const double gamma;
+	// > 0: turns are measured in conflicts of the running call instead of time
+	const int slice_conflicts;
 	const bool trace;
 	std::chrono::steady_clock::time_point t_start;
 	const bool dont_schedule_formula_generation;
@@ -88,11 +93,11 @@ struct SAT_Scheduler{
 	int reserved_memory_in_mb;
 	
 
-	SAT_Scheduler(size_t max_parallel_calls, int scheduler_interval_ms, double _gamma, bool _trace,
-			bool _dont_schedule_formula_generation, int _memory_limit_mbs) :
+	SAT_Scheduler(size_t max_parallel_calls, int scheduler_interval_ms, double _gamma, int _slice_conflicts,
+			bool _trace, bool _dont_schedule_formula_generation, int _memory_limit_mbs) :
 		maximum_number_of_parallel_calls(max_parallel_calls),
 		schedule_interval(scheduler_interval_ms),
-		gamma(_gamma), trace(_trace), t_start(std::chrono::steady_clock::now()),
+		gamma(_gamma), slice_conflicts(_slice_conflicts), trace(_trace), t_start(std::chrono::steady_clock::now()),
 		dont_schedule_formula_generation(_dont_schedule_formula_generation),
 		memory_limit_mbs(_memory_limit_mbs),
 		nextStepNumber(0), previousLength(-1), done_mutex(0), shutdown_handshake(0), plannerTerminated(false), planFound(false) {
@@ -118,14 +123,25 @@ struct SAT_Scheduler{
 		cout << line.str() << std::flush;
 	}
 
-	std::chrono::milliseconds turn_length(int step_number) const {
-		if (gamma == 1.0) return schedule_interval;
+	// position of the call among the open ones (0 = shortest length)
+	int position_of(int step_number) const {
 		int position = 0;
 		for (const auto &[nr, instance] : currentInstances) {
 			if (nr == step_number) break;
 			position++;
 		}
-		return std::chrono::milliseconds(std::max<long>(1, std::lround(schedule_interval.count() * std::pow(gamma, position))));
+		return position;
+	}
+
+	std::chrono::milliseconds turn_length(int step_number) const {
+		if (gamma == 1.0) return schedule_interval;
+		return std::chrono::milliseconds(std::max<long>(1, std::lround(schedule_interval.count() * std::pow(gamma, position_of(step_number)))));
+	}
+
+	// slice_conflicts: the number of conflicts of a turn
+	uint64_t turn_conflicts(int step_number) const {
+		if (gamma == 1.0) return slice_conflicts;
+		return std::max<long>(1, std::lround(slice_conflicts * std::pow(gamma, position_of(step_number))));
 	}
 
 	void terminate_planner(int currentNr){
@@ -161,11 +177,17 @@ struct SAT_Scheduler{
 
 		// check whether my time has elapsed; but ignore if thread has finished or wants to be paused for memory
 		if (! finished && !forcePauseForMemory){
-			auto t_now = std::chrono::system_clock::now();
-			std::chrono::milliseconds elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last_schedule);
-		
-			// my time has not elapsed yet.
-			if (elapsed < turn_length(current_call_step)) return plannerTerminated;
+			if (slice_conflicts > 0) {
+				// my conflicts are not used up yet
+				const uint64_t done = fts_kissat_conflicts(solver) - current_call->turn_start_conflicts;
+				if (done < turn_conflicts(current_call_step)) return plannerTerminated;
+			} else {
+				auto t_now = std::chrono::system_clock::now();
+				std::chrono::milliseconds elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last_schedule);
+
+				// my time has not elapsed yet.
+				if (elapsed < turn_length(current_call_step)) return plannerTerminated;
+			}
 		}
 		if (finished) trace_event(foundPlans ? "sat" : "unsat", *current_call);
 
@@ -268,6 +290,8 @@ struct SAT_Scheduler{
 			// let this call sleep
 			// if it is finished, it will exit immediately.
 			current_call->run_mutex.acquire();
+			// a new turn begins
+			if (slice_conflicts > 0) current_call->turn_start_conflicts = fts_kissat_conflicts(solver);
 		}
 
 
@@ -313,6 +337,7 @@ RintanenSATSearch::RintanenSATSearch(const options::Options &opts): SearchEngine
 	scheduler_interval_ms(opts.get<int>("scheduler_interval_ms") >= 0
 			? opts.get<int>("scheduler_interval_ms") : 1000 * opts.get<int>("scheduler_interval")),
 	gamma(opts.get<double>("gamma")),
+	slice_conflicts(opts.get<int>("slice_conflicts")),
 	trace_schedule(opts.get<bool>("trace_schedule")),
 	dont_schedule_formula_generation(opts.get<bool>("schedule_formula_as_one")),
 	memory_limit_mbs(opts.get<int>("memory_limit_mb")),
@@ -587,7 +612,7 @@ SearchStatus RintanenSATSearch::step() {
 	cout << "Starting Rintanen's algorithms C with SAT solver " << ipasir_signature() << endl;
 
 	std::shared_ptr<SAT_Scheduler> global_scheduler = make_shared<SAT_Scheduler>(max_parallel_calls, scheduler_interval_ms,
-			gamma, trace_schedule, dont_schedule_formula_generation, memory_limit_mbs);
+			gamma, slice_conflicts, trace_schedule, dont_schedule_formula_generation, memory_limit_mbs);
 
 	// create the first length run of the SAT planner and start it!
 	// it will wait immediately as the mutex starts in locked state

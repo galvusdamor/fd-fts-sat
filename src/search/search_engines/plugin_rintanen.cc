@@ -25,6 +25,10 @@ static shared_ptr<SearchEngine> _parse(OptionParser &parser) {
 	parser.add_option<double> (
 		"gamma","geometric time share: the i-th open length (0 = shortest) gets turns of "
 		"interval * gamma^i; 1 = round-robin", "1.0");
+	parser.add_option<int> (
+		"slice_conflicts","> 0: a turn ends after this many conflicts of the running call (times "
+		"gamma^position) instead of after scheduler_interval, as Madagascar's time slices (60 "
+		"learned clauses); -1 = time", "-1");
 	parser.add_option<bool> (
 		"trace_schedule","print one RSCHED line per scheduling event (turn, encoded, sat, unsat)", "false");
 	parser.add_option<int> (

@@ -9,6 +9,12 @@ int fts_kissat_statistics (void *solver, uint64_t *conflicts, uint64_t *decision
   return 0;
 }
 
+uint64_t fts_kissat_conflicts (void *solver)
+{
+  (void) solver;
+  return 0;
+}
+
 int fts_kissat_variables (void *solver, uint64_t *vars, uint64_t *active,
                           uint64_t *eliminated, uint64_t *fixed)
 {

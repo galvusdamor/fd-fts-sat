@@ -34,6 +34,13 @@ int fts_kissat_statistics (void *solver, uint64_t *conflicts, uint64_t *decision
    eliminated: external variables eliminated, fixed: internal variables currently fixed
    (after compaction all fixed variables share one internal variable, so this is a lower
    bound). */
+/* Conflicts so far, without anything else: rintanen() reads it on every scheduler callback
+   (slice_conflicts). */
+uint64_t fts_kissat_conflicts (void *solver)
+{
+  return ((kissat *) solver)->statistics.conflicts;
+}
+
 int fts_kissat_variables (void *solver, uint64_t *vars, uint64_t *active,
                           uint64_t *eliminated, uint64_t *fixed)
 {
