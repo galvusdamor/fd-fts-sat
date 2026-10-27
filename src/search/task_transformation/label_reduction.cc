@@ -19,7 +19,6 @@
 #include "../utils/rng_options.h"
 #include "../utils/system.h"
 
-#include <algorithm>
 #include <cassert>
 #include <iostream>
 #include <string>
@@ -38,7 +37,6 @@ LabelReduction::LabelReduction(const Options &options)
       lr_method(LabelReductionMethod(options.get_enum("method"))),
       lr_system_order(LabelReductionSystemOrder(options.get_enum("system_order"))),
       max_time(options.get<int>("max_time")),
-      skip_unsuccessful(options.get<bool>("skip_unsuccessful")),
       rng(utils::parse_rng_from_options(options)) {
 }
 
@@ -111,46 +109,6 @@ void LabelReduction::compute_label_mapping(
              << endl;
     }
 
-}
-
-static uint64_t mix_group(int ts_index, int group_id) {
-    // splitmix64 of (transition system, group)
-    uint64_t z = (uint64_t(uint32_t(ts_index)) << 32) ^ uint32_t(group_id);
-    z += 0x9e3779b97f4a7c15ULL;
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
-    return z ^ (z >> 31);
-}
-
-void LabelReduction::compute_label_hashes(const FactoredTransitionSystem &fts,
-                                          vector<uint64_t> &hashes) const {
-    const Labels &labels = fts.get_labels();
-    int num_labels = labels.get_size();
-    hashes.assign(num_labels, 0);
-    for (int index : fts) {
-        const TransitionSystem &ts = fts.get_ts(index);
-        for (int label_no = 0; label_no < num_labels; ++label_no) {
-            if (labels.is_current_label(label_no))
-                hashes[label_no] += mix_group(index, ts.get_label_group_id_of_label(LabelID(label_no)));
-        }
-    }
-}
-
-bool LabelReduction::may_reduce(int ts_index, const FactoredTransitionSystem &fts,
-                                const vector<uint64_t> &hashes) const {
-    const Labels &labels = fts.get_labels();
-    const TransitionSystem &ts = fts.get_ts(ts_index);
-    int num_labels = labels.get_size();
-    vector<pair<uint64_t, int>> keys;
-    keys.reserve(num_labels);
-    for (int label_no = 0; label_no < num_labels; ++label_no) {
-        if (labels.is_current_label(label_no)) {
-            keys.emplace_back(hashes[label_no] - mix_group(ts_index, ts.get_label_group_id_of_label(LabelID(label_no))),
-                              labels.get_label_cost(label_no));
-        }
-    }
-    sort(keys.begin(), keys.end());
-    return adjacent_find(keys.begin(), keys.end()) != keys.end();
 }
 
 equivalence_relation::EquivalenceRelation
@@ -273,10 +231,6 @@ bool LabelReduction::reduce(
 
     int num_unsuccessful_iterations = 0;
 
-    vector<uint64_t> hashes;
-    if (skip_unsuccessful)
-        compute_label_hashes(fts, hashes);
-
     bool reduced = false;
     /*
       If using ALL_TRANSITION_SYSTEMS_WITH_FIXPOINT, this loop stops under
@@ -293,7 +247,7 @@ bool LabelReduction::reduce(
         int ts_index = transition_system_order[tso_index];
 
         vector<pair<int, vector<int>>> label_mapping;
-        if (fts.is_active(ts_index) && (!skip_unsuccessful || may_reduce(ts_index, fts, hashes))) {
+        if (fts.is_active(ts_index)) {
             equivalence_relation::EquivalenceRelation *relation =
                 compute_combinable_equivalence_relation(ts_index, fts);
             compute_label_mapping(relation, fts, label_mapping, verbosity);
@@ -313,8 +267,6 @@ bool LabelReduction::reduce(
             // See comment for the loop and its exit conditions.
             num_unsuccessful_iterations = 1;
             fts.apply_label_mapping(label_mapping, ts_index);
-            if (skip_unsuccessful)
-                compute_label_hashes(fts, hashes);
         }
         if (num_unsuccessful_iterations == num_transition_systems) {
             // See comment for the loop and its exit conditions.
@@ -406,10 +358,6 @@ static shared_ptr<LabelReduction>_parse(OptionParser &parser) {
     parser.add_option<int>("max_time",
                             "maximum time for label reduction",
                             "infinity");
-    parser.add_option<bool>("skip_unsuccessful",
-                            "skip the iterations of all_transition_systems(_with_fixpoint) that a hash "
-                            "test shows to reduce nothing; the reductions are the same, only faster",
-                            "true");
 
     vector<string> label_reduction_method;
     vector<string> label_reduction_method_doc;

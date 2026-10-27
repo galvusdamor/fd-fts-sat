@@ -116,10 +116,10 @@ void EquivalenceRelation::refine(ElementListConstIter block_X_begin,
     // For every x \in X:
     for (ElementListConstIter it_x = block_X_begin; it_x != block_X_end; ++it_x) {
         int x = *it_x;
-        ElementPosition *it_pos = element_positions.find(x);
-        if (it_pos) {
+        ElementPositionMap::iterator it_pos = element_positions.find(x);
+        if (it_pos != element_positions.end()) {
             // Look up the block B containing x.
-            ElementPosition &pos = *it_pos;
+            ElementPosition &pos = it_pos->second;
             BlockListIter it_block_B = pos.first;
             Block &block_B = *it_block_B;
             ElementListIter it_previous_element = pos.second;

@@ -46,34 +46,7 @@ class EquivalenceRelation {
       block and points to the element within it.
     */
     typedef std::pair<BlockListIter, ElementListIter> ElementPosition;
-    /*
-      Elements are 0..n-1 (label numbers), so their positions are kept in a vector
-      instead of a hash map: same behaviour, without hashing and node allocations in
-      refine(), which dominated exact label reduction on large atomic FTSs.
-    */
-    class ElementPositionMap {
-        std::vector<ElementPosition> positions;
-        std::vector<char> known;
-        size_t num_known = 0;
-    public:
-        ElementPosition &operator[](int element) {
-            if (size_t(element) >= known.size()) {
-                known.resize(element + 1, 0);
-                positions.resize(element + 1);
-            }
-            if (!known[element]) {
-                known[element] = 1;
-                ++num_known;
-            }
-            return positions[element];
-        }
-        ElementPosition *find(int element) {
-            if (size_t(element) >= known.size() || !known[element])
-                return nullptr;
-            return &positions[element];
-        }
-        size_t size() const {return num_known;}
-    };
+    typedef std::unordered_map<int, ElementPosition> ElementPositionMap;
     ElementPositionMap element_positions;
 
     /*
