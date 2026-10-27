@@ -374,12 +374,27 @@ PAIRS_C_JAN2 = [
     ("C_1__fulltrans_transeff_jan-shr", "C_1__fulltrans_transeff_jan_m2000-shr"),   # rintanen 3500 -> 2000
     ("CMit_chains_slf____rcpol_jan-shr", "C_1__fulltrans_transeff_jan_m2000-shr"),
 ]
-# The January forall-step configuration at the revision with both label_sat fixes (c8f7f7b5b:
-# grouped chain helpers as before c88344cda, per-step label group table freed again).
+# Confirmation run at the revision with both label_sat fixes and without the label reduction
+# speedup (03ba4e547): the January forall-step configuration, and TAV in the setting of the
+# 2026-10-27 runs (tuned Algorithm C, rintanen memory_limit_mb=2000, no h2) with the two
+# topological orders and a random one.
 CONFIGS["CMit_chains_slf____rcpol_janfix-shr"] = (B.CHAINS, "-shr", None)
-RUN_C_JANFIX = ["CMit_chains_slf____rcpol_janfix-shr"]
-SEARCHES_C_JANFIX = {"CMit_chains_slf____rcpol_janfix-shr": SEARCH_C_JANUARY}
-PAIRS_C_JANFIX = [("CMit_chains_slf____rcpol_jan-shr", "CMit_chains_slf____rcpol_janfix-shr")]
+for _lo, _name in [("label_order_tsort()", "tsort"), ("label_order_tsort(strict_enabling=true)", "tsortstrict"),
+                   ("label_order_random()", "random")]:
+    CONFIGS[f"C_1__fulltrans_transeff_{_name}_jan_m2000-shr"] = (TAV[:-1] + f",label_order={_lo})", "-shr", None)
+RUN_C_JANFIX = ["CMit_chains_slf____rcpol_janfix-shr", "C_1__fulltrans_transeff_tsort_jan_m2000-shr",
+                "C_1__fulltrans_transeff_tsortstrict_jan_m2000-shr", "C_1__fulltrans_transeff_random_jan_m2000-shr"]
+SEARCHES_C_JANFIX = {c: (SEARCH_C_JANUARY if c.startswith("CMit") else SEARCH_C.replace("MEMORY_MB", "2000"))
+                     for c in RUN_C_JANFIX}
+FETCH_C_JANFIX = {"CMit_chains_slf____rcpol_jan-shr": "f90f966c4ba59dc1d8a44ecb62e2a154a19f18ea",
+                  "C_1__fulltrans_transeff_jan_m2000-shr": "f90f966c4ba59dc1d8a44ecb62e2a154a19f18ea"}
+PAIRS_C_JANFIX = [
+    ("CMit_chains_slf____rcpol_jan-shr", "CMit_chains_slf____rcpol_janfix-shr"),        # the fix
+    ("C_1__fulltrans_transeff_jan_m2000-shr", "C_1__fulltrans_transeff_tsort_jan_m2000-shr"),   # linear -> tsort
+    ("C_1__fulltrans_transeff_tsort_jan_m2000-shr", "C_1__fulltrans_transeff_tsortstrict_jan_m2000-shr"),
+    ("C_1__fulltrans_transeff_jan_m2000-shr", "C_1__fulltrans_transeff_random_jan_m2000-shr"),  # linear -> random
+    ("CMit_chains_slf____rcpol_janfix-shr", "C_1__fulltrans_transeff_tsort_jan_m2000-shr"),
+]
 PAIRS_C_JAN = [
     ("C_1__fulltrans_transeff-shr", "C_1__fulltrans_transeff_jan-shr"),    # 1669 MiB + h2 -> January
     ("C_1__fulltrans_labeleff-shr", "C_1__fulltrans_labeleff_jan-shr"),
