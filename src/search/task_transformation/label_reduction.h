@@ -1,6 +1,7 @@
 #ifndef TASK_TRANSFORMATION_LABEL_REDUCTION_H
 #define TASK_TRANSFORMATION_LABEL_REDUCTION_H
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -69,6 +70,8 @@ class LabelReduction {
     LabelReductionMethod lr_method;
     LabelReductionSystemOrder lr_system_order;
     const int max_time;
+    // skip iterations that a hash test proves unsuccessful (exact: the reductions are the same)
+    const bool skip_unsuccessful;
 
     std::shared_ptr<utils::RandomNumberGenerator> rng;
 
@@ -80,6 +83,17 @@ class LabelReduction {
         const FactoredTransitionSystem &fts,
         std::vector<std::pair<int, std::vector<int>>> &label_mapping,
         Verbosity verbosity) const;
+    /*
+      Label hashes for skip_unsuccessful: hash[l] is the sum over the active transition
+      systems T of a random value of (T, group of l in T). Two current labels of equal cost
+      whose hashes minus the term of ts_index differ are not combinable for ts_index, so an
+      iteration in which all of them differ reduces nothing and can be skipped. Equal values
+      may be a collision; such iterations run the exact computation as before.
+    */
+    void compute_label_hashes(const FactoredTransitionSystem &fts,
+                              std::vector<uint64_t> &hashes) const;
+    bool may_reduce(int ts_index, const FactoredTransitionSystem &fts,
+                    const std::vector<uint64_t> &hashes) const;
     equivalence_relation::EquivalenceRelation
     *compute_combinable_equivalence_relation(
         int ts_index,
