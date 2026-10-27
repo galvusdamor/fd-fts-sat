@@ -382,14 +382,18 @@ CONFIGS["CMit_chains_slf____rcpol_janfix-shr"] = (B.CHAINS, "-shr", None)
 for _lo, _name in [("label_order_tsort()", "tsort"), ("label_order_tsort(strict_enabling=true)", "tsortstrict"),
                    ("label_order_random()", "random")]:
     CONFIGS[f"C_1__fulltrans_transeff_{_name}_jan_m2000-shr"] = (TAV[:-1] + f",label_order={_lo})", "-shr", None)
-# the TAV label orders run with algorithm A only (RUN_A_JANFIX); their Algorithm C configurations
-# stay defined but are not run
-RUN_C_JANFIX = ["CMit_chains_slf____rcpol_janfix-shr"]
+RUN_C_JANFIX = ["CMit_chains_slf____rcpol_janfix-shr", "C_1__fulltrans_transeff_tsort_jan_m2000-shr",
+                "C_1__fulltrans_transeff_tsortstrict_jan_m2000-shr", "C_1__fulltrans_transeff_random_jan_m2000-shr"]
 SEARCHES_C_JANFIX = {c: (SEARCH_C_JANUARY if c.startswith("CMit") else SEARCH_C.replace("MEMORY_MB", "2000"))
                      for c in RUN_C_JANFIX}
-FETCH_C_JANFIX = {"CMit_chains_slf____rcpol_jan-shr": "f90f966c4ba59dc1d8a44ecb62e2a154a19f18ea"}
+FETCH_C_JANFIX = {"CMit_chains_slf____rcpol_jan-shr": "f90f966c4ba59dc1d8a44ecb62e2a154a19f18ea",
+                  "C_1__fulltrans_transeff_jan_m2000-shr": "f90f966c4ba59dc1d8a44ecb62e2a154a19f18ea"}
 PAIRS_C_JANFIX = [
     ("CMit_chains_slf____rcpol_jan-shr", "CMit_chains_slf____rcpol_janfix-shr"),        # the fix
+    ("C_1__fulltrans_transeff_jan_m2000-shr", "C_1__fulltrans_transeff_tsort_jan_m2000-shr"),   # linear -> tsort
+    ("C_1__fulltrans_transeff_tsort_jan_m2000-shr", "C_1__fulltrans_transeff_tsortstrict_jan_m2000-shr"),
+    ("C_1__fulltrans_transeff_jan_m2000-shr", "C_1__fulltrans_transeff_random_jan_m2000-shr"),  # linear -> random
+    ("CMit_chains_slf____rcpol_janfix-shr", "C_1__fulltrans_transeff_tsort_jan_m2000-shr"),
 ]
 # Algorithm A (one_by_one) for TAV with the three label orders of the confirmation run, in the same
 # setting (-shr, no h2, 3500m, 12 runs per task) on the IPC and the FTS benchmarks.

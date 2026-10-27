@@ -15,11 +15,16 @@ label_sat changes:
     for every step; formula memory doubled on airport. Fixed in c8f7f7b5b.
 Locally the fixed build solves the six lost hiking/airport tasks like the January build.
 
-  CMit_chains_slf____rcpol_janfix-shr   the January forall-step configuration (by_iteration(), 20 calls,
-                                        memory_limit_mb=3500)
+  CMit_chains_slf____rcpol_janfix-shr              the January forall-step configuration
+                                                   (by_iteration(), 20 calls, memory_limit_mb=3500)
+  C_1__fulltrans_transeff_tsort_jan_m2000-shr      TAV, tuned Algorithm C (start 1 x1.6, 4 calls,
+  C_1__fulltrans_transeff_tsortstrict_jan_m2000-shr  gamma 0.5, memory_limit_mb=2000) with
+  C_1__fulltrans_transeff_random_jan_m2000-shr       label_order_tsort(), ..._tsort(strict_enabling=true),
+                                                   label_order_random()
+TAV is not affected by either fix (no chains, no label group table).
 
-The TAV label orders run with algorithm A only (2026-10-27-{ipc,fts}-tav-orders-A1.py).
-Fetched: the unfixed forall-step check (f90f966c4) from 2026-10-27-ipc-algorithm-c-january-2.
+Fetched from 2026-10-27-ipc-algorithm-c-january-2 (f90f966c4): the unfixed forall-step check and
+TAV with the linear order at memory_limit_mb=2000.
 """
 
 import os
