@@ -395,6 +395,21 @@ PAIRS_C_JANFIX = [
     ("C_1__fulltrans_transeff_jan_m2000-shr", "C_1__fulltrans_transeff_random_jan_m2000-shr"),  # linear -> random
     ("CMit_chains_slf____rcpol_janfix-shr", "C_1__fulltrans_transeff_tsort_jan_m2000-shr"),
 ]
+# Algorithm A (one_by_one) for TAV with the three label orders of the confirmation run, in the same
+# setting (-shr, no h2, 3500m, 12 runs per task) on the IPC and the FTS benchmarks.
+for _lo, _name in [("label_order_tsort()", "tsort"), ("label_order_tsort(strict_enabling=true)", "tsortstrict"),
+                   ("label_order_random()", "random")]:
+    CONFIGS[f"A_1__fulltrans_transeff_{_name}_jan-shr"] = (TAV[:-1] + f",label_order={_lo})", "-shr", None)
+RUN_A_JANFIX = ["A_1__fulltrans_transeff_tsort_jan-shr", "A_1__fulltrans_transeff_tsortstrict_jan-shr",
+                "A_1__fulltrans_transeff_random_jan-shr"]
+# TAV with the linear order, algorithm A, from the 2026-09-24 runs (IPC: h2 preprocessing; both
+# 1600 MB) -- a different setting, for orientation only
+FETCH_A_JANFIX = {"A_1__fulltransitions_slf_transeff-shr": REVISION_0921}
+PAIRS_A_JANFIX = [
+    ("A_1__fulltransitions_slf_transeff-shr", "A_1__fulltrans_transeff_tsort_jan-shr"),
+    ("A_1__fulltrans_transeff_tsort_jan-shr", "A_1__fulltrans_transeff_tsortstrict_jan-shr"),
+    ("A_1__fulltrans_transeff_tsort_jan-shr", "A_1__fulltrans_transeff_random_jan-shr"),
+]
 PAIRS_C_JAN = [
     ("C_1__fulltrans_transeff-shr", "C_1__fulltrans_transeff_jan-shr"),    # 1669 MiB + h2 -> January
     ("C_1__fulltrans_labeleff-shr", "C_1__fulltrans_labeleff_jan-shr"),
