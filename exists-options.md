@@ -64,9 +64,26 @@ Satisfiable call at length 3 (time / conflicts; "–" = not finished within 300 
   consistently, and makes FORALL p17 slower.
 * Neither closes the gap to `label_sat`. Next candidate: option 1 below (no mover variables).
 
+## Without mover variables (`mover_variables=false`, b232d5665)
+
+Same horizons as with mover variables on the 30 IPC first tasks. childsnack, satisfiable call at
+length 3 (time / conflicts):
+
+| task | forall `label_sat` | FORALL mv | FORALL no mv | STRICT conf mv | STRICT conf no mv | LAX tsort mv | LAX tsort no mv |
+|---|---|---|---|---|---|---|---|
+| p17 | 14 s / 157k | 15 s / 38k | 17 s / 50k | 9 s / 11k | 5 s / 8k | 107 s / 734k | 93 s / 532k |
+| p24 | 11 s / 80k | 58 s / 481k | 204 s / 1098k | 222 s / 1634k | 80 s / 387k | 150 s / 863k | 152 s / 820k |
+| p25 | 14 s / 78k | 250 s / 1823k | 190 s / 848k | 263 s / 1745k | 243 s / 1486k | 142 s / 753k | – |
+| p26 | 45 s / 427k | 155 s / 720k | 6 s / 11k | 226 s / 1270k | – | – | 237 s / 926k |
+| p27 | 17 s / 87k | 220 s / 1160k | 7 s / 16k | – | – | 116 s / 549k | 228 s / 773k |
+
+Mixed: large gains on some tasks, losses on others, still behind `label_sat` overall. The mover
+variables are not the main cause either. Remaining structural difference to `label_sat`: its
+matrix clauses over label groups (label -> source/target sets, source/target pillars).
+
 ## Options under consideration (not implemented)
 
-1. **Drop the mover variables.** The semantics only needs the switch position per factor. Keep
+1. **Drop the mover variables.** (implemented: `mover_variables=false`) The semantics only needs the switch position per factor. Keep
    only the prefix chain; "label i is the mover" is `M_i & -M_{i-1}`, which then carries the
    transition constraint of label i.
 2. **Compress the chain.** Consecutive labels in the order with identical transitions in the
