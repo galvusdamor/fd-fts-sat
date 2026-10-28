@@ -411,15 +411,37 @@ void FullTransitionsEncoding::encode_r2_chains(int ts, int time){
 
         auxVars[states] = sat->compute_chains(opposers, requirers, achievers, eventVars, 0);//No guard variable (0 as the last parameter)
 
+        // The chain variable after label t means "the factor is no longer in this state". The
+        // chains only start at an opposer, so a factor that does not even start in the state
+        // was not recorded -- a mixed label could then claim its (unencoded) self-loop there
+        // while the factor is elsewhere (unsound). Initial condition: not in the state at the
+        // start of the step and not moved into it by the first label -> not in it after it.
+        // (development-and-testing c41eca3eb tried to fix this without the start state, and
+        // indexes the chain also when it is empty, i.e. with a single relevant label.)
+        if(useSelfloopOptimisation && !auxVars[states].empty()){
+            vector<int> clause{getPreviousStateSATVar(ts, states, time)};
+            for (auto& [transition, var] : allTimesTransitionVars.back()[ts][getRelevantLabel(ts, 0)])
+                if(transition.target == states && transition.src != transition.target)
+                    clause.push_back(var);
+            clause.push_back(auxVars[states][0]);
+            sat->atLeastOne(clause);
+        }
+
     }
 
     if(useSelfloopOptimisation){
-        for (int relevantLabel = 1; relevantLabel < numRelevantLabels; relevantLabel++) {
+        // a mixed label (self-loops and real transitions) whose self-loop states are all no longer
+        // the factor's state before it must take a real transition or not fire; for the first
+        // label "before it" is the start of the step
+        for (int relevantLabel = 0; relevantLabel < numRelevantLabels; relevantLabel++) {
             vector<int> auxVarsInPrec;
 			vector<int> otherTransitions;
             for (auto& [transition, var] : allTimesTransitionVars.back()[ts][getRelevantLabel(ts, relevantLabel)]){
                 if(transition.src == transition.target){
-                    auxVarsInPrec.push_back(auxVars[transition.src][relevantLabel-1]);//Previous Aux Var
+                    if (relevantLabel == 0)
+                        auxVarsInPrec.push_back(-getPreviousStateSATVar(ts, transition.src, time));
+                    else
+                        auxVarsInPrec.push_back(auxVars[transition.src][relevantLabel-1]);//Previous Aux Var
                 }else{
                     otherTransitions.push_back(var);
                 }

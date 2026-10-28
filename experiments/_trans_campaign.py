@@ -410,6 +410,22 @@ PAIRS_A_JANFIX = [
     ("A_1__fulltrans_transeff_tsort_jan-shr", "A_1__fulltrans_transeff_tsortstrict_jan-shr"),
     ("A_1__fulltrans_transeff_tsort_jan-shr", "A_1__fulltrans_transeff_random_jan-shr"),
 ]
+# full_transitions_sat with the self-loop fix (initial condition of the r2 chains, see
+# FullTransitionsEncoding::encode_r2_chains), algorithm A, setting of the TAV order checks:
+# TAV / TAC x self-loop optimisation on / off, label_order_linear()
+FULLTRANS_FIX = {}
+for _eff, _labels in [("transeff", "false"), ("labeleff", "true")]:
+    for _slf, _slfval in [("slf", "true"), ("noslf", "false")]:
+        FULLTRANS_FIX[f"A_1__fulltrans_{_eff}_{_slf}_fix-shr"] = (
+            f"full_transitions_sat(use_self_loop_optimisation={_slfval}, "
+            f"use_labels_in_effects_constraints={_labels})", "-shr", None)
+CONFIGS.update(FULLTRANS_FIX)
+RUN_A_FULLTRANS_FIX = list(FULLTRANS_FIX)
+PAIRS_A_FULLTRANS_FIX = [
+    ("A_1__fulltrans_transeff_slf_fix-shr", "A_1__fulltrans_transeff_noslf_fix-shr"),
+    ("A_1__fulltrans_labeleff_slf_fix-shr", "A_1__fulltrans_labeleff_noslf_fix-shr"),
+    ("A_1__fulltrans_transeff_slf_fix-shr", "A_1__fulltrans_labeleff_slf_fix-shr"),
+]
 PAIRS_C_JAN = [
     ("C_1__fulltrans_transeff-shr", "C_1__fulltrans_transeff_jan-shr"),    # 1669 MiB + h2 -> January
     ("C_1__fulltrans_labeleff-shr", "C_1__fulltrans_labeleff_jan-shr"),
