@@ -5,9 +5,15 @@
 #include "common_encoding.h"
 #include "../task_representation/transition_system.h"
 
+#include <unordered_map>
+
 
 namespace plugins {
 class Feature;
+}
+
+namespace label_order_finder {
+class LabelOrderFinder;
 }
 
 
@@ -18,6 +24,54 @@ enum encoding_type {
 	SEQUENTIAL,
 	SELF_LOOP_PARALLEL,
 	CHAINS_PARALLEL
+};
+
+/*
+  exists_step=true: Rintanen's (strict) exists-step semantics on top of the forall encoding.
+
+  In a step every factor makes at most one real move s -> t, by the first firing label (in the
+  label order `label_order`) that has the transition s -> t. Every other firing label runs as a
+  self-loop: at s if it comes before the mover, at t if after it; all firing labels are
+  applicable at s (strict). The forall encoding is changed in three ways:
+    - the forall chains (CHAINS_PARALLEL) are not emitted;
+    - clauses that forbid a label l together with prev = s, next = t (s != t) because (s, t) is
+      not a transition of l are weakened: if l self-loops at s only, l must come before the
+      mover; at t only, after it; at both, no clause;
+    - the label -> possible targets clauses (empty cols, and the self-loop optimisation's
+      "always self-loop label -> next state is a self-loop state") are dropped for labels with
+      a self-loop, since a label before the mover need not self-loop at t.
+  The mover's position comes from one prefix chain per (factor, target state t) over the labels
+  with a real transition into t ("adders" of t), in label order: I_t[k] = "the factor moved into
+  t by adder k or earlier". Events: l & prev_u & next_t -> I_t[k(l)] for every real transition
+  u -> t of l; upper bound: I_t[k] -> I_t[k-1] | (l_k & prev is a real source of l_k into t);
+  I_t[last] -> next_t & -prev_t, and next_t & -prev_t -> I_t[last]. A label lacking a self-loop
+  at t is forbidden after a move into t: l -> -I_t[before l].
+
+  exists_lax=true: a label after the mover need not be applicable at s, only self-loop at t; the
+  label -> applicable start state clauses get the alternative "after a move into a self-loop
+  state of the label" (existsAfterMove).
+
+  Sound: the first firing label with a real transition prev -> next is the mover (the events
+  force the chain to switch there at the latest, the upper bound at the earliest). Complete for
+  strict exists-step except for a label that has both a self-loop at s and a transition s -> t
+  and runs before the mover as a self-loop (it would set the chain early); measured on the
+  Autoscale dumps, such labels are rare (2026-10-28).
+*/
+struct LabelExistsFactor {
+	std::unordered_map<int, int> index;                 // relevant label -> entry
+	std::vector<int> labels;                            // per entry
+	std::vector<std::vector<int>> selfLoops;            // per entry, sorted states
+	std::vector<std::vector<int>> forbiddenAfter;       // per entry: states t, l -> -I_t[before l]
+	std::vector<std::vector<int>> adders;               // per state t: labels, in label order
+	std::vector<std::vector<int>> adderPos;             // their positions
+	std::vector<std::vector<std::vector<int>>> adderSources; // per t, k: real sources into t
+	bool hasSelfLoop(int label, int state) const;       // irrelevant labels: true
+	bool hasAnySelfLoop(int label) const;
+};
+
+struct LabelExistsData {
+	std::vector<int> pos;                               // label -> position in the order
+	std::vector<LabelExistsFactor> factors;
 };
 
 class LabelBasedEncoding : public CommonEncoding {
@@ -33,6 +87,20 @@ class LabelBasedEncoding : public CommonEncoding {
 	bool chainsInterleaved;
 
 	std::vector<std::shared_ptr<FTSMatrix>> fts_matrices;
+
+	// exists_step: shared data, and the chain variables of the step being encoded
+	std::shared_ptr<const LabelExistsData> existsData;
+	bool existsLax;
+	std::vector<std::vector<std::vector<int>>> existsChains; // [ts][t][k]
+	std::vector<int> existsAfterMove(int ts, int label, const std::vector<int> & sources, int skip = -1) const;
+	int existsBefore(int ts, int t, int label) const;   // I_t[last adder before label] or 0
+	void encode_exists_residual(int ts, int lg, int src,
+		const std::vector<std::vector<int>> & previousStateVars,
+		const std::vector<std::vector<std::vector<int>>> & labelGroupVars,
+		const std::vector<std::vector<int>> & nextStateVars,
+		const std::set<int> & coveredByLabel, const std::set<int> & coveredBySource);
+	void encode_exists_chains(const std::vector<std::vector<int>> & previousStateVars,
+		const std::vector<int> & labelVars, const std::vector<std::vector<int>> & nextStateVars);
 
 protected:
 
@@ -73,7 +141,9 @@ public:
 		const int _oneEncodingThresholdPercent,
 		const encoding_type & _encoding,
 		bool _chainsInterleaved,
-		const std::vector<std::shared_ptr<FTSMatrix>> & fts_matrices
+		const std::vector<std::shared_ptr<FTSMatrix>> & fts_matrices,
+		std::shared_ptr<const LabelExistsData> _existsData = nullptr,
+		bool _existsLax = false
 			);
 	~LabelBasedEncoding() override = default;
 
@@ -94,6 +164,10 @@ class LabelBasedEncodingFactory : public SATEncodingFactory {
 	const int oneEncodingThresholdPercent;
 	const encoding_type encoding;
 	const bool chainsInterleaved;
+	const bool existsStep;
+	const bool existsLax;
+	std::shared_ptr<label_order_finder::LabelOrderFinder> labelOrderFinder;
+	std::shared_ptr<const LabelExistsData> existsData;
 	bool statisticsPrinted;
 	
 	std::vector<std::shared_ptr<FTSMatrix> > fts_matrices;
