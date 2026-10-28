@@ -135,6 +135,11 @@ TRANSFORM_OPTS = {
              "prune_transitions_from_goal=true)"],
 }
 
+# atomic FTS without shrinking (from abfd9a4fa on branch bdd)
+TRANSFORM_OPTS_NTR = {
+    "-ntr" : ["--transform", "cost(cost_type=one)"]
+}
+
 
 def driver_opts(h2, memory_limit="1600m"):
     """Driver options. `h2` activates the h2 preprocessor.
