@@ -46,6 +46,24 @@ prefix variable `M_j` per mover ("one of the first j movers fired").
   `break_mover_symmetry` and `implied_clauses` measure (1) and (2) (runs in
   `/home/gregor/data/claude-jobs/abf93c5f/unify/runs_abl2`).
 
+## Ablation on childsnack (2026-10-28)
+
+Satisfiable call at length 3 (time / conflicts; "–" = not finished within 300 s), build
+`release64-exists-abl`, two parallel jobs (single times noisy):
+
+| task | forall `label_sat` | FORALL | + sym | + impl | + both | STRICT conf | + impl | LAX tsort | + impl |
+|---|---|---|---|---|---|---|---|---|---|
+| p17 | 14 s / 157k | 15 s / 38k | – | 51 s / 325k | 10 s / 10k | 9 s / 11k | 6 s / 10k | 107 s / 734k | 51 s / 234k |
+| p24 | 11 s / 80k | 58 s / 481k | 68 s / 210k | 103 s / 594k | – | 222 s / 1634k | 54 s / 250k | 150 s / 863k | 166 s / 903k |
+| p25 | 14 s / 78k | 250 s / 1823k | 243 s / 858k | – | – | 263 s / 1745k | – | 142 s / 753k | – |
+| p26 | 45 s / 427k | 155 s / 720k | – | 111 s / 538k | – | 226 s / 1270k | – | – | – |
+| p27 | 17 s / 87k | 220 s / 1160k | – | – | – | – | – | 116 s / 549k | – |
+
+* `break_mover_symmetry` does not help: the interchangeable movers are not the main cause.
+* `implied_clauses` helps in some cases (STRICT p24 222 -> 54 s, LAX p17 107 -> 51 s) but not
+  consistently, and makes FORALL p17 slower.
+* Neither closes the gap to `label_sat`. Next candidate: option 1 below (no mover variables).
+
 ## Options under consideration (not implemented)
 
 1. **Drop the mover variables.** The semantics only needs the switch position per factor. Keep
