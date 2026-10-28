@@ -9,12 +9,15 @@
 #include "../task_representation/fts_task.h"
 #include "../task_representation/transition_system.h"
 #include "../task_utils/label_order_finder.h"
+#include "../utils/system.h"
 #include "../utils/timer.h"
 
 #include <algorithm>
 #include <climits>
 #include <iostream>
 #include <queue>
+#include <set>
+#include <map>
 
 using namespace std;
 using namespace task_representation;
@@ -30,6 +33,8 @@ ExistsEncodingFactory::ExistsEncodingFactory(const options::Options &opts)
       semantics(ExistsSemantics(opts.get_enum("semantics"))),
       exploitOrder(opts.get<bool>("exploit_order")),
       conflictOrder(opts.get<bool>("conflict_order")),
+      impliedClauses(opts.get<bool>("implied_clauses")),
+      breakMoverSymmetry(opts.get<bool>("break_mover_symmetry")),
       labelOrderFinder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order")),
       staticOptions(opts) {
 }
@@ -220,6 +225,13 @@ void ExistsEncodingFactory::initialize() {
     auto result = make_shared<ExistsData>();
     result->semantics = semantics;
     result->exploitOrder = exploitOrder;
+    result->impliedClauses = impliedClauses;
+    result->breakMoverSymmetry = breakMoverSymmetry;
+    if (breakMoverSymmetry && semantics != ExistsSemantics::FORALL) {
+        cerr << "exists_sat: break_mover_symmetry is only exact for semantics=FORALL" << endl;
+        utils::exit_with(utils::ExitCode::INPUT_ERROR);
+    }
+    long long impliedEntries = 0, symmetryGroups = 0;
     int sccMax = 0, sccLabels = 0;
     if (conflictOrder)
         result->order = conflict_order(*fts, perFactor, semantics, basePosition, sccMax, sccLabels);
@@ -297,6 +309,62 @@ void ExistsEncodingFactory::initialize() {
                 }
             }
         }
+        if (impliedClauses) {
+            // states one move away from s in this factor (over all relevant labels)
+            vector<set<int>> oneMove(ts.get_size());
+            for (int k = 0; k < n; k++)
+                for (const auto &[src, targets] : fd.moves[k])
+                    oneMove[src].insert(targets.begin(), targets.end());
+            fd.implied.resize(n);
+            for (int k = 0; k < n; k++) {
+                const vector<int> &loops = fd.selfLoopStates[k];
+                auto loopsAt = [&](int x) {return binary_search(loops.begin(), loops.end(), x);};
+                map<int, const vector<int> *> targetsFrom;
+                for (const auto &[src, targets] : fd.moves[k])
+                    targetsFrom[src] = &targets;
+                for (int s = 0; s < ts.get_size(); s++) {
+                    set<int> possible = oneMove[s];          // end states of the factor at all
+                    possible.insert(s);
+                    set<int> allowed;
+                    bool applicable = binary_search(fd.sourceStates[k].begin(), fd.sourceStates[k].end(), s);
+                    if (targetsFrom.count(s))                 // as the mover
+                        allowed.insert(targetsFrom[s]->begin(), targetsFrom[s]->end());
+                    if (semantics == ExistsSemantics::FORALL) {
+                        if (loopsAt(s))
+                            for (int t : possible)
+                                if (loopsAt(t))
+                                    allowed.insert(t);
+                    } else if (semantics == ExistsSemantics::STRICT && !applicable) {
+                        allowed.clear();                      // cannot fire at all
+                    } else {
+                        if (loopsAt(s))                       // before the mover
+                            allowed.insert(possible.begin(), possible.end());
+                        for (int t : possible)                // after the mover
+                            if (loopsAt(t))
+                                allowed.insert(t);
+                    }
+                    if (allowed.size() < possible.size()) {
+                        fd.implied[k].push_back({s, vector<int>(allowed.begin(), allowed.end())});
+                        impliedEntries++;
+                    }
+                }
+            }
+        }
+        if (breakMoverSymmetry) {
+            map<vector<pair<int, int>>, vector<int>> byTransitions;
+            for (int k : fd.movers) {
+                vector<pair<int, int>> tr;
+                for (const Transition &t : ts.get_transitions_with_label(fd.labels[k]))
+                    tr.push_back({t.src, t.target});
+                sort(tr.begin(), tr.end());
+                byTransitions[tr].push_back(k);
+            }
+            for (auto &[tr, entries] : byTransitions)
+                if (entries.size() >= 2) {
+                    fd.moverGroups.push_back(entries);
+                    symmetryGroups++;
+                }
+        }
         relevantEntries += n;
         moverEntries += fd.movers.size();
         for (bool g : fd.guarded)
@@ -304,11 +372,13 @@ void ExistsEncodingFactory::initialize() {
     }
     data = result;
     staticConstraints = static_constraints::compute(*fts, staticOptions);
-    cout << "EXISTSSTAT semantics " << (semantics == ExistsSemantics::STRICT ? "strict" : "lax")
+    cout << "EXISTSSTAT semantics " << (semantics == ExistsSemantics::STRICT ? "strict" :
+                                        semantics == ExistsSemantics::LAX ? "lax" : "forall")
          << " conflict_order " << conflictOrder << " exploit_order " << exploitOrder
          << " relevant_entries " << relevantEntries << " mover_entries " << moverEntries
          << " guarded_entries " << guardedEntries << " scc_max " << sccMax
-         << " scc_labels " << sccLabels << " time " << timer() << endl;
+         << " scc_labels " << sccLabels << " implied_entries " << impliedEntries
+         << " symmetry_groups " << symmetryGroups << " time " << timer() << endl;
     cout << "SAT init time: " << timer << endl;
 }
 
@@ -403,7 +473,10 @@ void ExistsEncoding::encode_factor(int f, const vector<int> &prev, const vector<
             loopPrev.push_back(prev[s]);
             loopNext.push_back(next[s]);
         }
-        if (fd.guarded[k]) {
+        if (data->semantics == ExistsSemantics::FORALL) {
+            sat->andImpliesOr(lhs, loopPrev);
+            sat->andImpliesOr(lhs, loopNext);
+        } else if (fd.guarded[k]) {
             if (lastMoverBefore < 0) {
                 sat->andImpliesOr(lhs, loopPrev);
             } else {
@@ -428,6 +501,35 @@ void ExistsEncoding::encode_factor(int f, const vector<int> &prev, const vector<
         }
         if (fd.moverIndex[k] >= 0)
             lastMoverBefore = fd.moverIndex[k];
+    }
+
+    // implied: a firing label restricts the end state directly
+    if (data->impliedClauses) {
+        for (int k = 0; k < n; k++) {
+            const int X = labelVars[fd.labels[k]];
+            for (const auto &[s, allowed] : fd.implied[k]) {
+                vector<int> ends;
+                for (int t : allowed)
+                    ends.push_back(next[t]);
+                sat->andImpliesOr(vector<int>{X, prev[s]}, ends);
+            }
+        }
+    }
+    // symmetry breaking (FORALL): among labels with identical transitions in this factor, only
+    // the first firing one may be the mover
+    if (data->breakMoverSymmetry) {
+        for (const vector<int> &group : fd.moverGroups) {
+            int fired = 0;     // some earlier label of the group fires
+            for (int k : group) {
+                if (fired)
+                    sat->implies(moverVars[k], -fired);
+                const int F = sat->new_variable();
+                sat->implies(labelVars[fd.labels[k]], F);
+                if (fired)
+                    sat->implies(fired, F);
+                fired = F;
+            }
+        }
     }
 }
 
@@ -469,16 +571,23 @@ static shared_ptr<SATEncodingFactory> _parse(options::OptionParser &parser) {
                              "One real move per factor and step; the other labels of the step "
                              "run as self-loops before or after it, in label order. See "
                              "sat/exists_encoding.h.");
-    parser.add_enum_option("semantics", {"STRICT", "LAX"},
+    parser.add_enum_option("semantics", {"STRICT", "LAX", "FORALL"},
                            "STRICT: Rintanen's exists-step, every firing label is applicable at "
                            "the start of the step; LAX: a label after the mover only needs its "
-                           "self-loop at the end state", "STRICT");
+                           "self-loop at the end state; FORALL: forall-step with the same variables (comparison)", "STRICT");
     parser.add_option<bool>("exploit_order",
                             "no before/after guard for labels whose conflicts the label order "
                             "resolves", "true");
     parser.add_option<bool>("conflict_order",
                             "reorder the labels by the SCCs of the conflict graph (topologically; "
                             "label_order breaks ties and orders the SCCs internally)", "true");
+    parser.add_option<bool>("implied_clauses",
+                            "add the implied clauses label & start state -> allowed end states",
+                            "false");
+    parser.add_option<bool>("break_mover_symmetry",
+                            "only the first firing label among labels with identical transitions "
+                            "in a factor may be its mover (exact only for semantics=FORALL)",
+                            "false");
     parser.add_option<shared_ptr<label_order_finder::LabelOrderFinder>>(
         "label_order", "base label order", "label_order_tsort()");
     parser.add_option<bool>("force_at_least_one_action",

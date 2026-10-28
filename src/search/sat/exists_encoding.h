@@ -23,6 +23,8 @@ class Options;
     LAX     exactly that (a label after the mover needs only its self-loop at s')
     STRICT  Rintanen's exists-step: in addition every firing label is applicable at s, the
             state at the start of the step
+    FORALL  forall-step with the same machinery, for comparisons: every non-mover needs its
+            self-loop at s *and* at s', regardless of its position (no order, no guards)
 
   Variables per step and factor: mv (label l performs the factor's move) for every label with a
   real transition in the factor, and the prefix M_j <-> "one of the first j movers (in label
@@ -44,7 +46,7 @@ class Options;
 */
 namespace sat_search {
 
-enum class ExistsSemantics {STRICT, LAX};
+enum class ExistsSemantics {STRICT, LAX, FORALL};
 
 // per factor, read-only after initialize()
 struct ExistsFactorData {
@@ -57,6 +59,12 @@ struct ExistsFactorData {
     std::vector<int> moverIndex;                    // per entry: index among the movers, or -1
     std::vector<int> movers;                        // entries of labels with a real move, in order
     std::vector<bool> guarded;                      // per entry: needs the before/after guard
+    // implied_clauses: per entry, (start state s, end states allowed when the label fires
+    // and the factor starts in s), only where that is more restrictive than the factor itself
+    std::vector<std::vector<std::pair<int, std::vector<int>>>> implied;
+    // break_mover_symmetry: groups of entries with identical transitions in the factor (in
+    // label order), only groups with >= 2 movers
+    std::vector<std::vector<int>> moverGroups;
     bool allSourcesEverywhere(int k, int numStates) const {
         return (int)sourceStates[k].size() == numStates;
     }
@@ -65,6 +73,8 @@ struct ExistsFactorData {
 struct ExistsData {
     ExistsSemantics semantics;
     bool exploitOrder;
+    bool impliedClauses;
+    bool breakMoverSymmetry;
     std::vector<int> order;                         // label order of the step semantics
     std::vector<ExistsFactorData> factors;
 };
@@ -100,6 +110,8 @@ class ExistsEncodingFactory : public SATEncodingFactory {
     const ExistsSemantics semantics;
     const bool exploitOrder;
     const bool conflictOrder;
+    const bool impliedClauses;
+    const bool breakMoverSymmetry;
     std::shared_ptr<label_order_finder::LabelOrderFinder> labelOrderFinder;
     const static_constraints::Options staticOptions;
     std::shared_ptr<const static_constraints::StaticConstraints> staticConstraints;
