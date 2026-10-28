@@ -75,17 +75,21 @@ struct ExistsData {
     bool exploitOrder;
     bool impliedClauses;
     bool breakMoverSymmetry;
+    bool moverVariables;
     std::vector<int> order;                         // label order of the step semantics
     std::vector<ExistsFactorData> factors;
 };
 
 class ExistsEncoding : public CommonEncoding {
     std::shared_ptr<const ExistsData> data;
-    // per step and factor: mv variable per entry of labels (0 if not a mover)
-    std::map<int, std::vector<std::vector<int>>> allTimesMoverVars;
+    // per step and factor: the prefix ("moved at or before mover candidate j") per mover
+    // candidate; plan extraction takes the first true one as the mover
+    std::map<int, std::vector<std::vector<int>>> allTimesPrefixVars;
 
     void encode_factor(int ts, const std::vector<int> &prev, const std::vector<int> &next,
-                       const std::vector<int> &labelVars, std::vector<int> &moverVars);
+                       const std::vector<int> &labelVars, std::vector<int> &prefix);
+    void encode_factor_mv(int ts, const std::vector<int> &prev, const std::vector<int> &next,
+                          const std::vector<int> &labelVars, std::vector<int> &prefix);
 
 protected:
     void generateAdditionalVariables(int fromTime) override;
@@ -112,6 +116,7 @@ class ExistsEncodingFactory : public SATEncodingFactory {
     const bool conflictOrder;
     const bool impliedClauses;
     const bool breakMoverSymmetry;
+    const bool moverVariables;
     std::shared_ptr<label_order_finder::LabelOrderFinder> labelOrderFinder;
     const static_constraints::Options staticOptions;
     std::shared_ptr<const static_constraints::StaticConstraints> staticConstraints;

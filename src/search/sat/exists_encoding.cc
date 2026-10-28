@@ -35,6 +35,7 @@ ExistsEncodingFactory::ExistsEncodingFactory(const options::Options &opts)
       conflictOrder(opts.get<bool>("conflict_order")),
       impliedClauses(opts.get<bool>("implied_clauses")),
       breakMoverSymmetry(opts.get<bool>("break_mover_symmetry")),
+      moverVariables(opts.get<bool>("mover_variables")),
       labelOrderFinder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order")),
       staticOptions(opts) {
 }
@@ -227,6 +228,7 @@ void ExistsEncodingFactory::initialize() {
     result->exploitOrder = exploitOrder;
     result->impliedClauses = impliedClauses;
     result->breakMoverSymmetry = breakMoverSymmetry;
+    result->moverVariables = moverVariables;
     if (breakMoverSymmetry && semantics != ExistsSemantics::FORALL) {
         cerr << "exists_sat: break_mover_symmetry is only exact for semantics=FORALL" << endl;
         utils::exit_with(utils::ExitCode::INPUT_ERROR);
@@ -372,7 +374,7 @@ void ExistsEncodingFactory::initialize() {
     }
     data = result;
     staticConstraints = static_constraints::compute(*fts, staticOptions);
-    cout << "EXISTSSTAT semantics " << (semantics == ExistsSemantics::STRICT ? "strict" :
+    cout << "EXISTSSTAT mover_variables " << moverVariables << " semantics " << (semantics == ExistsSemantics::STRICT ? "strict" :
                                         semantics == ExistsSemantics::LAX ? "lax" : "forall")
          << " conflict_order " << conflictOrder << " exploit_order " << exploitOrder
          << " relevant_entries " << relevantEntries << " mover_entries " << moverEntries
@@ -409,21 +411,23 @@ void ExistsEncoding::encode_frame_axioms(const vector<vector<int>> &, const vect
 void ExistsEncoding::encode_transition(const vector<vector<int>> &previousStateVars,
                                        const vector<vector<int>> &nextStateVars, int fromTime) {
     const vector<int> &labelVars = allTimesLabelVars[fromTime];
-    vector<vector<int>> &moverVars = allTimesMoverVars[fromTime];
-    moverVars.resize(fts->get_size());
+    vector<vector<int>> &prefixVars = allTimesPrefixVars[fromTime];
+    prefixVars.resize(fts->get_size());
     for (int f = 0; f < fts->get_size(); f++)
-        encode_factor(f, previousStateVars[f], nextStateVars[f], labelVars, moverVars[f]);
+        encode_factor(f, previousStateVars[f], nextStateVars[f], labelVars, prefixVars[f]);
 }
 
-void ExistsEncoding::encode_factor(int f, const vector<int> &prev, const vector<int> &next,
-                                   const vector<int> &labelVars, vector<int> &moverVars) {
+void ExistsEncoding::encode_factor_mv(int f, const vector<int> &prev, const vector<int> &next,
+                                      const vector<int> &labelVars, vector<int> &prefix) {
+    // mover_variables=true: unchanged from 72b557a26 (same variables, clauses and their order)
+    vector<int> moverVars;
     const ExistsFactorData &fd = data->factors[f];
     const int numStates = prev.size();
     const int n = fd.labels.size();
     moverVars.assign(n, 0);
 
     // movers and the prefix M_j <-> some of the first j+1 movers fired
-    vector<int> prefix(fd.movers.size());
+    prefix.assign(fd.movers.size(), 0);
     for (size_t j = 0; j < fd.movers.size(); j++) {
         const int k = fd.movers[j];
         const int X = labelVars[fd.labels[k]];
@@ -533,19 +537,183 @@ void ExistsEncoding::encode_factor(int f, const vector<int> &prev, const vector<
     }
 }
 
+
+void ExistsEncoding::encode_factor(int f, const vector<int> &prev, const vector<int> &next,
+                                   const vector<int> &labelVars, vector<int> &prefix) {
+    if (data->moverVariables) {
+        encode_factor_mv(f, prev, next, labelVars, prefix);
+        return;
+    }
+    const ExistsFactorData &fd = data->factors[f];
+    const int numStates = prev.size();
+    const int n = fd.labels.size();
+    const bool withMv = data->moverVariables;
+
+    /*
+      prefix[j] <-> "the move happened at mover candidate j or earlier" (candidates = entries of
+      fd.movers, in label order). "Candidate j is the mover" is moverConj[j]: the mover variable
+      (mover_variables=true) or M_j & -M_{j-1} (false; uniqueness then follows from the chain).
+    */
+    const int m = fd.movers.size();
+    prefix.assign(m, 0);
+    vector<vector<int>> moverConj(m);
+    for (int j = 0; j < m; j++) {
+        const int M = sat->new_variable();
+        DEBUG(sat->registerVariable(M, "moved:" + to_string(f) + ":" + to_string(j)));
+        prefix[j] = M;
+        if (j > 0)
+            sat->implies(prefix[j - 1], M);
+        if (withMv) {
+            const int mv = sat->new_variable();
+            DEBUG(sat->registerVariable(mv, "mover:" + to_string(f) + ":" + to_string(fd.labels[fd.movers[j]])));
+            sat->implies(mv, M);
+            if (j > 0) {
+                sat->implies(prefix[j - 1], -mv);          // at most one mover
+                sat->impliesOr(M, vector<int>{prefix[j - 1], mv});
+            } else {
+                sat->implies(M, mv);
+            }
+            moverConj[j] = {mv};
+        } else {
+            moverConj[j] = (j > 0) ? vector<int>{M, -prefix[j - 1]} : vector<int>{M};
+        }
+    }
+
+    // clause "(conjunction of conds) -> (disjunction of ors)", tautologies skipped
+    auto emit = [&](const vector<int> &conds, const vector<int> &ors) {
+        vector<int> clause;
+        for (int c : conds) clause.push_back(-c);
+        clause.insert(clause.end(), ors.begin(), ors.end());
+        sort(clause.begin(), clause.end());
+        clause.erase(unique(clause.begin(), clause.end()), clause.end());
+        for (size_t a = 0; a + 1 < clause.size(); a++)
+            if (binary_search(clause.begin() + a + 1, clause.end(), -clause[a]))
+                return;
+        sat->atLeastOne(clause);
+    };
+    // "(conds & candidate j is NOT the mover) -> ors" is "-conds | mover | ors", and mover is the
+    // conjunction moverConj[j]: one clause per conjunct (distribution)
+    auto emitNotMover = [&](int j, const vector<int> &conds, const vector<int> &ors) {
+        if (j < 0) {
+            emit(conds, ors);
+            return;
+        }
+        for (int lit : moverConj[j]) {
+            vector<int> withLit = ors;
+            withLit.push_back(lit);
+            emit(conds, withLit);
+        }
+    };
+    // "(candidate j is the mover & conds) -> ors"
+    auto emitMover = [&](int j, vector<int> conds, const vector<int> &ors) {
+        conds.insert(conds.end(), moverConj[j].begin(), moverConj[j].end());
+        emit(conds, ors);
+    };
+
+    // the mover fires and makes one of its moves from the start state
+    for (int j = 0; j < m; j++) {
+        const int k = fd.movers[j];
+        const int X = labelVars[fd.labels[k]];
+        emitMover(j, {}, {X});
+        vector<int> sources;
+        for (const auto &[s, targets] : fd.moves[k]) {
+            sources.push_back(prev[s]);
+            vector<int> nextTargets;
+            for (int t : targets)
+                nextTargets.push_back(next[t]);
+            emitMover(j, {prev[s]}, nextTargets);
+        }
+        emitMover(j, {}, sources);
+    }
+
+    // frame: without a mover the factor keeps its state
+    for (int s = 0; s < numStates; s++) {
+        if (m == 0)
+            sat->implies(prev[s], next[s]);
+        else
+            sat->impliesOr(prev[s], vector<int>{next[s], prefix.back()});
+    }
+
+    // non-movers
+    int lastMoverBefore = -1;      // index of the last mover candidate before entry k
+    for (int k = 0; k < n; k++) {
+        const int X = labelVars[fd.labels[k]];
+        const int j = fd.moverIndex[k];        // own candidate index, -1 if it cannot move
+        vector<int> loopPrev, loopNext;
+        for (int s : fd.selfLoopStates[k]) {
+            loopPrev.push_back(prev[s]);
+            loopNext.push_back(next[s]);
+        }
+        if (data->semantics == ExistsSemantics::FORALL) {
+            emitNotMover(j, {X}, loopPrev);
+            emitNotMover(j, {X}, loopNext);
+        } else if (fd.guarded[k]) {
+            if (lastMoverBefore < 0) {
+                emitNotMover(j, {X}, loopPrev);
+            } else {
+                const int g = prefix[lastMoverBefore];
+                emitNotMover(j, {X, -g}, loopPrev);
+                emitNotMover(j, {X, g}, loopNext);
+            }
+        } else {
+            vector<int> either = loopPrev;
+            either.insert(either.end(), loopNext.begin(), loopNext.end());
+            emitNotMover(j, {X}, either);
+        }
+        // STRICT: every firing label is applicable at the start of the step
+        if (data->semantics == ExistsSemantics::STRICT && !fd.allSourcesEverywhere(k, numStates)) {
+            vector<int> sources;
+            for (int s : fd.sourceStates[k])
+                sources.push_back(prev[s]);
+            sat->impliesOr(X, sources);
+        }
+        if (j >= 0)
+            lastMoverBefore = j;
+    }
+
+    // implied: a firing label restricts the end state directly
+    if (data->impliedClauses) {
+        for (int k = 0; k < n; k++) {
+            const int X = labelVars[fd.labels[k]];
+            for (const auto &[s, allowed] : fd.implied[k]) {
+                vector<int> ends;
+                for (int t : allowed)
+                    ends.push_back(next[t]);
+                sat->andImpliesOr(vector<int>{X, prev[s]}, ends);
+            }
+        }
+    }
+    // symmetry breaking (FORALL): among labels with identical transitions in this factor, only
+    // the first firing one may be the mover
+    if (data->breakMoverSymmetry) {
+        for (const vector<int> &group : fd.moverGroups) {
+            int fired = 0;     // some earlier label of the group fires
+            for (int k : group) {
+                if (fired)
+                    emitMover(fd.moverIndex[k], {}, {-fired});
+                const int F = sat->new_variable();
+                sat->implies(labelVars[fd.labels[k]], F);
+                if (fired)
+                    sat->implies(fired, F);
+                fired = F;
+            }
+        }
+    }
+}
+
 vector<vector<int>> ExistsEncoding::extractIntermediateStates(vector<int> &selectedLabels,
                                                               vector<int> &currentLastState,
                                                               vector<int> &nextState,
                                                               int labelTimestep) {
     // selectedLabels are in label order; per factor the state is the start state up to the
     // mover and the end state from the mover on
-    const vector<vector<int>> &moverVars = allTimesMoverVars[labelTimestep];
+    const vector<vector<int>> &prefixVars = allTimesPrefixVars[labelTimestep];
     vector<int> moverPosition(fts->get_size(), INT_MAX);
     for (int f = 0; f < fts->get_size(); f++) {
         const ExistsFactorData &fd = data->factors[f];
-        for (int k : fd.movers) {
-            if (ipasir_val(sat->solver, moverVars[f][k]) > 0) {
-                auto it = find(selectedLabels.begin(), selectedLabels.end(), fd.labels[k]);
+        for (size_t j = 0; j < fd.movers.size(); j++) {
+            if (ipasir_val(sat->solver, prefixVars[f][j]) > 0) {     // first candidate moved
+                auto it = find(selectedLabels.begin(), selectedLabels.end(), fd.labels[fd.movers[j]]);
                 assert(it != selectedLabels.end());
                 moverPosition[f] = it - selectedLabels.begin();
                 break;
@@ -581,6 +749,9 @@ static shared_ptr<SATEncodingFactory> _parse(options::OptionParser &parser) {
     parser.add_option<bool>("conflict_order",
                             "reorder the labels by the SCCs of the conflict graph (topologically; "
                             "label_order breaks ties and orders the SCCs internally)", "true");
+    parser.add_option<bool>("mover_variables",
+                            "one mover variable per (factor, label that can move); false: only the "
+                            "switch chain, the mover is M_j & -M_{j-1}", "true");
     parser.add_option<bool>("implied_clauses",
                             "add the implied clauses label & start state -> allowed end states",
                             "false");
