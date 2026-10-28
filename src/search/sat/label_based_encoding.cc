@@ -880,8 +880,10 @@ void LabelBasedEncoding::generateAdditionalVariables(int fromTime/*, int toTime*
 void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousStateVars, const vector<vector<int>> & nextStateVars, int fromTime/*, int toTime*/){
 	int someLabelExecutedVar = someLabelExecutedPerTime[fromTime];
 	const vector<vector<vector<int>>> & labelGroupVars = allTimesLabelGroupVars[fromTime];
-	if (existsData)
+	if (existsData){
 		encode_exists_chains(previousStateVars, allTimesLabelVars[fromTime], nextStateVars);
+		existsChainsPerTime[fromTime] = existsChains;
+	}
 	encode_transition_semantics(previousStateVars,labelGroupVars,someLabelExecutedVar,nextStateVars);
 
 	// 4. Step encode the restrictions on which actions are allowed in parallel as per the encoding
@@ -954,9 +956,11 @@ void LabelBasedEncoding::encode_exists_chains(const vector<vector<int>> & previo
 				const vector<int> & sources = f.adderSources[t][k];
 				// monotone
 				if (k + 1 < adders.size()) sat->implies(I[k], I[k + 1]);
-				// events: l & prev_u & next_t -> I[k]
+				// events: l & prev_u & next_t -> I[k], unless l self-loops at u (then it may also run
+				// as a self-loop before the mover; the upper bound below still lets it be the mover)
 				for (int u : sources)
-					sat->andImpliesOr(vector<int>{l, previousStateVars[ts][u], nextT}, vector<int>{I[k]});
+					if (!f.hasSelfLoop(adders[k], u))
+						sat->andImpliesOr(vector<int>{l, previousStateVars[ts][u], nextT}, vector<int>{I[k]});
 				// upper bound: I[k] -> I[k-1] | l, and I[k] -> I[k-1] | prev in sources
 				vector<int> fired{l};
 				vector<int> fromSource;
@@ -986,21 +990,27 @@ void LabelBasedEncoding::encode_exists_chains(const vector<vector<int>> & previo
 
 
 
-std::vector<std::vector<int>> LabelBasedEncoding::extractIntermediateStates(std::vector<int> & selectedLabels, std::vector<int> & currentLastState, std::vector<int> & nextState, int /*labelTimestep*/){
+std::vector<std::vector<int>> LabelBasedEncoding::extractIntermediateStates(std::vector<int> & selectedLabels, std::vector<int> & currentLastState, std::vector<int> & nextState, int labelTimestep){
 	vector<vector<int>> intermediateStates;
 	if (existsData){
-		// labels are in label order; per factor the first label with a real transition
-		// prev -> next is the mover, every other label self-loops
+		// labels are in label order; per factor the mover is the adder at which the chain of
+		// the end state switches, every other label self-loops
+		vector<int> mover(fts->get_size(), -1);
+		const auto & chains = existsChainsPerTime.at(labelTimestep);
+		for(int ts = 0 ; ts < fts->get_size() ; ts++){
+			if (currentLastState[ts] == nextState[ts]) continue;
+			const vector<int> & I = chains[ts][nextState[ts]];
+			for (size_t k = 0 ; k < I.size() ; k++)
+				if (ipasir_val(sat->solver, I[k]) > 0){
+					mover[ts] = existsData->factors[ts].adders[nextState[ts]][k];
+					break;
+				}
+			assert(mover[ts] >= 0);
+		}
 		vector<int> state = currentLastState;
 		for(size_t l = 0 ; l + 1 < selectedLabels.size() ; l++){
-			for(int ts = 0 ; ts < fts->get_size() ; ts++){
-				if (state[ts] != currentLastState[ts] || currentLastState[ts] == nextState[ts]) continue;
-				for (const Transition & t : fts->get_ts(ts).get_transitions_with_label(selectedLabels[l]))
-					if (t.src == currentLastState[ts] && t.target == nextState[ts]){
-						state[ts] = nextState[ts];
-						break;
-					}
-			}
+			for(int ts = 0 ; ts < fts->get_size() ; ts++)
+				if (mover[ts] == selectedLabels[l]) state[ts] = nextState[ts];
 			intermediateStates.push_back(state);
 		}
 		return intermediateStates;

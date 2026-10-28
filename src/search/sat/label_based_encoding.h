@@ -51,11 +51,12 @@ enum encoding_type {
   label -> applicable start state clauses get the alternative "after a move into a self-loop
   state of the label" (existsAfterMove).
 
-  Sound: the first firing label with a real transition prev -> next is the mover (the events
-  force the chain to switch there at the latest, the upper bound at the earliest). Complete for
-  strict exists-step except for a label that has both a self-loop at s and a transition s -> t
-  and runs before the mover as a self-loop (it would set the chain early); measured on the
-  Autoscale dumps, such labels are rare (2026-10-28).
+  The mover is the label at which I_next switches (plan extraction reads it there). Events are
+  emitted only for transitions u -> t of labels without a self-loop at u: such a label cannot run
+  before the mover, so it is the mover or runs after it; a label with a self-loop at u may run
+  before the mover, so it does not force the chain, and the upper bound still allows it to be the
+  mover. Labels before the switch are checked against s, labels after it against t (strict:
+  every firing label applicable at s), so the semantics is exactly exists-step in the label order.
 */
 struct LabelExistsFactor {
 	std::unordered_map<int, int> index;                 // relevant label -> entry
@@ -92,6 +93,7 @@ class LabelBasedEncoding : public CommonEncoding {
 	std::shared_ptr<const LabelExistsData> existsData;
 	bool existsLax;
 	std::vector<std::vector<std::vector<int>>> existsChains; // [ts][t][k]
+	std::map<int, std::vector<std::vector<std::vector<int>>>> existsChainsPerTime; // for extraction
 	std::vector<int> existsAfterMove(int ts, int label, const std::vector<int> & sources, int skip = -1) const;
 	int existsBefore(int ts, int t, int label) const;   // I_t[last adder before label] or 0
 	void encode_exists_residual(int ts, int lg, int src,
