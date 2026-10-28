@@ -67,11 +67,11 @@ public:
 
     void appendEffects(std::vector<int>& impliesOrEff, int ts, int relevantLabelEff, int target, int time) override;
 
-    std::vector<int> get_all_sat_vars_moving_to_state(int ts, int label, int state, int fromTime) override;
+    std::vector<int> get_all_sat_vars_moving_to_state(int ts, int labelIndex, int state, int fromTime) override;
 
-    std::vector<int> get_all_sat_vars_moving_from_state(int ts, int label, int state, int fromTime) override;
+    std::vector<int> get_all_sat_vars_moving_from_state(int ts, int labelIndex, int state, int fromTime) override;
 
-    std::vector<int> get_all_non_encoded_self_loop_states(int ts, int label) override;
+    std::vector<int> get_all_non_encoded_self_loop_states(int ts, int labelIndex) override;
 
     void encode_label_consistency(int ts, int relevantLabelIndex, int time) override;
 

@@ -83,7 +83,7 @@ public:
     std::vector<std::vector<int>> compute_possible_label_movements(int ts, int label);
     std::vector<int> get_all_states_label_can_move_from(int ts, int label);
     std::vector<int> get_all_states_label_can_move_to(int ts, int label);
-    virtual std::vector<int> get_all_non_encoded_self_loop_states(int ts, int label);
+    virtual std::vector<int> get_all_non_encoded_self_loop_states(int ts, int labelIndex);
 
     // -----------------------------------------------------------------------
     // Precondition / effect building blocks
@@ -96,9 +96,9 @@ public:
 
     virtual void appendEffects(std::vector<int>& impliesOrEff, int ts, int relevantLabelEff, int target, int time) = 0;
 
-    virtual std::vector<int> get_all_sat_vars_moving_to_state(int ts, int label, int state, int fromTime) = 0;
+    virtual std::vector<int> get_all_sat_vars_moving_to_state(int ts, int labelIndex, int state, int fromTime) = 0;
 
-    virtual std::vector<int> get_all_sat_vars_moving_from_state(int ts, int label, int state, int fromTime) = 0;
+    virtual std::vector<int> get_all_sat_vars_moving_from_state(int ts, int labelIndex, int state, int fromTime) = 0;
 
     // -----------------------------------------------------------------------
     // Encoding helpers

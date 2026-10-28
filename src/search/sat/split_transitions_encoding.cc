@@ -78,21 +78,19 @@ SplitTransitionsEncoding::SplitTransitionsEncoding(
     //
     // When useSelfloopOptimisation is false every label is relevant.
     // When true, pure self-loop labels (irrelevant to state change) are skipped.
+    labelOrder.resize(fts->get_num_labels());
+    for (int pos = 0; pos < fts->get_num_labels(); pos++) {
+        labelOrder[pos] = fts->get_num_labels() - 1 - pos;
+    }
     relevantLabels.resize(fts->get_size());
     for (int ts = 0; ts < fts->get_size(); ts++) {
-        if (useSelfloopOptimisation) {
-            for (int label = 0; label < fts->get_num_labels(); label++)
-                if (!isIrrelevantLabel(ts, label))
-                    relevantLabels[ts].push_back(label);
-        } else {
-            relevantLabels[ts].resize(fts->get_num_labels());
-            iota(relevantLabels[ts].begin(), relevantLabels[ts].end(), 0);
+        for (int pos = 0; pos < fts->get_num_labels(); pos++) {
+            int label = getOrderedLabel(pos);
+            if (!useSelfloopOptimisation || !isIrrelevantLabel(ts, label))
+                relevantLabels[ts].push_back(label);
         }
     }
-    labelOrder.resize(fts->get_num_labels());
-    for (int label = 0; label < fts->get_num_labels(); label++) {
-        labelOrder[label] = label;
-    }
+
 }
 
 
@@ -149,10 +147,11 @@ void SplitTransitionsEncoding::generateTransitionVars(int /*fromTime*/) {
     map<int, map<int, vector<pair<int, int>>>> newTargetVars;
 
     for (int ts = 0; ts < fts->get_size(); ts++) {
-        for (int label = 0; label < fts->get_num_labels(); label++) {
+        for (int pos = 0; pos < fts->get_num_labels(); pos++) {
+            int label = getOrderedLabel(pos);
             if (useSelfloopOptimisation && isIrrelevantLabel(ts, label))
                 continue;
-            auto transitions = fts->get_ts(ts).get_transitions_with_label(getOrderedLabel(label));
+            auto transitions = fts->get_ts(ts).get_transitions_with_label(label);
             sourcesToTargets[ts][label].resize(fts->get_ts(ts).get_size());
             targetsToSources[ts][label].resize(fts->get_ts(ts).get_size());
             for (size_t t = 0; t < transitions.size(); t++) {
@@ -163,7 +162,8 @@ void SplitTransitionsEncoding::generateTransitionVars(int /*fromTime*/) {
     }
 
     for (int ts = 0; ts < fts->get_size(); ts++) {
-        for (int label = 0; label < fts->get_num_labels(); label++) {
+        for (int pos = 0; pos < fts->get_num_labels(); pos++) {
+            int label = getOrderedLabel(pos);
             if (useSelfloopOptimisation && isIrrelevantLabel(ts, label))
                 continue;
             set<int> generatedSources;
@@ -256,12 +256,13 @@ void SplitTransitionsEncoding::appendEffects(vector<int>& impliesOrEff, int ts, 
 // SAT-variable lookup (lazily cached)
 // ---------------------------------------------------------------------------
 
-vector<int> SplitTransitionsEncoding::get_all_sat_vars_moving_to_state(int ts, int label, int state, int fromTime){
+vector<int> SplitTransitionsEncoding::get_all_sat_vars_moving_to_state(int ts, int labelIndex, int state, int fromTime){
+    int label = getRelevantLabel(ts, labelIndex);
     auto access = make_tuple(ts, label, state, fromTime);
     auto it = moving_to_state_vars.find(access);
     if (it == moving_to_state_vars.end()) {
         vector<int> ret;
-        for (auto& [target, var] : allTimesTransitionTargetsVars.back()[ts][getRelevantLabel(ts, label)])
+        for (auto& [target, var] : allTimesTransitionTargetsVars.back()[ts][label])
             if (target == state && var != -1){
                 ret.push_back(var);
                 break;
@@ -271,12 +272,13 @@ vector<int> SplitTransitionsEncoding::get_all_sat_vars_moving_to_state(int ts, i
     return it->second;
 }
 
-vector<int> SplitTransitionsEncoding::get_all_sat_vars_moving_from_state(int ts, int label, int state, int fromTime){
+vector<int> SplitTransitionsEncoding::get_all_sat_vars_moving_from_state(int ts, int labelIndex, int state, int fromTime){
+    int label = getRelevantLabel(ts, labelIndex);
     auto access = make_tuple(ts, label, state, fromTime);
     auto it = moving_from_state_vars.find(access);
     if (it == moving_from_state_vars.end()) {
         vector<int> ret;
-        for (auto& [source, var] : allTimesTransitionSourcesVars.back()[ts][getRelevantLabel(ts, label)])
+        for (auto& [source, var] : allTimesTransitionSourcesVars.back()[ts][label])
             if (source == state && var != -1){
                 ret.push_back(var);
                 break;
@@ -286,12 +288,13 @@ vector<int> SplitTransitionsEncoding::get_all_sat_vars_moving_from_state(int ts,
     return it->second;
 }
 
-vector<int> SplitTransitionsEncoding::get_all_non_encoded_self_loop_states(int ts, int label){
+vector<int> SplitTransitionsEncoding::get_all_non_encoded_self_loop_states(int ts, int labelIndex){
+    int label = getRelevantLabel(ts, labelIndex);
     auto access = make_tuple(ts, label);
     auto it = states_with_non_encoded_transitions.find(access);
     if (it == states_with_non_encoded_transitions.end()) {
         set<int> ret;
-        for (Transition transition : fts->get_ts(ts).get_transitions_with_label(getOrderedLabel(getRelevantLabel(ts, label))))
+        for (Transition transition : fts->get_ts(ts).get_transitions_with_label(label))
             if (!has_to_encode_transition(transition))
                 ret.insert(transition.target);
         vector<int> ret_vec(ret.begin(), ret.end());

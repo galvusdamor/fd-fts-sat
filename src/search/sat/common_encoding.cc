@@ -95,7 +95,8 @@ std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> Comm
 	for(auto [labelTimestep,stateAfterTimestep] : time_step_order){
 		cout << "Time " << labelTimestep << endl;
 		vector<int> selectedLabels;
-		for(size_t label = 0 ; label < allTimesLabelVars[labelTimestep].size() ; label++){
+		for(size_t pos = 0 ; pos < labelOrder.size() ; pos++){
+			int label = getOrderedLabel(pos);
 			if(ipasir_val(sat->solver, allTimesLabelVars[labelTimestep][label]) <= 0){
 				continue;
 			}else{
