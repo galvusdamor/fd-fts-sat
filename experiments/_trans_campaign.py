@@ -458,3 +458,25 @@ PAIRS_TSORT = [
 # (-shr, no h2, 3500m, revision 4fd06976f): per-step formula sizes (ENCSTAT) for the size plots
 CONFIGS["A_1__chains_slf____rcpol_fix-shr"] = (B.CHAINS, "-shr", None)
 RUN_A_FORALL_FIX = ["A_1__chains_slf____rcpol_fix-shr"]
+# TAV/TAC with the self-loop optimisation and three label orders, algorithm A, January setting
+# (-shr, no h2, 3500m): input order (label_order_linear), its reverse (label_order_reverse), and
+# alternating (odd steps input order, even steps reverse; full_transitions_sat
+# alternate_label_orders=true)
+ALT_ORDERS = {}
+for _eff, _labels in [("transeff", "false"), ("labeleff", "true")]:
+    for _name, _lo, _alt in [("lin", "label_order_linear()", "false"),
+                             ("rev", "label_order_reverse()", "false"),
+                             ("alt", "label_order_linear()", "true")]:
+        ALT_ORDERS[f"A_1__fulltrans_{_eff}_slf_{_name}-shr"] = (
+            f"full_transitions_sat(use_self_loop_optimisation=true, "
+            f"use_labels_in_effects_constraints={_labels}, label_order={_lo}, "
+            f"alternate_label_orders={_alt})", "-shr", None)
+CONFIGS.update(ALT_ORDERS)
+RUN_A_ALT_ORDERS = list(ALT_ORDERS)
+PAIRS_A_ALT_ORDERS = [
+    ("A_1__fulltrans_transeff_slf_lin-shr", "A_1__fulltrans_transeff_slf_rev-shr"),
+    ("A_1__fulltrans_transeff_slf_lin-shr", "A_1__fulltrans_transeff_slf_alt-shr"),
+    ("A_1__fulltrans_labeleff_slf_lin-shr", "A_1__fulltrans_labeleff_slf_rev-shr"),
+    ("A_1__fulltrans_labeleff_slf_lin-shr", "A_1__fulltrans_labeleff_slf_alt-shr"),
+    ("A_1__fulltrans_transeff_slf_alt-shr", "A_1__fulltrans_labeleff_slf_alt-shr"),
+]
