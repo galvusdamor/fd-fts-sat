@@ -21,6 +21,7 @@ OUT.json maps "<algorithm>:<domain>:<problem>" to
   fs_base_clauses/_variables    the formula at length 1 (computed back from the largest one), so
                                 that the formula at length L is base + (L - 1) * step
   fs_sat_length                 the smallest length found satisfiable (algorithm A: the horizon)
+  fs_unsat_max                  the largest length proven unsatisfiable
 The JSON also holds "formulas": {length: [clauses, variables]} of every generated formula.
 
 Lines read:
@@ -43,6 +44,8 @@ import tarfile
 
 RINTANEN = re.compile(r"Step\s+\d+\s+for\s+(\d+)\s+timesteps: (\d+) clauses (\d+) variables")
 RINTANEN_SAT = re.compile(r"Step\s+\d+\s+for\s+(\d+)\s+timesteps: SAT")
+RINTANEN_UNSAT = re.compile(r"Step\s+\d+\s+for\s+(\d+)\s+timesteps: UNSAT")
+STEP_UNSAT = re.compile(r"STEP \d+ length (\d+) UNSAT")
 FORMULA_HAS = re.compile(r"Formula has (\d+) clauses and (\d+) variables\.")
 STEP_LENGTH = re.compile(r"STEP \d+ length (\d+) ")
 STEP_SAT = re.compile(r"STEP \d+ length (\d+) SAT")
@@ -81,6 +84,9 @@ def sizes(log):
     sat = [int(L) for L in STEP_SAT.findall(log)] + [int(L) for L in RINTANEN_SAT.findall(log)]
     if sat:
         out["fs_sat_length"] = min(sat)
+    unsat = [int(L) for L in STEP_UNSAT.findall(log)] + [int(L) for L in RINTANEN_UNSAT.findall(log)]
+    if unsat:
+        out["fs_unsat_max"] = max(unsat)
     out["formulas"] = {str(L): list(cv) for L, cv in sorted(formulas.items())}
     return out
 
