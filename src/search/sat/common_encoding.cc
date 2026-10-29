@@ -121,9 +121,10 @@ std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> Comm
 		}
 
 		// the labels of a step are executed in the order of the step semantics, not by id
-		if(selectedLabels.size() > 1 && !labelOrder.empty()){
+		const vector<int> & stepOrder = labelOrderAt(labelTimestep);
+		if(selectedLabels.size() > 1 && !stepOrder.empty()){
 			vector<int> position(fts->get_num_labels());
-			for(size_t k = 0 ; k < labelOrder.size() ; k++) position[labelOrder[k]] = k;
+			for(size_t k = 0 ; k < stepOrder.size() ; k++) position[stepOrder[k]] = k;
 			sort(selectedLabels.begin(), selectedLabels.end(),
 			     [&](int a, int b){ return position[a] < position[b]; });
 		}

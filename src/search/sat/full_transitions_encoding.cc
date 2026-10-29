@@ -19,6 +19,7 @@ namespace transitions_encoding {
 FullTransitionsEncodingFactory::FullTransitionsEncodingFactory(const options::Options &opts): SATEncodingFactory(opts.get<bool>("force_at_least_one_action")),
 	useSelfloopOptimisation(opts.get<bool>("use_self_loop_optimisation")), useLabelsInEffectsConstraints(opts.get<bool>("use_labels_in_effects_constraints")),
 	labelOrderFinder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order")),
+	alternateLabelOrders(opts.get<bool>("alternate_label_orders")),
 	staticOptions(opts)
 	 {
 	statisticsPrinted = false;
@@ -48,6 +49,11 @@ static shared_ptr<sat_search::SATEncodingFactory> _parse_full_transitions_sat_fa
 		"order in which labels may be applied within one time step (the step semantics)",
 		"label_order_linear()");
 
+	parser.add_option<bool>(
+		"alternate_label_orders",
+		"odd time steps (1, 3, ...) use label_order, even ones its reverse",
+		"false");
+
 	static_constraints::add_options(parser);
 
     options::Options opts = parser.parse();
@@ -75,7 +81,7 @@ void FullTransitionsEncodingFactory::initialize() {
 unique_ptr<sat_search::SATEncoding> FullTransitionsEncodingFactory::createEncodingInstance(std::shared_ptr<sat_capsule> capsule){
 	//bool oldStatisticsPrinted = statisticsPrinted;
 	statisticsPrinted = true;
-	auto encoding = make_unique<FullTransitionsEncoding>(capsule, fts, forceAtLeastOneAction, useSelfloopOptimisation, useLabelsInEffectsConstraints, order);
+	auto encoding = make_unique<FullTransitionsEncoding>(capsule, fts, forceAtLeastOneAction, useSelfloopOptimisation, useLabelsInEffectsConstraints, order, alternateLabelOrders);
 	encoding->setStaticConstraints(staticConstraints);
 	return encoding;
 }
@@ -91,7 +97,8 @@ FullTransitionsEncoding::FullTransitionsEncoding(
     bool                                            forceAtLeastOneAction,
     bool                                            useSelfloopOptimisation,
     bool                                            useLabelsInEffectsConstraints,
-    const vector<int>&                              order)
+    const vector<int>&                              order,
+    bool                                            alternateLabelOrders)
     : TransitionsEncoding(capsule, fts, forceAtLeastOneAction,
                            useSelfloopOptimisation, useLabelsInEffectsConstraints)
 {
@@ -122,6 +129,40 @@ FullTransitionsEncoding::FullTransitionsEncoding(
     for (int ts = 0; ts < fts->get_size(); ts++)
         sort(relevantLabels[ts].begin(), relevantLabels[ts].end(),
              [&](int a, int b) { return position[a] < position[b]; });
+    alternateOrders = alternateLabelOrders;
+    if (alternateOrders) {
+        relevantLabelsByParity[0] = relevantLabels;
+        relevantLabelsByParity[1] = relevantLabels;
+        for (auto &labels : relevantLabelsByParity[1])
+            reverse(labels.begin(), labels.end());
+        labelOrderByParity[0] = labelOrder;
+        labelOrderByParity[1] = vector<int>(labelOrder.rbegin(), labelOrder.rend());
+    }
+}
+
+void FullTransitionsEncoding::encode(int fromTime, int toTime) {
+    if (alternateOrders) {
+        const int parity = (fromTime % 2 == 1) ? 0 : 1;   // time 1: the label order itself
+        if (parity != currentParity) {
+            relevantLabels = relevantLabelsByParity[parity];
+            labelOrder = labelOrderByParity[parity];
+            // keyed by (factor, index in relevantLabels): invalid after the switch
+            states_label_can_move_from_to_and_non_encoded_state.clear();
+            states_with_non_encoded_transitions.clear();
+            currentParity = parity;
+        }
+        parityOfTime[fromTime] = parity;
+    }
+    TransitionsEncoding::encode(fromTime, toTime);
+}
+
+const vector<int> & FullTransitionsEncoding::labelOrderAt(int time) const {
+    if (alternateOrders) {
+        auto it = parityOfTime.find(time);
+        if (it != parityOfTime.end())
+            return labelOrderByParity[it->second];
+    }
+    return labelOrder;
 }
 
 // ---------------------------------------------------------------------------
