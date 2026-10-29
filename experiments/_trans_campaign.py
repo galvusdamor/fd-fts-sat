@@ -454,3 +454,7 @@ PAIRS_TSORT = [
     ("A_1__fulltrans_labeleff_tsort-shr", "A_1__fulltrans_labeleff_tsortstrict-shr"),
     ("A_1__fulltrans_transeff_tsortstrict-shr", "A_1__fulltrans_labeleff_tsortstrict-shr"),  # TAV vs TAC
 ]
+# forall-step (label_sat CHAINS_PARALLEL) with algorithm A in the setting of the self-loop fix run
+# (-shr, no h2, 3500m, revision 4fd06976f): per-step formula sizes (ENCSTAT) for the size plots
+CONFIGS["A_1__chains_slf____rcpol_fix-shr"] = (B.CHAINS, "-shr", None)
+RUN_A_FORALL_FIX = ["A_1__chains_slf____rcpol_fix-shr"]
