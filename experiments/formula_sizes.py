@@ -18,10 +18,18 @@ OUT.json maps "<algorithm>:<domain>:<problem>" to
                                 difference. The formula grows exactly linearly from length 1 on
                                 (checked: total(L) - total(L-1) = ENCSTAT step_*_last), so this
                                 is the per-step size, independent of the algorithm.
+  fs_base_clauses/_variables    the formula at length 1 (computed back from the largest one), so
+                                that the formula at length L is base + (L - 1) * step
+  fs_sat_length                 the smallest length found satisfiable (algorithm A: the horizon)
+The JSON also holds "formulas": {length: [clauses, variables]} of every generated formula.
 
 Lines read:
   rintanen   "Step NN for LLLL timesteps: C clauses V variables"  (every generated call)
+             "Step NN for LLLL timesteps: SAT ..."
   sat        "ENCSTAT length L ... total_clauses C total_variables V"
+             "Formula has C clauses and V variables." paired with "STEP N length L ..." (logs
+             before ENCSTAT, 2026-09-21; the n-th formula belongs to the n-th SAT call)
+             "STEP N length L SAT"
 Runs with formulas of fewer than two lengths >= 1 get no fs_step_* (a single formula does not
 separate the per-step part from the initial/goal part), except that an ENCSTAT line provides
 step_*_last directly.
@@ -34,6 +42,10 @@ import sys
 import tarfile
 
 RINTANEN = re.compile(r"Step\s+\d+\s+for\s+(\d+)\s+timesteps: (\d+) clauses (\d+) variables")
+RINTANEN_SAT = re.compile(r"Step\s+\d+\s+for\s+(\d+)\s+timesteps: SAT")
+FORMULA_HAS = re.compile(r"Formula has (\d+) clauses and (\d+) variables\.")
+STEP_LENGTH = re.compile(r"STEP \d+ length (\d+) ")
+STEP_SAT = re.compile(r"STEP \d+ length (\d+) SAT")
 ENCSTAT = re.compile(r"ENCSTAT length (\d+) .*?step_clauses_last (\d+) step_variables_last (\d+) "
                      r"total_clauses (\d+) total_variables (\d+)")
 
@@ -41,6 +53,9 @@ ENCSTAT = re.compile(r"ENCSTAT length (\d+) .*?step_clauses_last (\d+) step_vari
 def sizes(log):
     formulas = {}  # length -> (clauses, variables)
     encstat_step = None
+    # algorithm A before ENCSTAT: the n-th "Formula has" belongs to the n-th STEP line
+    for (c, v), L in zip(FORMULA_HAS.findall(log), STEP_LENGTH.findall(log)):
+        formulas[int(L)] = (int(c), int(v))
     for m in RINTANEN.finditer(log):
         formulas[int(m.group(1))] = (int(m.group(2)), int(m.group(3)))
     for m in ENCSTAT.finditer(log):
@@ -60,6 +75,13 @@ def sizes(log):
         out["fs_step_variables"] = (formulas[b][1] - formulas[a][1]) // (b - a)
     elif encstat_step:
         out["fs_step_clauses"], out["fs_step_variables"] = encstat_step
+    if "fs_step_clauses" in out:
+        out["fs_base_clauses"] = formulas[top][0] - (top - 1) * out["fs_step_clauses"]
+        out["fs_base_variables"] = formulas[top][1] - (top - 1) * out["fs_step_variables"]
+    sat = [int(L) for L in STEP_SAT.findall(log)] + [int(L) for L in RINTANEN_SAT.findall(log)]
+    if sat:
+        out["fs_sat_length"] = min(sat)
+    out["formulas"] = {str(L): list(cv) for L, cv in sorted(formulas.items())}
     return out
 
 
