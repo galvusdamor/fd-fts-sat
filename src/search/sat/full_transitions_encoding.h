@@ -59,8 +59,18 @@ public:
         bool                                                  forceAtLeastOneAction,
         bool                                                  useSelfloopOptimisation,
         bool                                                  useLabelsInEffectsConstraints,
-        const std::vector<int>&                               order
+        const std::vector<int>&                               order,
+        bool                                                  alternateLabelOrders = false
     );
+
+    /*
+      alternate_label_orders: odd time steps (1, 3, ...) use the label order, even ones its
+      reverse. The step semantics is the order of relevantLabels[ts], so encode() switches
+      relevantLabels (and labelOrder) to the copy for the step's parity before encoding it, and
+      clears the caches keyed by a label's index in relevantLabels.
+    */
+    void encode(int fromTime, int toTime) override;
+    const std::vector<int> & labelOrderAt(int time) const override;
     ~FullTransitionsEncoding() override = default;
 
     bool has_to_encode_transition(task_representation::Transition transition) override;
@@ -83,6 +93,12 @@ public:
     void encode_label_consistency(int ts, int relevantLabelIndex, int time) override;
 
     void encode_r2_chains(int ts, int time);
+
+    bool alternateOrders = false;
+    std::vector<std::vector<int>> relevantLabelsByParity[2];
+    std::vector<int> labelOrderByParity[2];
+    int currentParity = 0;
+    std::map<int, int> parityOfTime;
 
     // FTS_FACTOR_SIZE statistics of the first step
     std::vector<long long> factorClauses, factorLiterals;
@@ -118,6 +134,7 @@ class FullTransitionsEncodingFactory : public sat_search::SATEncodingFactory {
     const bool useLabelsInEffectsConstraints;
 	bool statisticsPrinted;
 	std::shared_ptr<label_order_finder::LabelOrderFinder> labelOrderFinder;
+	const bool alternateLabelOrders;
 	// label order of the step semantics (computed in initialize()); position = rank
 	std::vector<int> order;
 	const static_constraints::Options staticOptions;
