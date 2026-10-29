@@ -51,6 +51,12 @@ enum encoding_type {
   label -> applicable start state clauses get the alternative "after a move into a self-loop
   state of the label" (existsAfterMove).
 
+  exists_effects_persist=true: a label with a real transition in a factor must end the step in
+  one of its targets there (it may still self-loop before the mover, but only if the mover ends in
+  one of its targets), as in FDR, where an action's effect holds at the end of an exists step;
+  this keeps the forall encoding's label -> target clauses ("empty cols") for those labels, which
+  propagate the end state from a firing label. Only restricts, so sound.
+
   The mover is the label at which I_next switches (plan extraction reads it there). Events are
   emitted only for transitions u -> t of labels without a self-loop at u: such a label cannot run
   before the mover, so it is the mover or runs after it; a label with a self-loop at u may run
@@ -92,6 +98,9 @@ class LabelBasedEncoding : public CommonEncoding {
 	// exists_step: shared data, and the chain variables of the step being encoded
 	std::shared_ptr<const LabelExistsData> existsData;
 	bool existsLax;
+	bool existsWeaken;      // exists_step without exists_only_chains
+	bool existsPersist;
+	bool existsPureEvents;
 	std::vector<std::vector<std::vector<int>>> existsChains; // [ts][t][k]
 	std::map<int, std::vector<std::vector<std::vector<int>>>> existsChainsPerTime; // for extraction
 	std::vector<int> existsAfterMove(int ts, int label, const std::vector<int> & sources, int skip = -1) const;
@@ -145,7 +154,10 @@ public:
 		bool _chainsInterleaved,
 		const std::vector<std::shared_ptr<FTSMatrix>> & fts_matrices,
 		std::shared_ptr<const LabelExistsData> _existsData = nullptr,
-		bool _existsLax = false
+		bool _existsLax = false,
+		bool _existsPersist = false,
+		bool _existsOnlyChains = false,
+		bool _existsPureEvents = false
 			);
 	~LabelBasedEncoding() override = default;
 
@@ -168,6 +180,9 @@ class LabelBasedEncodingFactory : public SATEncodingFactory {
 	const bool chainsInterleaved;
 	const bool existsStep;
 	const bool existsLax;
+	const bool existsPersist;
+	const bool existsOnlyChains;
+	const bool existsPureEvents;
 	std::shared_ptr<label_order_finder::LabelOrderFinder> labelOrderFinder;
 	std::shared_ptr<const LabelExistsData> existsData;
 	bool statisticsPrinted;

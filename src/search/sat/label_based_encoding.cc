@@ -41,6 +41,9 @@ LabelBasedEncodingFactory::LabelBasedEncodingFactory(const options::Options &opt
 	chainsInterleaved(opts.get<bool>("chains_interleaved")),
 	existsStep(opts.get<bool>("exists_step")),
 	existsLax(opts.get<bool>("exists_lax")),
+	existsPersist(opts.get<bool>("exists_effects_persist")),
+	existsOnlyChains(opts.get<bool>("exists_only_chains")),
+	existsPureEvents(opts.get<bool>("exists_pure_events")),
 	labelOrderFinder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order"))
 	 {
 	statisticsPrinted = false;
@@ -130,6 +133,25 @@ static shared_ptr<SATEncodingFactory> _parse_label_based_sat_factory(options::Op
     	"state, only self-loop at the end state)",
     	"false");
 
+	parser.add_option<bool>(
+    	"exists_effects_persist",
+    	"exists_step: a label with a real transition in a factor ends the step in one of its targets "
+    	"there (as in FDR, where an action's effect holds at the end of an exists step); keeps the "
+    	"label -> target clauses of the forall encoding",
+    	"false");
+
+	parser.add_option<bool>(
+    	"exists_pure_events",
+    	"exists_step: for a label without any self-loop in a factor (it fires there only as the "
+    	"mover) the chain event is label & next_t -> I_t instead of one event per source state",
+    	"false");
+
+	parser.add_option<bool>(
+    	"exists_only_chains",
+    	"diagnostic: replace the forall chains by the exists chains but keep every other forall "
+    	"clause unweakened (forall-like semantics on the exists machinery; exists_lax ignored)",
+    	"false");
+
 	parser.add_option<shared_ptr<label_order_finder::LabelOrderFinder>>(
     	"label_order",
     	"exists_step: the label order of the step semantics",
@@ -174,7 +196,7 @@ LabelBasedEncoding::LabelBasedEncoding(
 	bool _chainsInterleaved,
 	const std::vector<shared_ptr<FTSMatrix>> & fts_matrix,
 	std::shared_ptr<const LabelExistsData> _existsData,
-	bool _existsLax): CommonEncoding(capsule,_fts, forceAtLeastOneAction, _useLabelGroups, _useSelfloopOptimisation),
+	bool _existsLax, bool _existsPersist, bool _existsOnlyChains, bool _existsPureEvents): CommonEncoding(capsule,_fts, forceAtLeastOneAction, _useLabelGroups, _useSelfloopOptimisation),
 	statisticsPrinted(_statisticsPrinted),
 	useEmptyRows(_useEmptyRows),
 	useEmptyCols(_useEmptyCols),
@@ -187,7 +209,10 @@ LabelBasedEncoding::LabelBasedEncoding(
 	chainsInterleaved(_chainsInterleaved),
 	fts_matrices(fts_matrix),
 	existsData(_existsData),
-	existsLax(_existsData && _existsLax)
+	existsLax(_existsData && _existsLax && !_existsOnlyChains),
+	existsWeaken(_existsData && !_existsOnlyChains),
+	existsPersist(_existsData && _existsPersist),
+	existsPureEvents(_existsPureEvents)
 {
 }
 
@@ -290,7 +315,7 @@ unique_ptr<SATEncoding> LabelBasedEncodingFactory::createEncodingInstance(std::s
 	return make_unique<LabelBasedEncoding>(capsule,fts,oldStatisticsPrinted,useLabelGroups,useSelfloopOptimisation,
 			useEmptyRows,useEmptyCols,useEmptyPillars,useOnesInLastDimension,usePositiveOneForEmpty,forceAtLeastOneAction,
 			oneEncodingThreshold,oneEncodingThresholdPercent,
-			encoding,chainsInterleaved,fts_matrices,existsData,existsLax);
+			encoding,chainsInterleaved,fts_matrices,existsData,existsLax,existsPersist,existsOnlyChains,existsPureEvents);
 }
 
 
@@ -452,7 +477,7 @@ void LabelBasedEncoding::encode_transition_semantics(const vector<vector<int>> &
 						else
 							sat->impliesOr(var, preconditions);
 						// exists_step: replaced by "not after a move into a non-self-loop state"
-						if (!existsData) sat->impliesOr(var, effects);
+						if (!existsWeaken) sat->impliesOr(var, effects);
 					}
 					continue;
 				}
@@ -600,7 +625,7 @@ void LabelBasedEncoding::encode_transition_semantics(const vector<vector<int>> &
 					// self-loop: has been encoded before
 					if (useSelfloopOptimisation && tss.isAlwaysSelfLoop(label)) continue;
 					// exists_step: a label with a self-loop may run before the mover, ending anywhere
-					if (existsData && existsData->factors[ts].hasAnySelfLoop(label)) continue;
+					if (existsWeaken && !existsPersist && existsData->factors[ts].hasAnySelfLoop(label)) continue;
 
 					if (is_below_threshold(ts,fts_matrix->get_possible_targets_for_label(lg).size())){
 						vector<int> allOnes;
@@ -653,7 +678,7 @@ void LabelBasedEncoding::encode_transition_semantics(const vector<vector<int>> &
 				int label = fts_matrix->get_labels_in_label_group(lg)[0];
 				// self-loop: has been encoded before
 				if (useSelfloopOptimisation && tss.isAlwaysSelfLoop(label)) continue;
-				if (existsData && existsData->factors[ts].hasAnySelfLoop(label)) continue;
+				if (existsWeaken && !existsPersist && existsData->factors[ts].hasAnySelfLoop(label)) continue;
 				for(int target : fts_matrix->get_impossible_targets_for_label(lg)){
 					// check if impossible target is already covered
 					if (label_covered_targets[lg].contains(target)) continue; 
@@ -734,7 +759,7 @@ void LabelBasedEncoding::encode_transition_semantics(const vector<vector<int>> &
 				// Given label lg, if we already asserted the implication lg -> -src, we have nothing to do.
 				if (label_covered_sources[lg].contains(src)) continue;
 
-				if (existsData && existsData->factors[ts].hasAnySelfLoop(label)){
+				if (existsWeaken && existsData->factors[ts].hasAnySelfLoop(label)){
 					encode_exists_residual(ts, lg, src, previousStateVars, labelGroupVars, nextStateVars,
 						label_covered_targets[lg], source_covered_targets[src]);
 					continue;
@@ -958,9 +983,13 @@ void LabelBasedEncoding::encode_exists_chains(const vector<vector<int>> & previo
 				if (k + 1 < adders.size()) sat->implies(I[k], I[k + 1]);
 				// events: l & prev_u & next_t -> I[k], unless l self-loops at u (then it may also run
 				// as a self-loop before the mover; the upper bound below still lets it be the mover)
-				for (int u : sources)
-					if (!f.hasSelfLoop(adders[k], u))
-						sat->andImpliesOr(vector<int>{l, previousStateVars[ts][u], nextT}, vector<int>{I[k]});
+				if (existsPureEvents && !f.hasAnySelfLoop(adders[k]))
+					// a label without any self-loop in the factor fires only as the mover
+					sat->andImpliesOr(vector<int>{l, nextT}, vector<int>{I[k]});
+				else
+					for (int u : sources)
+						if (!f.hasSelfLoop(adders[k], u))
+							sat->andImpliesOr(vector<int>{l, previousStateVars[ts][u], nextT}, vector<int>{I[k]});
 				// upper bound: I[k] -> I[k-1] | l, and I[k] -> I[k-1] | prev in sources
 				vector<int> fired{l};
 				vector<int> fromSource;
