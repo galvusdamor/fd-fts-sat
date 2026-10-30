@@ -480,3 +480,8 @@ PAIRS_A_ALT_ORDERS = [
     ("A_1__fulltrans_labeleff_slf_lin-shr", "A_1__fulltrans_labeleff_slf_alt-shr"),
     ("A_1__fulltrans_transeff_slf_alt-shr", "A_1__fulltrans_labeleff_slf_alt-shr"),
 ]
+# one configuration only (2026-10-30): TAV with the self-loop optimisation, alternating orders;
+# linear in the same setting comes from the self-loop fix run
+RUN_A_ALT_TAV = ["A_1__fulltrans_transeff_slf_alt-shr"]
+FETCH_A_ALT_TAV = {"A_1__fulltrans_transeff_slf_fix-shr": "4fd06976f404c9538b8cae28d0991421db549226"}
+PAIRS_A_ALT_TAV = [("A_1__fulltrans_transeff_slf_fix-shr", "A_1__fulltrans_transeff_slf_alt-shr")]
