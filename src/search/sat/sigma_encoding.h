@@ -3,6 +3,8 @@
 
 #include "common_encoding.h"
 
+#include <functional>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -36,6 +38,22 @@ class Options;
   The first variables of a step are the state variables of time t; the last ones are made
   equivalent to those of time t+1. Labels irrelevant to a factor (self-loops everywhere) are
   skipped there; a label with self-loops only gets just the precondition clause.
+
+  one_move=true: exists-step (lax) -- at most one real move per factor and step. A monotone
+  variable M_i per factor and label position with changed states ("the factor has moved by
+  position i"): entering a state sets it (-sigma_{i-1}(s) & sigma_i(s) -> M_i), and once it is set
+  no state can be entered (M_{i-1} & -sigma_{i-1}(s) -> -sigma_i(s)). Every other firing label then
+  runs as a self-loop at the factor's current state, i.e. sequential execution in label order.
+  strict=true (with one_move): in addition every firing label is applicable at the state at the
+  start of the step (Rintanen's exists-step).
+
+  group_size=k: consecutive groups of k labels of the label order form one micro-step (idea of
+  Joao). Per factor, a group whose labels include one that is relevant there is encoded as a
+  forall-step between the group's start and end sigma (encode_group): at most one label moves the
+  factor, every other firing label self-loops at both; new variables only for the states some
+  label of the group changes. A group with a single relevant label is the plain sigma micro-step
+  (encode_single), so group_size=1 is the plain encoding. Groups trade R2E parallelism inside a
+  group for fewer variables.
 */
 namespace sat_search {
 
@@ -47,7 +65,16 @@ struct SigmaLabelData {
     std::vector<std::pair<int, std::vector<int>>> predecessors; // s in C_l -> sources into s
 };
 
+struct SigmaUpdate {
+    int label;
+    std::vector<std::pair<int, int>> vars;            // (state, variable) of the changed states
+    int mover;                                        // group: the label's mover variable; 0: own micro-step
+};
+
 struct SigmaData {
+    std::vector<int> groupOf;                         // label -> micro-step group
+    bool oneMove = false;
+    bool strict = false;
     std::vector<int> order;                           // label order of the step semantics
     std::vector<std::vector<SigmaLabelData>> factors; // per factor, relevant labels in order
 };
@@ -55,7 +82,14 @@ struct SigmaData {
 class SigmaEncoding : public CommonEncoding {
     std::shared_ptr<const SigmaData> data;
     // per time and factor: (label, [(state, variable)] for its changed states), for extraction
-    std::map<int, std::vector<std::vector<std::pair<int, std::vector<std::pair<int, int>>>>>> allTimesUpdates;
+    std::map<int, std::vector<std::vector<SigmaUpdate>>> allTimesUpdates;
+    using OneMove = std::function<void(const std::vector<int> &, const std::vector<int> &, int)>;
+    void encode_single(int ts, const SigmaLabelData &ld, const std::vector<int> &labelVars,
+                       std::vector<int> &cur, int fromTime, std::vector<SigmaUpdate> &updates,
+                       const OneMove &oneMove);
+    void encode_group(int ts, const std::vector<SigmaLabelData> &labels, size_t begin, size_t end,
+                      const std::vector<int> &labelVars, std::vector<int> &cur, int fromTime,
+                      std::vector<SigmaUpdate> &updates, const OneMove &oneMove);
 
 protected:
     void generateAdditionalVariables(int fromTime) override;
@@ -78,6 +112,9 @@ public:
 
 class SigmaEncodingFactory : public SATEncodingFactory {
     std::shared_ptr<label_order_finder::LabelOrderFinder> labelOrderFinder;
+    const bool oneMove;
+    const bool strict;
+    const int groupSize;
     const static_constraints::Options staticOptions;
     std::shared_ptr<const static_constraints::StaticConstraints> staticConstraints;
     std::shared_ptr<const SigmaData> data;
