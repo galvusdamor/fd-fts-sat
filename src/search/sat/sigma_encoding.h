@@ -68,10 +68,15 @@ struct SigmaLabelData {
 struct SigmaUpdate {
     int label;
     std::vector<std::pair<int, int>> vars;            // (state, variable) of the changed states
-    int mover;                                        // group: the label's mover variable; 0: own micro-step
+    int mover;                                        // group: the label's mover variable; 0: own micro-step; -1: matrix group
+    int group;                                        // first position of the label's group (groups only)
 };
 
 struct SigmaData {
+    bool groupMatrix = true;
+    bool groupCompact = false;
+    bool groupPureAmo = true;
+    std::vector<std::vector<int>> factorBlock;          // factor_groups: per factor, block id per label entry
     std::vector<int> groupOf;                         // label -> micro-step group
     bool oneMove = false;
     bool strict = false;
@@ -87,6 +92,13 @@ class SigmaEncoding : public CommonEncoding {
     void encode_single(int ts, const SigmaLabelData &ld, const std::vector<int> &labelVars,
                        std::vector<int> &cur, int fromTime, std::vector<SigmaUpdate> &updates,
                        const OneMove &oneMove);
+    void amoLadder(const std::vector<int> &xs);
+    void encode_group_compact(int ts, const std::vector<SigmaLabelData> &labels, size_t begin, size_t end,
+                              const std::vector<int> &labelVars, std::vector<int> &cur, int fromTime,
+                              std::vector<SigmaUpdate> &updates, const OneMove &oneMove);
+    void encode_group_matrix(int ts, const std::vector<SigmaLabelData> &labels, size_t begin, size_t end,
+                             const std::vector<int> &labelVars, std::vector<int> &cur, int fromTime,
+                             std::vector<SigmaUpdate> &updates, const OneMove &oneMove);
     void encode_group(int ts, const std::vector<SigmaLabelData> &labels, size_t begin, size_t end,
                       const std::vector<int> &labelVars, std::vector<int> &cur, int fromTime,
                       std::vector<SigmaUpdate> &updates, const OneMove &oneMove);
@@ -115,6 +127,17 @@ class SigmaEncodingFactory : public SATEncodingFactory {
     const bool oneMove;
     const bool strict;
     const int groupSize;
+    const bool groupMatrix;
+    const bool groupCompact;
+    const bool groupPureAmo;
+    const bool competingGroups;
+    const bool groupOrder;
+    const bool factorGroups;
+    const bool factorGroupsExact;
+    const bool groupAllowChains;
+    const bool groupKeepEnablers;
+    void compute_group_order(SigmaData &d) const;
+    const int groupMax;
     const static_constraints::Options staticOptions;
     std::shared_ptr<const static_constraints::StaticConstraints> staticConstraints;
     std::shared_ptr<const SigmaData> data;

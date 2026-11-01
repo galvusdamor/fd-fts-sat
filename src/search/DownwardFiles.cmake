@@ -213,6 +213,7 @@ fast_downward_plugin(
         task_transformation/task_transformation_label_union
         task_transformation/task_transformation_tau_baking
         task_transformation/task_transformation_dump
+        task_transformation/task_transformation_load
         task_transformation/label_transformation_utils
         task_transformation/task_transformation_merge_and_shrink
         task_transformation/task_transformation_tau_path
