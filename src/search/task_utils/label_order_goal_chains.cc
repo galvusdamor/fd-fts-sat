@@ -514,7 +514,7 @@ namespace label_order_finder {
           if the result is proven optimal.
         */
         bool exact_order(const vector<int> &vs, const Weights &w, vector<int> &order,
-                         int conflicts, double time_limit) {
+                         int conflicts, double time_limit, int max_calls = -1) {
             const auto start = chrono::steady_clock::now();
             const int n = vs.size();
             unordered_map<int, int> id;
@@ -538,9 +538,12 @@ namespace label_order_finder {
             }
             const vector<int> outputs = base.totalizer(breaks, ub);
 
+            int calls = 0;
             while (ub > 0) {
                 const double elapsed = chrono::duration<double>(chrono::steady_clock::now() - start).count();
-                if (elapsed > time_limit) return false;
+                // time_limit < 0: no wall-clock limit, so the result does not depend on machine load
+                if (time_limit >= 0 && elapsed > time_limit) return false;
+                if (max_calls >= 0 && calls++ >= max_calls) return false;
                 kissat *solver = kissat_init();
                 kissat_set_option(solver, "quiet", 1);
                 kissat_set_conflict_limit(solver, conflicts);
@@ -612,6 +615,7 @@ namespace label_order_finder {
           exact_max_size(opts.get<int>("exact_max_size")),
           exact_conflicts(opts.get<int>("exact_conflicts")),
           exact_time_limit(opts.get<double>("exact_time_limit")),
+          exact_max_calls(opts.get<int>("exact_max_calls")),
           leftover(opts.get<shared_ptr<LabelOrderFinder>>("leftover")),
           verbose(opts.get<bool>("verbose")),
           ancestor_depth(opts.get<int>("ancestor_depth")),
@@ -700,7 +704,7 @@ namespace label_order_finder {
                                  MergeStats &ms, int exact_max_weight = -1, int chain_weight = 1,
                                  const Weights &extra = Weights(),
                                  const vector<long> &extra_first = vector<long>(), int tiebreak = 0,
-                                 ScheduleContext *sched = nullptr) {
+                                 ScheduleContext *sched = nullptr, int exact_max_calls = -1) {
             Weights w;
             vector<long> first_pos(num_labels, -1);
             long stride = 1;
@@ -751,8 +755,8 @@ namespace label_order_finder {
                 if ((int)comp.size() <= exact_max_size && (exact_max_weight < 0 || comp_weight <= exact_max_weight)) {
                     ms.exact_comps++;
                     double tl = exact_time_limit;
-                    if (deadline.active) tl = min(tl, deadline.remaining());
-                    if (tl > 0 && exact_order(comp, wc, co, exact_conflicts, tl)) ms.proven++;
+                    if (deadline.active) tl = tl < 0 ? deadline.remaining() : min(tl, deadline.remaining());
+                    if (tl != 0 && exact_order(comp, wc, co, exact_conflicts, tl, exact_max_calls)) ms.proven++;
                 } else {
                     ms.heuristic_comps++;
                 }
@@ -2072,6 +2076,10 @@ namespace label_order_finder {
         ScheduleContext sched;
         auto do_merge = [&]() {
             const vector<vector<int>> sel = selected_chains();
+            chain_pairs.clear();
+            for (const auto &c : sel)
+                for (size_t i = 0; i + 1 < c.size(); i++)
+                    if (c[i] != c[i + 1]) chain_pairs.emplace_back(c[i], c[i + 1]);
             map<pair<int, int>, int> edges = pairs_in_maxsat ? extra_pairs : no_pairs;
             if (chain_edges == 1) edge_pairs = dependence_pairs(task, sel, constrained_in, dep_weight, edges);
             if (chain_edges == 2) edge_pairs = interaction_pairs(task, sel, constrained_in, dep_weight, edges);
@@ -2082,7 +2090,7 @@ namespace label_order_finder {
             sched.interaction = &inter;
             return merge_chains(sel, num_labels, exact_max_size, exact_conflicts, exact_time_limit, ms,
                                 exact_max_weight, chain_weight, edges, pairs_in_maxsat ? extra_first : no_first,
-                                chain_tiebreak, &sched);
+                                chain_tiebreak, &sched, exact_max_calls);
         };
         vector<int> merged = do_merge();
         vector<int> order = complete(merged);
@@ -2191,7 +2199,10 @@ namespace label_order_finder {
         parser.add_option<int>("exact_max_size",
             "components with at most this many labels are ordered by exact MaxSAT", "150");
         parser.add_option<int>("exact_conflicts", "kissat conflict limit per MaxSAT call", "200000");
-        parser.add_option<double>("exact_time_limit", "seconds per component for the MaxSAT", "10");
+        parser.add_option<double>("exact_time_limit",
+            "seconds per component for the MaxSAT; negative: no time limit (deterministic)", "10");
+        parser.add_option<int>("exact_max_calls",
+            "kissat calls per component for the MaxSAT (each with exact_conflicts); -1: unlimited", "-1");
         parser.add_option<shared_ptr<LabelOrderFinder>>("leftover",
             "order for the labels no chain mentions", "label_order_relaxed()");
         parser.add_option<bool>("verbose", "report per-goal-factor details", "false");

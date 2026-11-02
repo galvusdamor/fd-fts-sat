@@ -137,7 +137,11 @@ class SigmaEncodingFactory : public SATEncodingFactory {
     const bool groupAllowChains;
     const bool groupKeepEnablers;
     void compute_group_order(SigmaData &d) const;
+    void commute_labels(SigmaData &d) const;
     const int groupMax;
+    const int commuteOrder;
+    const bool reportOrder;
+    const int groupRelax;
     const static_constraints::Options staticOptions;
     std::shared_ptr<const static_constraints::StaticConstraints> staticConstraints;
     std::shared_ptr<const SigmaData> data;

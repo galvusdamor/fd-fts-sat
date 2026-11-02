@@ -1,6 +1,7 @@
 #ifndef LABEL_ORDER_FINDER_H
 #define LABEL_ORDER_FINDER_H
 
+#include <utility>
 #include <vector>
 #include <memory>
 #include <string>
@@ -29,6 +30,9 @@ namespace label_order_finder {
     class LabelOrderFinder {
     public:
         virtual std::vector<int> find_order(const task_representation::FTSTask &fts_task) = 0;
+        // consecutive labels of the abstract plans the order was built from, if the finder has any
+        // (label_order_goal_chains); filled by find_order
+        std::vector<std::pair<int, int>> chain_pairs;
     };
 
     class LabelOrderFinderRandom : public LabelOrderFinder {
@@ -155,6 +159,7 @@ namespace label_order_finder {
         int exact_max_size;
         int exact_conflicts;
         double exact_time_limit;
+        int exact_max_calls;
         std::shared_ptr<LabelOrderFinder> leftover;
         bool verbose;
         int ancestor_depth;

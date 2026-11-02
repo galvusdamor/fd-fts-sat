@@ -43,6 +43,9 @@ SigmaEncodingFactory::SigmaEncodingFactory(const options::Options &opts)
       groupAllowChains(opts.get<bool>("group_allow_chains")),
       groupKeepEnablers(opts.get<bool>("group_keep_enablers")),
       groupMax(opts.get<int>("group_max")),
+      commuteOrder(opts.get<int>("commute_order")),
+      reportOrder(opts.get<bool>("report_order")),
+      groupRelax(opts.get<int>("group_relax")),
       staticOptions(opts) {
     if (strict && !oneMove) {
         cerr << "sigma_sat: strict needs one_move" << endl;
@@ -155,6 +158,186 @@ void SigmaEncodingFactory::compute_group_order(SigmaData &d) const {
          << order.size() - clusters.size() << " multi_groups " << multi << " labels_in_multi " << inMulti << endl;
 }
 
+/*
+  commute_order: reorder the labels along the "feeds" DAG. Label a feeds b (a before b in the order)
+  if in some factor a's real target is a state where b is applicable, or a self-loops at a real
+  source of b -- exactly the situations in which a and then b can fire in one step with a's
+  presence mattering. If a does not feed b, the two can fire together in that order only as
+  self-loops at the same state in every shared factor, so they commute: every linearisation of the
+  DAG keeps all one-step label sequences of the original order (and may add some), so horizons do
+  not grow. Mode 1: ASAP layering (level = 1 + max level of the labels feeding it), ties by the
+  original position; mode 2: ALAP layering (as late as possible). Non-feeding labels then sit
+  next to each other, which lets the exact per-factor blocks grow.
+*/
+void SigmaEncodingFactory::commute_labels(SigmaData &d) const {
+    const int numLabels = fts->get_num_labels();
+    vector<int> pos(numLabels);
+    for (size_t k = 0; k < d.order.size(); k++)
+        pos[d.order[k]] = k;
+    struct Role { int ts; vector<int> app, src, tgt, sl; };
+    vector<vector<Role>> roles(numLabels);
+    for (int ts = 0; ts < fts->get_size(); ts++)
+        for (const SigmaLabelData &ld : d.factors[ts]) {
+            Role r{ts, ld.applicable, {}, {}, {}};
+            set<int> src, tgt, sl;
+            for (const auto &[x, ys] : ld.targets)
+                for (int y : ys) {
+                    if (y == x) sl.insert(x);
+                    else { src.insert(x); tgt.insert(y); }
+                }
+            r.src.assign(src.begin(), src.end());
+            r.tgt.assign(tgt.begin(), tgt.end());
+            r.sl.assign(sl.begin(), sl.end());
+            roles[ld.label].push_back(move(r));
+        }
+    if (commuteOrder == 3) {
+        // per factor and state: labels with a real target there / a self-loop there
+        vector<vector<vector<int>>> tgtL(fts->get_size()), slL(fts->get_size());
+        for (int ts = 0; ts < fts->get_size(); ts++) {
+            tgtL[ts].assign(fts->get_ts(ts).get_size(), {});
+            slL[ts].assign(fts->get_ts(ts).get_size(), {});
+        }
+        for (int l = 0; l < numLabels; l++)
+            for (const Role &r : roles[l]) {
+                for (int x : r.tgt) tgtL[r.ts][x].push_back(l);
+                for (int x : r.sl) slL[r.ts][x].push_back(l);
+            }
+        auto mark_feeders = [&](int u, vector<int> &stamp) {
+            for (const Role &r : roles[u]) {
+                for (int x : r.app) for (int w : tgtL[r.ts][x]) stamp[w] = u;
+                for (int x : r.src) for (int w : slL[r.ts][x]) stamp[w] = u;
+            }
+        };
+        auto forward_pairs = [&](const vector<int> &ord) {
+            vector<int> p(numLabels), stamp(numLabels, -1);
+            for (size_t k = 0; k < ord.size(); k++) p[ord[k]] = k;
+            long fwd = 0, bwd = 0;
+            for (int u : ord) {
+                mark_feeders(u, stamp);
+                for (int w = 0; w < numLabels; w++)
+                    if (stamp[w] == u && w != u) (p[w] < p[u] ? fwd : bwd)++;
+            }
+            return make_pair(fwd, bwd);
+        };
+        const bool count = numLabels <= 5000;   // the count is quadratic
+        pair<long, long> before = count ? forward_pairs(d.order) : make_pair(-1L, -1L);
+        // left shift: a label moves before the earliest label it feeds among those it can pass (no
+        // label between feeds it), right shift symmetrically after the latest label feeding it
+        // among those it can pass. A label passes only labels it is not ordered against, so no
+        // forward feeding pair is lost, and every move gains one: the passes reach a fixpoint.
+        vector<vector<vector<int>>> appL(fts->get_size()), srcL(fts->get_size());
+        for (int ts = 0; ts < fts->get_size(); ts++) {
+            appL[ts].assign(fts->get_ts(ts).get_size(), {});
+            srcL[ts].assign(fts->get_ts(ts).get_size(), {});
+        }
+        for (int l = 0; l < numLabels; l++)
+            for (const Role &r : roles[l]) {
+                for (int x : r.app) appL[r.ts][x].push_back(l);
+                for (int x : r.src) srcL[r.ts][x].push_back(l);
+            }
+        vector<int> order = d.order, feeder(numLabels, -1), fed(numLabels, -1), at(numLabels);
+        for (size_t k = 0; k < order.size(); k++) at[order[k]] = k;
+        // deduplicated feeder / fed lists, built once; the passes stop after a deterministic amount
+        // of work (list entries visited)
+        vector<vector<int>> feedersOf(numLabels), fedBy(numLabels);
+        long work = 0;
+        for (int u = 0; u < numLabels; u++) {
+            for (const Role &r : roles[u]) {
+                for (int x : r.app) for (int w : tgtL[r.ts][x]) if (w != u && feeder[w] != u) { feeder[w] = u; feedersOf[u].push_back(w); }
+                for (int x : r.src) for (int w : slL[r.ts][x]) if (w != u && feeder[w] != u) { feeder[w] = u; feedersOf[u].push_back(w); }
+                for (int x : r.tgt) for (int w : appL[r.ts][x]) if (w != u && fed[w] != u) { fed[w] = u; fedBy[u].push_back(w); }
+                for (int x : r.sl) for (int w : srcL[r.ts][x]) if (w != u && fed[w] != u) { fed[w] = u; fedBy[u].push_back(w); }
+            }
+            work += feedersOf[u].size() + fedBy[u].size();
+        }
+        const long workPerPass = work, workLimit = 200000000L;
+        long workDone = 0;
+        auto move_to = [&](int i, int target) {
+            const int u = order[i];
+            order.erase(order.begin() + i);
+            order.insert(order.begin() + target, u);
+            for (int k = min(i, target); k <= max(i, target); k++) at[order[k]] = k;
+        };
+        size_t moved = 0, rounds = 0;
+        for (bool change = true; change && rounds < 50 && workDone + 2 * workPerPass <= workLimit; rounds++) {
+            change = false;
+            workDone += 2 * workPerPass;
+            for (int i = 0; i < (int) order.size(); i++) {   // left: before the earliest fed label after the last feeder
+                const int u = order[i];
+                const vector<int> &feeders = feedersOf[u], &feds = fedBy[u];
+                int lo = -1, target = i;
+                for (int w : feeders) if (at[w] < i) lo = max(lo, at[w]);
+                for (int w : feds) if (at[w] > lo && at[w] < target) target = at[w];
+                if (target < i) { move_to(i, target); moved++; change = true; }
+            }
+            for (int i = (int) order.size() - 1; i >= 0; i--) {   // right: after the latest feeder before the first fed label
+                const int u = order[i];
+                const vector<int> &feeders = feedersOf[u], &feds = fedBy[u];
+                int hi = order.size(), target = i;
+                for (int w : feds) if (at[w] > i) hi = min(hi, at[w]);
+                for (int w : feeders) if (at[w] < hi && at[w] > target) target = at[w];
+                if (target > i) { move_to(i, target); moved++; change = true; }
+            }
+        }
+        pair<long, long> after = count ? forward_pairs(order) : make_pair(-1L, -1L);
+        d.order = order;
+        vector<int> newPos(numLabels);
+        for (size_t k = 0; k < order.size(); k++) newPos[order[k]] = k;
+        for (auto &labels : d.factors)
+            stable_sort(labels.begin(), labels.end(), [&](const SigmaLabelData &a, const SigmaLabelData &b) {
+                return newPos[a.label] < newPos[b.label]; });
+        cout << "SIGMACOMMUTE mode 3 moved " << moved << " rounds " << rounds << " edges " << workPerPass << " forward_pairs " << before.first << " -> " << after.first
+             << " backward_pairs " << before.second << " -> " << after.second << endl;
+        return;
+    }
+    vector<int> level(numLabels, 0);
+    vector<int> seq = d.order;
+    if (commuteOrder == 2) reverse(seq.begin(), seq.end());
+    // per factor and state: the highest level of an already placed label in that role
+    vector<vector<int>> maxTgt(fts->get_size()), maxSl(fts->get_size()),
+        maxApp(fts->get_size()), maxSrc(fts->get_size());
+    for (int ts = 0; ts < fts->get_size(); ts++) {
+        const int n = fts->get_ts(ts).get_size();
+        maxTgt[ts].assign(n, 0); maxSl[ts].assign(n, 0); maxApp[ts].assign(n, 0); maxSrc[ts].assign(n, 0);
+    }
+    size_t edgesBound = 0;
+    for (int b : seq) {
+        int lv = 0;
+        for (const Role &r : roles[b]) {
+            if (commuteOrder == 1) {   // earlier a feeds b
+                for (int x : r.app) lv = max(lv, maxTgt[r.ts][x]);
+                for (int x : r.src) lv = max(lv, maxSl[r.ts][x]);
+            } else {                   // reversed: b feeds the later a
+                for (int x : r.tgt) lv = max(lv, maxApp[r.ts][x]);
+                for (int x : r.sl) lv = max(lv, maxSrc[r.ts][x]);
+            }
+        }
+        level[b] = lv + 1;
+        edgesBound = max(edgesBound, (size_t) lv + 1);
+        for (const Role &r : roles[b]) {
+            for (int x : r.tgt) maxTgt[r.ts][x] = max(maxTgt[r.ts][x], lv + 1);
+            for (int x : r.sl) maxSl[r.ts][x] = max(maxSl[r.ts][x], lv + 1);
+            for (int x : r.app) maxApp[r.ts][x] = max(maxApp[r.ts][x], lv + 1);
+            for (int x : r.src) maxSrc[r.ts][x] = max(maxSrc[r.ts][x], lv + 1);
+        }
+    }
+    vector<int> order = d.order;
+    if (commuteOrder == 1)
+        stable_sort(order.begin(), order.end(), [&](int a, int b) { return level[a] < level[b]; });
+    else
+        stable_sort(order.begin(), order.end(), [&](int a, int b) { return level[a] > level[b]; });
+    d.order = order;
+    vector<int> newPos(numLabels);
+    for (size_t k = 0; k < order.size(); k++) newPos[order[k]] = k;
+    for (auto &labels : d.factors)
+        stable_sort(labels.begin(), labels.end(), [&](const SigmaLabelData &a, const SigmaLabelData &b) {
+            return newPos[a.label] < newPos[b.label]; });
+    size_t moved = 0;
+    for (int l = 0; l < numLabels; l++) moved += newPos[l] != pos[l];
+    cout << "SIGMACOMMUTE mode " << commuteOrder << " levels " << edgesBound << " labels " << order.size()
+         << " moved " << moved << endl;
+}
+
 void SigmaEncodingFactory::initialize() {
     utils::Timer timer;
     auto d = make_shared<SigmaData>();
@@ -204,18 +387,22 @@ void SigmaEncodingFactory::initialize() {
             d->factors[ts].push_back(move(ld));
         }
     }
+    if (commuteOrder)
+        commute_labels(*d);
     if (factorGroups) {
         // per factor, along the factor's labels: a block of labels without self-loops there that do
         // not chain (no label starts where another of the block ends); such labels can never fire
         // one after another in a step, so a forall-step block loses no parallelism
         d->factorBlock.resize(fts->get_size());
         size_t blocks = 0, entries = 0;
+        const set<pair<int, int>> hints(labelOrderFinder->chain_pairs.begin(), labelOrderFinder->chain_pairs.end());
         for (int ts = 0; ts < fts->get_size(); ts++) {
             const vector<SigmaLabelData> &ls = d->factors[ts];
             vector<int> &blk = d->factorBlock[ts];
             blk.assign(ls.size(), 0);
             int b = -1, size = 0;
             set<int> bSrc, bTgt, bSl;
+            vector<size_t> members;   // group_relax=2: entries of the current block
             bool open = false;
             for (size_t k = 0; k < ls.size(); k++) {
                 const SigmaLabelData &ld = ls[k];
@@ -231,9 +418,23 @@ void SigmaEncodingFactory::initialize() {
                     // exact: for a before b in the block, a's real targets are not where b is
                     // applicable, and a's self-loops are not b's real sources
                     join = size > 0 && size < groupMax;
-                    if (join) {
+                    if (join && groupRelax == 2) {
+                        // only a feeding pair the goal chains use separates blocks
+                        for (size_t m : members) {
+                            const SigmaLabelData &la = ls[m];
+                            if (!hints.count({la.label, ld.label})) continue;
+                            bool feeds = false;
+                            for (const auto &[x, ys] : la.targets)
+                                for (int y : ys) {
+                                    if (y != x && binary_search(ld.applicable.begin(), ld.applicable.end(), y)) feeds = true;
+                                    if (y == x && src.count(x)) feeds = true;
+                                }
+                            if (feeds) join = false;
+                        }
+                    } else if (join) {
                         for (int x : ld.applicable) if (bTgt.count(x)) join = false;
-                        for (int x : src) if (bSl.count(x)) join = false;
+                        if (groupRelax != 1)
+                            for (int x : src) if (bSl.count(x)) join = false;
                     }
                 } else {
                     const bool mover = !selfLoop && !src.empty();
@@ -245,11 +446,12 @@ void SigmaEncodingFactory::initialize() {
                     if (!join) open = mover;
                 }
                 if (!join) {
-                    b++; size = 0; bSrc.clear(); bTgt.clear(); bSl.clear();
+                    b++; size = 0; bSrc.clear(); bTgt.clear(); bSl.clear(); members.clear();
                     blocks++;
                 }
                 blk[k] = b;
                 size++;
+                members.push_back(k);
                 bSrc.insert(src.begin(), src.end());
                 bTgt.insert(tgt.begin(), tgt.end());
                 for (const auto &[x, ys] : ld.targets)
@@ -304,6 +506,14 @@ void SigmaEncodingFactory::initialize() {
         }
         groups = group + 1;
         cout << "SIGMAGROUPS groups " << groups << " labels " << d->order.size() << " merged " << merged << endl;
+    }
+    if (reportOrder) {
+        cout << "SIGMAORDER";
+        for (int l : d->order) cout << " " << l;
+        cout << endl;
+        cout << "SIGMAHINTS";
+        for (auto [a, b] : labelOrderFinder->chain_pairs) cout << " " << a << ">" << b;
+        cout << endl;
     }
     data = d;
     staticConstraints = static_constraints::compute(*fts, staticOptions);
@@ -837,6 +1047,16 @@ static shared_ptr<SATEncodingFactory> _parse(options::OptionParser &parser) {
     parser.add_option<bool>("group_keep_enablers",
                             "group_order: do not move a label before a label that moves into one of its "
                             "sources", "true");
+    parser.add_option<int>("commute_order",
+                           "reorder the labels along the DAG of labels that feed each other (see "
+                           "commute_labels; no one-step sequence is lost): 0 off, 1 ASAP layering, "
+                           "2 ALAP layering, 3 left shift (every label right after its last feeder: turns "
+                           "backward feeding pairs into forward ones)", "0");
+    parser.add_option<bool>("report_order", "print the final label order (SIGMAORDER line)", "false");
+    parser.add_option<int>("group_relax",
+                           "factor_groups_exact, lossy: 0 exact; 1 a label may join after one that "
+                           "self-loops at its real source; 2 only a feeding pair that the goal chains "
+                           "use (label_order's chain pairs) separates blocks", "0");
     parser.add_option<int>("group_max", "competing_groups: at most this many labels per group", "16");
     parser.add_option<bool>("group_compact",
                             "groups: compact forall encoding (one-hot end state, effect and frame clauses, "
