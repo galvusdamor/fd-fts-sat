@@ -1,0 +1,274 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage[colorlinks=true,linkcolor=black,urlcolor=black]{hyperref}
+\pdfstringdefDisableCommands{\def\forall{forall}\def\exists{exists}}
+
+\newcommand{\lab}[1]{a_{#1}}            % label variable
+\newcommand{\st}[1]{x_{#1}}             % state variable, start of the step
+\newcommand{\stn}[1]{x'_{#1}}           % state variable, end of the step
+\newcommand{\SL}{\mathit{SL}}
+\newcommand{\R}{R}
+\newcommand{\src}{\mathit{src}}
+\newcommand{\tgt}{\mathit{tgt}}
+\newcommand{\app}{\mathit{app}}
+\newcommand{\FA}{\mathit{FA}}
+\newcommand{\Bef}{B}
+
+\title{New SAT encodings over factored transition systems}
+\author{fd-fts-sat, October 2026}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Notation}
+
+A factored transition system has factors $f \in \mathcal F$ with states $S_f$, labels $L$, and per
+factor and label a transition relation $T_f(l) \subseteq S_f \times S_f$. A label is
+\emph{irrelevant} in $f$ if $T_f(l) = \{(s,s) \mid s \in S_f\}$; irrelevant labels are skipped in
+$f$ everywhere below. We drop the index $f$ where it is clear. For a label $l$ in a factor:
+\begin{align*}
+  \SL(l) &= \{s \mid (s,s) \in T(l)\} && \text{self-loop states}\\
+  \R(l) &= \{(s,s') \in T(l) \mid s \neq s'\} && \text{real transitions}\\
+  \app(l) &= \{s \mid \exists s'.\,(s,s') \in T(l)\} && \text{states where $l$ is applicable}\\
+  T(l,s) &= \{s' \mid (s,s') \in T(l)\}
+\end{align*}
+$\prec$ is a total order on $L$ (the label order). Per time step $t$ the encodings use one-hot
+state variables $\st{f,s}$ (time $t$) and $\stn{f,s}$ (time $t+1$) with exactly-one constraints
+per factor, and label variables $\lab{l}$. Every label fires at most once per step. A step is
+satisfiable if the firing labels, executed in the order $\prec$, form a valid sequence from $x$ to
+$x'$ under the step semantics of the encoding.
+
+Step semantics, per factor, of the firing labels executed in order $\prec$:
+\begin{description}
+  \item[$\forall$-step] at most one label moves the factor ($x \to x'$), every other one self-loops at
+        both $x$ and $x'$ (in any order).
+  \item[$\exists$-step, lax] at most one label moves the factor; a label before the mover self-loops at
+        $x$, one after it at $x'$.
+  \item[$\exists$-step, strict] lax, and every firing label is applicable at $x$.
+  \item[R$^2\exists$] the factor may move several times; each firing label makes one transition from
+        the factor's current state (Balyo 2013; the semantics of TAV/TAC and
+        \texttt{bdd\_sat(one\_step\_only=false)}).
+\end{description}
+
+\section{$\exists$-step on the $\forall$-step encoding (\texttt{label\_sat(exists\_step=true)})}
+
+Base: the $\forall$-step encoding
+\begin{center}\texttt{label\_sat(encoding=CHAINS\_PARALLEL, use\_self\_loop\_optimisation=true)}.\end{center}
+Its clause families (positive/negative forms and the
+row/column/pillar compressions omitted):
+\begin{align}
+  &\lab{l} \to \textstyle\bigvee_{s \in \SL(l)} \st{s},\quad
+   \lab{l} \to \textstyle\bigvee_{s \in \SL(l)} \stn{s} && \R(l) = \emptyset \tag{L1}\\
+  &\lab{l} \to \textstyle\bigvee_{s \in \app(l)} \st{s} && \text{rows} \tag{L2}\\
+  &\lab{l} \to \textstyle\bigvee_{s' \in \tgt(l)} \stn{s'} && \text{columns} \tag{L3}\\
+  &\lab{l} \wedge \st{s} \to \neg\stn{s'} \qquad s' \notin T(l,s) && \text{residual} \tag{L4}\\
+  &\text{pillars, self-loop frame} && \text{label-independent} \tag{L5}\\
+  &\lab{l} \wedge \stn{s'} \to \neg \lab{l'} \qquad l \neq l' \text{ reach } s',\ s' \notin \SL(l') && \text{chains} \tag{L6}
+\end{align}
+
+\paragraph{Chains.} Per factor and target state $t$, the \emph{adders}
+$A(t) = (l_1 \prec \dots \prec l_m)$ are the labels with a real transition into $t$. Variables
+$I_{t,1},\dots,I_{t,m}$, meaning ``the factor moved into $t$ by $l_k$ or earlier''. With
+$\Bef_t(l) = I_{t,k^*}$, $k^* = \max\{k \mid l_k \prec l\}$, and $\Bef_t(l) = \bot$ if there is none:
+\begin{align}
+  &I_{t,k} \to I_{t,k+1} \tag{E1}\\
+  &\lab{l_k} \wedge \st{u} \wedge \stn{t} \to I_{t,k} && (u,t) \in \R(l_k),\ u \notin \SL(l_k) \tag{E2}\\
+  &I_{t,k} \to I_{t,k-1} \vee \lab{l_k},\qquad
+   I_{t,k} \to I_{t,k-1} \vee \textstyle\bigvee_{(u,t) \in \R(l_k)} \st{u} \tag{E3}\\
+  &I_{t,m} \to \stn{t},\qquad I_{t,m} \to \neg\st{t},\qquad \stn{t} \wedge \neg\st{t} \to I_{t,m} \tag{E4}\\
+  &\lab{l} \to \neg \Bef_t(l) && t \in \FA(l) \tag{E5}
+\end{align}
+with $\FA(l) = \{t \mid l \in A(t),\ t \notin \SL(l)\}$ if $\R(l) \neq \emptyset$, and
+$\FA(l) = S \setminus \SL(l)$ if $\R(l) = \emptyset$.
+
+\paragraph{Changes to the $\forall$-step clauses (strict).}
+(L6) is dropped. (L3) and the $x'$ half of (L1) are dropped for labels with $\SL(l) \neq \emptyset$.
+(L4) for $s \neq s'$, $s \in \app(l)$, $s' \notin T(l,s)$ becomes
+\[
+  \begin{array}{lll}
+    s \in \SL(l),\ s' \notin \SL(l): & \lab{l} \wedge \st{s} \wedge \stn{s'} \to \neg \Bef_{s'}(l) & \text{($l$ before the mover)}\\
+    s \notin \SL(l),\ s' \in \SL(l): & \lab{l} \wedge \st{s} \wedge \stn{s'} \to \Bef_{s'}(l) & \text{($l$ after the mover)}\\
+    s, s' \in \SL(l): & \text{no clause} & \\
+    s, s' \notin \SL(l): & \text{unchanged.} &
+  \end{array}
+\]
+
+\paragraph{Lax.} (L2) and the precondition half of (L1) become, for labels with
+$\SL(l) \neq \emptyset$,
+\[
+  \lab{l} \to \textstyle\bigvee_{s \in \app(l)} \st{s} \vee \bigvee_{s' \in \SL(l)} \Bef_{s'}(l),
+  \qquad
+  \lab{l} \wedge \st{s} \to \textstyle\bigvee_{s' \in \SL(l) \setminus \{s\}} \Bef_{s'}(l) \quad (s \notin \app(l)).
+\]
+
+\paragraph{Semantics.} Exactly $\exists$-step (strict/lax) in the order $\prec$; the mover of a
+factor is the adder at which $I_{x',\cdot}$ switches. (E2) omits sources where $l_k$ self-loops, so
+such a label may run as a self-loop before the mover; (E3) still lets it be the mover.
+
+\paragraph{Options.}
+\begin{description}
+  \item[\texttt{exists\_effects\_persist}] keep (L3) for labels with real transitions: a label ends
+        the step in one of its targets, as in FDR $\exists$-step.
+  \item[\texttt{exists\_pure\_events}] (E2) as $\lab{l_k} \wedge \stn{t} \to I_{t,k}$ for labels with
+        $\SL(l_k) = \emptyset$.
+  \item[\texttt{exists\_only\_chains}] (diagnostic) (L6) replaced by (E1)--(E5), all other clauses
+        unweakened.
+\end{description}
+
+\paragraph{Size.} Per step and factor: $\sum_t |A(t)|$ chain variables (one per real
+(label, target) pair), $|\R|$ event clauses, $2\sum_t|A(t)|$ upper-bound clauses,
+$\sum_l |\FA(l)|$ binary clauses (E5).
+
+\section{Intermediate-state encoding (\texttt{sigma\_sat})}
+
+After Symbolic Pattern Planning (Cardellini, Giunchiglia, Maratea, AIJ 352, 2026). R$^2\exists$
+semantics. Per factor and step, the relevant labels in order $l_1 \prec \dots \prec l_m$
+(positions). $\sigma^0_s = \st{s}$; $\sigma^i_s$ means ``after the first $i$ positions the factor is
+in $s$''. With $C(l) = \{s, s' \mid (s,s') \in \R(l)\}$, position $i$ introduces new variables
+$\sigma^i_s$ for $s \in C(l_i)$ only; $\sigma^i_s = \sigma^{i-1}_s$ (same variable) for
+$s \notin C(l_i)$. With $l = l_i$, $p = \sigma^{i-1}$, $n = \sigma^i$:
+\begin{align}
+  &\lab{l} \to \textstyle\bigvee_{s \in \app(l)} p_s \tag{S1}\\
+  &\neg\lab{l} \wedge p_s \to n_s,\qquad \neg\lab{l} \wedge n_s \to p_s && s \in C(l) \tag{S2}\\
+  &\lab{l} \wedge p_s \to \textstyle\bigvee_{s' \in T(l,s)} n_{s'} && s \in \app(l) \tag{S3}\\
+  &\lab{l} \wedge n_{s'} \to \textstyle\bigvee_{s:\,(s,s') \in T(l)} p_s && s' \in C(l) \tag{S4}\\
+  &\lab{l} \wedge p_s \to \neg n_{s_1} \vee \neg n_{s_2} && s_1 \neq s_2 \in T(l,s) \tag{S5}\\
+  &\sigma^m_s \leftrightarrow \stn{s} \tag{S6}
+\end{align}
+A label with $\R(l) = \emptyset$ in $f$ gets only (S1). No chain or auxiliary variables.
+Variables per step and factor: $\sum_l |C(l)|$; the state of a factor changes only at labels with
+real transitions there. Plan extraction: per factor, the state after a fired label is the
+$s \in C(l)$ with $\sigma^i_s$ true, else unchanged.
+
+\paragraph{$\exists$-step (\texttt{one\_move=true}, \texttt{strict=true}).} Per factor a monotone
+variable $M^i$ for each position with $C(l_i) \neq \emptyset$ (``moved by position $i$''):
+\begin{align}
+  &M^{i-1} \to M^i,\qquad \neg p_s \wedge n_s \to M^i,\qquad
+   M^{i-1} \wedge \neg p_s \to \neg n_s && s \in C(l_i) \tag{M}\\
+  &\lab{l} \to \textstyle\bigvee_{s \in \app(l)} \st{s} && \text{strict only} \tag{St}
+\end{align}
+Semantics: $\exists$-step lax (with (St): strict), in the order $\prec$.
+
+\paragraph{Micro-step groups (\texttt{group\_size=}$k$).} Groups
+$G_j = \{l \mid \lfloor \mathrm{pos}_\prec(l)/k \rfloor = j\}$. A group with one relevant label in
+$f$ is encoded by (S1)--(S5). A group $G$ with several relevant labels in $f$ is one
+$\forall$-step between $p = \sigma^{\mathrm{in}}$ and $n = \sigma^G$, with new variables for
+$C(G) = \bigcup_{l \in G} C(l)$ and a mover variable $\mu_l$ per $l \in G$ with $\R(l) \neq \emptyset$:
+\begin{align}
+  &\lab{l} \to \textstyle\bigvee_{s \in \app(l)} p_s && l \in G \tag{G1}\\
+  &\lab{l} \to \textstyle\bigvee_{s \in \SL(l)} n_s && \R(l) = \emptyset \tag{G2}\\
+  &\mu_l \to \lab{l} \tag{G3}\\
+  &\lab{l} \wedge p_s \to \mu_l && s \in \app(l) \setminus \SL(l) \tag{G4}\\
+  &\lab{l} \wedge n_{s'} \to \mu_l && s' \in C(G) \setminus \SL(l) \tag{G5}\\
+  &\mu_l \wedge p_s \to \textstyle\bigvee_{s' \in T(l,s)} n_{s'} && s \in \app(l) \tag{G6}\\
+  &\mu_l \wedge n_{s'} \to \textstyle\bigvee_{(s,s') \in T(l)} p_s && s' \in C(G) \tag{G7}\\
+  &\mu_l \wedge p_s \to \neg n_{s_1} \vee \neg n_{s_2} && s_1 \neq s_2 \in T(l,s) \tag{G8}\\
+  &\textstyle\sum_{l \in G} \mu_l \le 1,\qquad
+   p_s \wedge \neg n_s \to \bigvee_{l} \mu_l,\qquad \neg p_s \wedge n_s \to \bigvee_l \mu_l
+   && s \in C(G) \tag{G9}
+\end{align}
+Semantics: $\forall$-step inside a group, R$^2\exists$ between groups (sequential in $\prec$).
+$k = 1$ is the plain encoding; $k = |L|$ is $\forall$-step.
+
+\paragraph{Per-factor exact blocks (\texttt{factor\_groups=true, factor\_groups\_exact=true}).}
+The groups need not be global. In factor $f$, the relevant labels $l_1 \prec \dots \prec l_m$ are
+split greedily into blocks of consecutive positions: $l_j$ joins the current block $B$ if
+$|B| <$ \texttt{group\_max} and, for every $l \in B$,
+\[
+  \tgt_f(l) \cap \app_f(l_j) = \emptyset \quad\text{and}\quad \SL_f(l) \cap \src_f(l_j) = \emptyset,
+\]
+with $\tgt$/$\src$ the targets/sources of real transitions. Under these conditions no two labels
+of a block can run one after the other in R$^2\exists$, so a $\forall$-step block allows exactly
+the same executions: the horizons equal those of the plain encoding.
+
+\paragraph{Compact block encoding (\texttt{group\_compact=true}).} For a block $G$ with start
+$p$, end $n$, new variables $n_s$ for $s \in C(G)$ and $n_s = p_s$ otherwise:
+\begin{align}
+  &\lab{l} \to \textstyle\bigvee_{s \in \app(l)} p_s && l \in G \tag{C1}\\
+  &\lab{l} \wedge p_s \to \textstyle\bigvee_{s' \in T(l,s)} n_{s'} && \R(l) \neq \emptyset \tag{C2}\\
+  &\lab{l} \to \textstyle\bigvee_{s \in \SL(l)} n_s && \R(l) = \emptyset \tag{C3}\\
+  &p_s \wedge \neg n_s \to \textstyle\bigvee_{l:\, s \in \src(l)} \lab{l},\qquad
+   \neg p_s \wedge n_s \to \textstyle\bigvee_{l:\, s \in \tgt(l)} \lab{l} && s \in C(G) \tag{C4}\\
+  &\textstyle\sum_{s \in S} n_s \le 1 && \text{ladder} \tag{C5}\\
+  &\textstyle\sum_{l \in G,\ \SL(l) = \emptyset,\ \R(l) \neq \emptyset} \lab{l} \le 1 && \text{ladder} \tag{C6}\\
+  &\lab{a} \wedge \lab{b} \wedge p_u \wedge n_t \to \bot && (u,t) \in \R(a) \cap \R(b),\ t \notin \SL(a) \cap \SL(b) \tag{C7}
+\end{align}
+(C5) with (C2)/(C4) makes $n$ one-hot and $(p,n) \in T(l)$ for every firing $l$; (C6) states
+directly that labels without self-loops cannot co-fire (C7 is then skipped among them).
+
+\paragraph{Results (43 Autoscale tasks, \texttt{-shr}, algorithm A, goal-chains v2, 300 s).}
+\begin{center}
+{\small
+\begin{tabular}{@{}lrrrrr@{}}
+  \toprule
+  variant & solved & PAR-2 & time & conflicts & horizon \\
+  \midrule
+  plain $\sigma$ & 43 & 26.9 & 1.00 & 1.00 & $=$ \\
+  fixed groups of 4 & 37 & 117.4 & 0.75 & 0.89 & $+21\%$ \\
+  greedy competing groups & 41 & 52.3 & 0.86 & 0.91 & $=$ (one $+1$) \\
+  per-factor exact, matrix encoding & 41 & 57.8 & 0.98 & 1.28 & $=$ \\
+  per-factor exact, compact, cap 64 & 41 & 49.9 & 0.70 & 0.59 & $=$ \\
+  \textbf{per-factor exact, compact + (C6), cap 64} & \textbf{43} & \textbf{25.2} & \textbf{0.72} & \textbf{0.59} & $=$ \\
+  \bottomrule
+\end{tabular}}
+\end{center}
+Time and conflicts: geometric means over the tasks all variants solve. Reordering the labels to form
+groups (\texttt{group\_order}) changes horizons and was worse in every relaxation tried.
+
+\paragraph{Feeds-DAG reordering (\texttt{commute\_order}).} Label $a$ \emph{feeds} $b$ if in some
+factor $f$
+\[
+  \tgt_f(a) \cap \app_f(b) \neq \emptyset \quad\text{or}\quad \SL_f(a) \cap \src_f(b) \neq \emptyset .
+\]
+If $a \prec b$ and $a$ does not feed $b$, then $a$ and $b$ fire in one step only as self-loops at a
+common state in every shared factor, so they commute. Hence every order $\prec'$ that keeps all
+pairs $a \prec b$ with $a$ feeding $b$ admits every one-step label sequence of $\prec$: horizons do
+not increase. Modes: 1 ASAP layering of the DAG of forward feeding pairs (level $=1+$ max level of
+its feeders), 2 ALAP layering, 3 left/right shift: a label moves before the earliest label it feeds
+among those it may pass (no passed label feeds it), symmetrically to the right; every move turns a
+backward feeding pair into a forward one, to a fixpoint (deterministic work cap).
+
+Results (43 tasks, as above, deterministic goal-chains order): plain $\sigma$ $\Sigma h = 236$;
+modes 1/2 $\Sigma h = 230$ (agricola $12\to11$, scanalyzer $3\to2$, storage $2\to1$,
+freecell $5\to4$, driverlog $6\to5$), never higher. ALAP with exact blocks: time 0.75, conflicts 0.51
+relative to plain $\sigma$ (exact blocks alone: 0.81, 0.68).
+
+Full Autoscale (386 tasks, all plans valid, no horizon higher): mode 3 with exact blocks solves
+331 vs 328 (A, \texttt{-shr}), 335 vs 330 (A, h2+\texttt{mtau}+union), 343 vs 342 (C, \texttt{-shr});
+under C, 2 parallel calls keep the coverage with 0.81--0.92 search time, 1 call loses 5--7 tasks.
+
+\paragraph{Lossy blocks (\texttt{group\_relax}).} Ignoring the $\SL \cap \src$ condition
+(airport $1 \to 10$) or keeping only goal-chain pairs as block separators (agricola $12 \to 52$)
+raises horizons sharply. The feeding pairs that plans use are few (about 4k of 200k adjacent
+relations on 43 tasks), but neither goal-chain nor relaxed-plan supporter pairs predict them (about
+30\% recall).
+
+\section{Alternating label orders}
+
+\texttt{full\_transitions\_sat(alternate\_label\_orders=true)}: TAV/TAC (R$^2\exists$; transition variables and r2 chains along the label order). Odd time steps
+use $\prec$, even ones its reverse. Horizon $2m$ equals Symbolic Pattern Planning with the pattern
+$(\prec;\prec^{-1})$ concatenated $m$ times.
+
+\section{Status}
+
+{\small
+\begin{tabular}{@{}p{0.3\textwidth}p{0.36\textwidth}p{0.28\textwidth}@{}}
+  \toprule
+  encoding & branch / commit & validation \\
+  \midrule
+  \texttt{label\_sat(exists\_step)} & \texttt{exists-speedup} 3a5f6ce85, d150957df, 3fbd3565f &
+    horizons $=$ \texttt{exists\_sat}, VAL \\
+  \texttt{sigma\_sat} & \texttt{fts-transformations} 7acf888bf (+ uncommitted options) &
+    horizons $=$ TAV, \texttt{bdd\_sat} full; VAL \\
+  \texttt{sigma\_sat(one\_move, strict)} & \texttt{fts-transformations} 36cbb81a1 & horizons $=$ \texttt{label\_sat}
+    $\exists$; VAL \\
+  \texttt{sigma\_sat(group\_size)} & \texttt{exists-speedup} 92a8a4221 & VAL; horizon $\ge$ \texttt{group\_size=1} \\
+  \texttt{sigma\_sat(factor\_groups, group\_compact)} & \texttt{exists-speedup} f1013138e & VAL; horizons $=$ plain \\
+  \texttt{alternate\_label\_orders} & \texttt{fts-transformations} 688d5ba68 & VAL \\
+  \bottomrule
+\end{tabular}}
+
+\end{document}
