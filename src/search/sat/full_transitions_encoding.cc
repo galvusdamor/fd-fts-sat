@@ -354,7 +354,7 @@ void FullTransitionsEncoding::encode_r2_chains(int ts, int time){
 
         auxVars[states] = sat->compute_chains(opposers, requirers, achievers, eventVars, 0);//No guard variable (0 as the last parameter)
 
-        if(useSelfloopOptimisation){
+        if(useSelfloopOptimisation && auxVars[states].size() > 0){
             vector<int> activatingFirstAuxVarIfNoSupporters;
 
             for (auto& [transition, var] : allTimesTransitionVars.back()[ts][getRelevantLabel(ts, 0)]){//Only looking at the first relevant label
@@ -364,7 +364,7 @@ void FullTransitionsEncoding::encode_r2_chains(int ts, int time){
             }
 
             activatingFirstAuxVarIfNoSupporters.push_back(auxVars[states][0]);
-            sat->impliesOr(-getLabelSATVar(relevantLabels[ts][0], time), activatingFirstAuxVarIfNoSupporters);
+            sat->impliesOr(-getPreviousStateSATVar(ts, states, time), activatingFirstAuxVarIfNoSupporters);
         }
 
     }
