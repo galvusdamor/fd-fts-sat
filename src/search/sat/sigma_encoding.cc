@@ -47,6 +47,19 @@ SigmaEncodingFactory::SigmaEncodingFactory(const options::Options &opts)
       reportOrder(opts.get<bool>("report_order")),
       groupRelax(opts.get<int>("group_relax")),
       staticOptions(opts) {
+    clauseOptions.style = opts.get<int>("sigma_style");
+    clauseOptions.rows = opts.get<bool>("use_empty_rows");
+    clauseOptions.cols = opts.get<bool>("use_empty_cols");
+    clauseOptions.pillars = opts.get<bool>("use_empty_pillars");
+    clauseOptions.onesLast = opts.get<bool>("use_ones_in_last_dimension");
+    clauseOptions.positiveOne = opts.get<bool>("use_positive_one");
+    clauseOptions.threshold = opts.get<int>("one_encoding_threshold");
+    clauseOptions.thresholdPercent = opts.get<int>("one_encoding_threshold_percent");
+    clauseOptions.layerAlo = opts.get<bool>("layer_alo");
+    clauseOptions.layerAmo = opts.get<bool>("layer_amo");
+    clauseOptions.shareLast = opts.get<bool>("share_last_layer");
+    clauseOptions.frameReverse = opts.get<bool>("frame_reverse");
+    clauseOptions.justification = opts.get<bool>("justification");
     if (strict && !oneMove) {
         cerr << "sigma_sat: strict needs one_move" << endl;
         utils::exit_with(utils::ExitCode::INPUT_ERROR);
@@ -347,6 +360,7 @@ void SigmaEncodingFactory::initialize() {
     d->groupMatrix = groupMatrix;
     d->groupCompact = groupCompact;
     d->groupPureAmo = groupPureAmo;
+    d->clauses = clauseOptions;
     d->groupOf.assign(fts->get_num_labels(), 0);
     if (!competingGroups) {
         for (size_t k = 0; k < d->order.size(); k++)
@@ -569,8 +583,9 @@ void SigmaEncoding::encode_transition(const vector<vector<int>> &previousStateVa
             }
             moved = m;
         };
+        // segments: a single label or a group of this factor's labels forming one micro-step
+        vector<pair<size_t, size_t>> segments;
         for (size_t i = 0; i < labels.size();) {
-            // the labels of this factor in the same group
             size_t j = i + 1;
             if (!data->factorBlock.empty()) {
                 const vector<int> &blk = data->factorBlock[ts];
@@ -580,14 +595,37 @@ void SigmaEncoding::encode_transition(const vector<vector<int>> &previousStateVa
                 while (j < labels.size() && data->groupOf[labels[j].label] == data->groupOf[labels[i].label])
                     j++;
             }
-            // preconditions (all labels: applicable at the group's start state)
+            segments.emplace_back(i, j);
+            i = j;
+        }
+        // share_last_layer: the last segment changing a state creates no new variable for it but
+        // uses the state variable of time t+1
+        vector<int> lastSegment(cur.size(), -1);
+        if (data->clauses.shareLast)
+            for (size_t g = 0; g < segments.size(); g++)
+                for (size_t k = segments[g].first; k < segments[g].second; k++)
+                    for (int x : labels[k].changed)
+                        lastSegment[x] = g;
+        size_t segment = 0;
+        freshStateVar = [&](int x) {
+            if (lastSegment[x] == (int) segment)
+                return nextStateVars[ts][x];
+            return sat->new_variable();
+        };
+        curNextStateVars = &nextStateVars;
+        const bool projection = data->clauses.style == 1;
+        for (segment = 0; segment < segments.size(); segment++) {
+            const size_t i = segments[segment].first, j = segments[segment].second;
+            // preconditions (all labels: applicable at the group's start state; PROJECTION encodes
+            // a single label's precondition itself)
             for (size_t k = i; k < j; k++) {
                 const SigmaLabelData &ld = labels[k];
                 const int l = labelVars[ld.label];
                 vector<int> pre;
                 for (int x : ld.applicable)
                     pre.push_back(cur[x]);
-                sat->impliesOr(l, pre);
+                if (!(projection && j == i + 1))
+                    sat->impliesOr(l, pre);
                 if (data->strict) {
                     vector<int> start;
                     for (int x : ld.applicable)
@@ -595,7 +633,9 @@ void SigmaEncoding::encode_transition(const vector<vector<int>> &previousStateVa
                     sat->impliesOr(l, start);
                 }
             }
-            if (j == i + 1) {
+            if (j == i + 1 && projection) {
+                encode_single_projection(ts, labels[i], labelVars, cur, fromTime, updates[ts], oneMoveClauses);
+            } else if (j == i + 1) {
                 encode_single(ts, labels[i], labelVars, cur, fromTime, updates[ts], oneMoveClauses);
             } else if (data->groupCompact) {
                 encode_group_compact(ts, labels, i, j, labelVars, cur, fromTime, updates[ts], oneMoveClauses);
@@ -604,7 +644,6 @@ void SigmaEncoding::encode_transition(const vector<vector<int>> &previousStateVa
             } else {
                 encode_group(ts, labels, i, j, labelVars, cur, fromTime, updates[ts], oneMoveClauses);
             }
-            i = j;
         }
         // the last sigma is the state at the end of the step
         for (size_t s = 0; s < cur.size(); s++) {
@@ -630,7 +669,7 @@ void SigmaEncoding::encode_single(int ts, const SigmaLabelData &ld, const vector
     vector<int> next = cur;
     SigmaUpdate upd{ld.label, {}, 0, -1};
     for (int s : ld.changed) {
-        next[s] = sat->new_variable();
+        next[s] = freshStateVar(s);
         DEBUG(sat->registerVariable(next[s], "sigma_" + to_string(ts) + "_" + to_string(ld.label) +
                                     "_" + to_string(s) + "@" + to_string(fromTime)));
         upd.vars.emplace_back(s, next[s]);
@@ -654,6 +693,187 @@ void SigmaEncoding::encode_single(int ts, const SigmaLabelData &ld, const vector
             from.push_back(cur[x]);
         sat->andImpliesOr(vector<int>{l, next[s]}, from);
     }
+    layer_one_hot(ts, next, ld.changed);
+    if (data->oneMove)
+        oneMove(next, ld.changed, ld.label);
+    updates.push_back(move(upd));
+    cur = move(next);
+}
+
+bool SigmaEncoding::below_threshold(size_t ones, size_t numStates) const {
+    if ((int) ones <= data->clauses.threshold) return true;
+    return (int) ones * 100 <= (int) numStates * data->clauses.thresholdPercent;
+}
+
+/*
+  layer_alo / layer_amo: exactly-one on a new layer. The unchanged states share their variables
+  with the previous layer, so at-most-one only needs the pairs involving a changed state; a layer
+  that consists of the t+1 state variables already has exactly-one.
+*/
+void SigmaEncoding::layer_one_hot(int ts, const vector<int> &next, const vector<int> &changed) {
+    if (changed.empty()) return;
+    const vector<int> &stateVars = (*curNextStateVars)[ts];
+    auto isStateVar = [&](size_t s) { return next[s] == stateVars[s]; };
+    if (data->clauses.layerAlo) {
+        bool all = true;
+        for (size_t s = 0; s < next.size(); s++) all = all && isStateVar(s);
+        if (!all) sat->atLeastOne(next);
+    }
+    if (data->clauses.layerAmo) {
+        vector<char> isChanged(next.size(), 0);
+        for (int m : changed) isChanged[m] = 1;
+        for (int m : changed)
+            for (size_t s = 0; s < next.size(); s++) {
+                if ((int) s == m || (isChanged[s] && (int) s < m)) continue;
+                if (isStateVar(m) && isStateVar(s)) continue;
+                sat->andImpliesOr(vector<int>{next[m], next[s]}, vector<int>{});
+            }
+    }
+}
+
+/*
+  PROJECTION style (the micro-step encoding of layers_in_layers.tex, with label_sat's options): the
+  micro-step of label l relates layer p to layer n through the matrix T(l) of (source, target)
+  pairs; a skipped label keeps the state. With S the factor's states, M the states l changes
+  (new variables), n_s = p_s for s outside M:
+    frame        -l & p_s -> n_s                                    s in M
+    rows         primal: p_s -> -l for s not applicable;  dual: l -> OR p_app
+    cols         primal: l -> -n_j for j in M not a target;  dual: l -> OR n_targets
+    pillars      primal: p_i -> -n_j for j in M, j != i, (i, j) not in T(l);
+                 dual: p_i -> OR n_{T(l,i) + i};  n_j -> OR p_{T^-1(l,j) + j}
+    residual     primal: l & p_i -> -n_j for the remaining j;  dual: l & p_i -> OR n_{T(l,i)}
+  A dual form is used if the number of ones (without the "stay" entry) is at most
+  one_encoding_threshold (or the percentage) and use_positive_one / use_ones_in_last_dimension is
+  set; the dual residual needs layer_amo. Without layer_alo the residual's dual form is added
+  for every applicable source (it is what forces a target); without layer_amo the reverse frame
+  and pairwise exclusion of nondeterministic targets are added. Pairs of unchanged states are
+  covered by the previous layer's exactly-one.
+*/
+void SigmaEncoding::encode_single_projection(int ts, const SigmaLabelData &ld, const vector<int> &labelVars,
+                                             vector<int> &cur, int fromTime, vector<SigmaUpdate> &updates,
+                                             const OneMove &oneMove) {
+    (void) fromTime;
+    const SigmaClauses &c = data->clauses;
+    const int N = cur.size();
+    const int l = labelVars[ld.label];
+    vector<char> inApp(N, 0), inM(N, 0), inTgt(N, 0);
+    vector<vector<int>> T(N), pred(N);
+    for (const auto &[x, ys] : ld.targets) {
+        inApp[x] = 1;
+        T[x] = ys;
+        for (int y : ys) { inTgt[y] = 1; pred[y].push_back(x); }
+    }
+    for (int m : ld.changed) inM[m] = 1;
+    vector<char> srcCovered(N, 0), tgtCovered(N, 0);
+    // rows: which sources l can fire in (always encoded when l only self-loops here)
+    if (c.rows || ld.changed.empty()) {
+        if (c.positiveOne && below_threshold(ld.applicable.size(), N)) {
+            vector<int> ones;
+            for (int x : ld.applicable) ones.push_back(cur[x]);
+            sat->impliesOr(l, ones);
+        } else {
+            for (int x = 0; x < N; x++)
+                if (!inApp[x]) sat->andImpliesOr(vector<int>{cur[x], l}, vector<int>{});
+        }
+        for (int x = 0; x < N; x++)
+            if (!inApp[x]) srcCovered[x] = 1;
+    }
+    if (ld.changed.empty())
+        return;
+    vector<int> next = cur;
+    SigmaUpdate upd{ld.label, {}, 0, -1};
+    for (int m : ld.changed) {
+        next[m] = freshStateVar(m);
+        DEBUG(sat->registerVariable(next[m], "sigma_" + to_string(ts) + "_" + to_string(ld.label) +
+                                    "_" + to_string(m) + "@" + to_string(fromTime)));
+        upd.vars.emplace_back(m, next[m]);
+        sat->andImpliesOr(vector<int>{-l, cur[m]}, vector<int>{next[m]});
+        if (c.frameReverse || !c.layerAmo)
+            sat->andImpliesOr(vector<int>{-l, next[m]}, vector<int>{cur[m]});
+    }
+    // cols: which states l can end in
+    if (c.cols) {
+        vector<int> tg;
+        for (int j = 0; j < N; j++) if (inTgt[j]) tg.push_back(j);
+        if (c.positiveOne && below_threshold(tg.size(), N)) {
+            vector<int> ones;
+            for (int j : tg) ones.push_back(next[j]);
+            sat->impliesOr(l, ones);
+            // a list of possible end states excludes the others only with at-most-one on the layer
+            if (c.layerAmo)
+                for (int j = 0; j < N; j++) if (!inTgt[j]) tgtCovered[j] = 1;
+        } else {
+            for (int j : ld.changed)
+                if (!inTgt[j]) {
+                    sat->andImpliesOr(vector<int>{l, next[j]}, vector<int>{});
+                    tgtCovered[j] = 1;
+                }
+        }
+    }
+    // pillars: (source, target) pairs no execution of the micro-step connects
+    vector<set<int>> stCovered(N);
+    if (c.pillars) {
+        if (c.positiveOne) {
+            for (int i = 0; i < N; i++) {
+                set<int> R(T[i].begin(), T[i].end());
+                R.insert(i);
+                if (!below_threshold(R.size() - 1, N)) continue;
+                if (R.size() == 1 && next[i] == cur[i]) continue;   // p_i -> p_i
+                vector<int> ones;
+                for (int j : R) ones.push_back(next[j]);
+                sat->impliesOr(cur[i], ones);
+                if (c.layerAmo)
+                    for (int j : ld.changed) if (!R.count(j)) stCovered[i].insert(j);
+            }
+            for (int j : ld.changed) {
+                set<int> P(pred[j].begin(), pred[j].end());
+                P.insert(j);
+                if (!below_threshold(P.size() - 1, N)) continue;
+                vector<int> ones;
+                for (int i : P) ones.push_back(cur[i]);
+                sat->impliesOr(next[j], ones);
+                for (int i = 0; i < N; i++) if (!P.count(i)) stCovered[i].insert(j);
+            }
+        }
+        for (int i = 0; i < N; i++)
+            for (int j : ld.changed) {
+                if (j == i || stCovered[i].count(j)) continue;
+                if (binary_search(T[i].begin(), T[i].end(), j)) continue;
+                sat->andImpliesOr(vector<int>{cur[i], next[j]}, vector<int>{});
+                stCovered[i].insert(j);
+            }
+    }
+    // residual: l fired in source i
+    for (int i = 0; i < N; i++) {
+        if (srcCovered[i]) continue;
+        vector<int> forbid;
+        for (int j = 0; j < N; j++) {
+            if (binary_search(T[i].begin(), T[i].end(), j)) continue;
+            if (!inM[j] && j != i) continue;      // two unchanged states: previous layer's exactly-one
+            if (tgtCovered[j] || stCovered[i].count(j)) continue;
+            forbid.push_back(j);
+        }
+        const bool dual = c.layerAmo && c.onesLast && below_threshold(T[i].size(), N);
+        if ((dual && !forbid.empty()) || (!c.layerAlo && inApp[i])) {
+            vector<int> ones;
+            for (int y : T[i]) ones.push_back(next[y]);
+            sat->andImpliesOr(vector<int>{l, cur[i]}, ones);
+        }
+        if (!dual)
+            for (int j : forbid)
+                sat->andImpliesOr(vector<int>{l, cur[i], next[j]}, vector<int>{});
+        if (!c.layerAmo)
+            for (size_t a = 0; a < T[i].size(); a++)
+                for (size_t b = a + 1; b < T[i].size(); b++)
+                    sat->andImpliesOr(vector<int>{l, cur[i], next[T[i][a]], next[T[i][b]]}, vector<int>{});
+    }
+    if (c.justification)
+        for (const auto &[y, xs] : ld.predecessors) {
+            vector<int> from;
+            for (int x : xs) from.push_back(cur[x]);
+            sat->andImpliesOr(vector<int>{l, next[y]}, from);
+        }
+    layer_one_hot(ts, next, ld.changed);
     if (data->oneMove)
         oneMove(next, ld.changed, ld.label);
     updates.push_back(move(upd));
@@ -680,7 +900,7 @@ void SigmaEncoding::encode_group(int ts, const vector<SigmaLabelData> &labels, s
     vector<int> next = cur;
     vector<pair<int, int>> vars;
     for (int s : changed) {
-        next[s] = sat->new_variable();
+        next[s] = freshStateVar(s);
         DEBUG(sat->registerVariable(next[s], "sigmaG_" + to_string(ts) + "_" + to_string(labels[begin].label) +
                                     "_" + to_string(s) + "@" + to_string(fromTime)));
         vars.emplace_back(s, next[s]);
@@ -788,7 +1008,7 @@ void SigmaEncoding::encode_group_compact(int ts, const vector<SigmaLabelData> &l
     vector<int> next = cur;
     vector<pair<int, int>> vars;
     for (int s : changed) {
-        next[s] = sat->new_variable();
+        next[s] = freshStateVar(s);
         vars.emplace_back(s, next[s]);
     }
     map<int, vector<int>> leaving, entering;            // state -> label variables
@@ -872,7 +1092,7 @@ void SigmaEncoding::encode_group_matrix(int ts, const vector<SigmaLabelData> &la
     vector<int> next = cur;
     vector<pair<int, int>> vars;
     for (int s : changed) {
-        next[s] = sat->new_variable();
+        next[s] = freshStateVar(s);
         DEBUG(sat->registerVariable(next[s], "sigmaM_" + to_string(ts) + "_" + to_string(labels[begin].label) +
                                     "_" + to_string(s) + "@" + to_string(fromTime)));
         vars.emplace_back(s, next[s]);
@@ -1070,6 +1290,35 @@ static shared_ptr<SATEncodingFactory> _parse(options::OptionParser &parser) {
                             "instead of mover variables", "true");
     parser.add_option<bool>("force_at_least_one_action",
                             "force that every time step contains at least one action", "false");
+    parser.add_option<int>("sigma_style",
+                           "clauses of a single-label micro-step: 0 SUPPORT (effect / justification "
+                           "clauses), 1 PROJECTION (label_sat's primal/dual projection encoding of the "
+                           "micro-step matrix; see sigma_encoding.h)", "0");
+    parser.add_option<bool>("use_empty_rows", "PROJECTION: label-source projection", "true");
+    parser.add_option<bool>("use_empty_cols", "PROJECTION: label-target projection", "true");
+    parser.add_option<bool>("use_empty_pillars",
+                            "PROJECTION: source-target projection (unguarded by the label)", "true");
+    parser.add_option<bool>("use_ones_in_last_dimension",
+                            "PROJECTION: residual (label, source) -> target in dual form if the targets "
+                            "are below the threshold (needs layer_amo)", "true");
+    parser.add_option<bool>("use_positive_one",
+                            "PROJECTION: projections in dual form if the ones are below the threshold",
+                            "true");
+    parser.add_option<int>("one_encoding_threshold",
+                           "PROJECTION: dual form if the number of ones is at most this", "1");
+    parser.add_option<int>("one_encoding_threshold_percent",
+                           "PROJECTION: dual form if the ones are at most this percentage of the states", "0");
+    parser.add_option<bool>("layer_alo", "at least one state per intermediate layer", "false");
+    parser.add_option<bool>("layer_amo",
+                            "at most one state per intermediate layer (pairs involving a new variable)",
+                            "false");
+    parser.add_option<bool>("share_last_layer",
+                            "the last change of a state in a step uses the state variable of t+1 "
+                            "instead of a new variable and equivalence clauses", "true");
+    parser.add_option<bool>("frame_reverse",
+                            "PROJECTION: also -l & n_s -> p_s (always added without layer_amo)", "false");
+    parser.add_option<bool>("justification",
+                            "PROJECTION: also l & n_y -> OR p_x over the sources x of y", "false");
     static_constraints::add_options(parser);
     options::Options opts = parser.parse();
     if (parser.dry_run())

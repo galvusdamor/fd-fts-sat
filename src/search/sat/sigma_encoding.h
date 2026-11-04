@@ -72,7 +72,29 @@ struct SigmaUpdate {
     int group;                                        // first position of the label's group (groups only)
 };
 
+/*
+  Clause style of a single-label micro-step (see encode_single / encode_single_projection).
+  SUPPORT (default): precondition, both frame directions, effect l & p_x -> OR n_targets,
+  justification l & n_y -> OR p_sources, at most one target per nondeterministic source.
+  PROJECTION: label_sat's projection encoding applied to the micro-step's (source, target, label)
+  matrix (Sa 2026): rows (label-source), cols (label-target), pillars (source-target, unguarded by
+  the label, as a skipped label leaves the state), and the residual (label, source) -> target;
+  each either primal (forbid the zeros) or dual (list the ones) when the ones are below the
+  threshold. layer_alo / layer_amo: exactly-one on every intermediate layer (pairs involving a new
+  variable).
+*/
+struct SigmaClauses {
+    int style = 0;                  // 0 SUPPORT, 1 PROJECTION
+    bool rows = true, cols = true, pillars = true, onesLast = true, positiveOne = true;
+    int threshold = 1, thresholdPercent = 0;
+    bool layerAlo = false, layerAmo = false;
+    bool shareLast = true;          // the last change of a state in a step is the t+1 variable
+    bool frameReverse = false;      // PROJECTION: also -l & n_s -> p_s
+    bool justification = false;     // PROJECTION: also l & n_y -> OR p_sources
+};
+
 struct SigmaData {
+    SigmaClauses clauses;
     bool groupMatrix = true;
     bool groupCompact = false;
     bool groupPureAmo = true;
@@ -93,6 +115,15 @@ class SigmaEncoding : public CommonEncoding {
                        std::vector<int> &cur, int fromTime, std::vector<SigmaUpdate> &updates,
                        const OneMove &oneMove);
     void amoLadder(const std::vector<int> &xs);
+    void encode_single_projection(int ts, const SigmaLabelData &ld, const std::vector<int> &labelVars,
+                                  std::vector<int> &cur, int fromTime, std::vector<SigmaUpdate> &updates,
+                                  const OneMove &oneMove);
+    void layer_one_hot(int ts, const std::vector<int> &next, const std::vector<int> &changed);
+    bool below_threshold(size_t ones, size_t numStates) const;
+    // the variable for state s of the layer being created: a new one, or the t+1 state variable
+    // if this is the step's last change of s (share_last_layer)
+    std::function<int(int)> freshStateVar;
+    const std::vector<std::vector<int>> *curNextStateVars = nullptr;
     void encode_group_compact(int ts, const std::vector<SigmaLabelData> &labels, size_t begin, size_t end,
                               const std::vector<int> &labelVars, std::vector<int> &cur, int fromTime,
                               std::vector<SigmaUpdate> &updates, const OneMove &oneMove);
@@ -140,6 +171,7 @@ class SigmaEncodingFactory : public SATEncodingFactory {
     void commute_labels(SigmaData &d) const;
     const int groupMax;
     const int commuteOrder;
+    SigmaClauses clauseOptions;
     const bool reportOrder;
     const int groupRelax;
     const static_constraints::Options staticOptions;
