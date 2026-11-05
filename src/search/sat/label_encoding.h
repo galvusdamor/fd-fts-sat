@@ -18,6 +18,17 @@ protected:
 	//// persistent data structures
 	std::map<int,std::vector<int>> allTimesLabelVars;
 
+	std::vector<int> labelOrder;
+	std::vector<std::vector<int>> relevantLabels; // populated by FullTransitionsEncoding ctor
+
+	int  getOrderedLabel(int index) const;
+	int  getRelevantLabel(int ts, int index) const;
+	int  getNumRelevantLabels(int ts) const;
+	int  getLabelSATVar(int label, int time) const;
+	bool isIrrelevantLabel(int ts, int label) const;
+	bool containsSelfLoops(int ts, int label) const;
+	bool isAlwaysSelfLoop(int ts, int label) const;
+
 	//// functions generating data structures
     std::vector<int> generateLabelVars() const;
 	std::vector<std::vector<std::vector<int>>> generateLabelGroupVars(const std::vector<int> &labelVars) const;

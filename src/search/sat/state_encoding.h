@@ -14,6 +14,9 @@ protected:
 	//// functions generating data structures
     std::vector<std::vector<int>> generateStateVars() const;
 
+	int getPreviousStateSATVar(int ts, int state, int fromTime) const;
+	int getNextStateSATVar(int ts, int state, int toTime) const;
+
 public:
     explicit StateEncoding(
 		std::shared_ptr<sat_capsule> capsule,

@@ -127,4 +127,12 @@ void StateEncoding::encodeGoal(int toTime, bool retractable){
 	}
 }
 
+int StateEncoding::getPreviousStateSATVar(int ts, int state, int fromTime) const{
+	return allTimesStateVars.at(fromTime)[ts][state];
+}
+
+int StateEncoding::getNextStateSATVar(int ts, int state, int toTime) const{
+	return allTimesStateVars.at(toTime)[ts][state];
+}
+
 };

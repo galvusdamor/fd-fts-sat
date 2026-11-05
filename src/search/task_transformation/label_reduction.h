@@ -43,11 +43,16 @@ class LabelReduction {
       all_transition_systems_with_fixpoint: keep computing the
       'combinable relation' for labels iteratively for all
       transition systems until no more labels can be reduced.
+
+      no_transition_systems: compute the 'combinable relation'
+      for labels considering all transition systems (passing -1 to
+      compute_combinable_equivalence_relation).
     */
     enum LabelReductionMethod {
         TWO_TRANSITION_SYSTEMS,
         ALL_TRANSITION_SYSTEMS,
-        ALL_TRANSITION_SYSTEMS_WITH_FIXPOINT
+        ALL_TRANSITION_SYSTEMS_WITH_FIXPOINT,
+        ONLY_EQUIVALENT_LABELS
     };
     /*
       Order in which iterations of label reduction considers the set of all
