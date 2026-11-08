@@ -747,9 +747,21 @@ void StepEncoding::encode_group_exists_compact(int ts, const vector<SigmaLabelDa
             sat->andImpliesOr(vector<int>{l, cur[x]}, role);
         }
     }
-    // exactly one end state
+    // exactly one end state. The unchanged states share their variables with the start layer,
+    // which is one-hot: one variable "the factor is in an unchanged state" excludes every changed
+    // end state, and the changed end states are at most one among themselves
     sat->atLeastOne(next);
-    amoLadder(next);
+    if (changed.size() < next.size()) {
+        const int unchanged = sat->new_variable();
+        for (size_t x = 0; x < next.size(); x++)
+            if (!changedSet.count(x))
+                sat->implies(cur[x], unchanged);
+        vector<int> ends{unchanged};
+        for (int y : changed) ends.push_back(next[y]);
+        amoLadder(ends);
+    } else {
+        amoLadder(next);
+    }
     // leaving a changed state needs a label with a real transition out of it, entering y from x
     // one with the real transition (x, y)
     for (int x : changed) {
