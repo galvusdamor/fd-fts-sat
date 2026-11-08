@@ -15,6 +15,7 @@
 #include "../task_representation/fts_task.h"
 #include "../task_representation/transition_system.h"
 #include "../task_utils/label_order_finder.h"
+#include "../task_utils/label_group_finder.h"
 #include "../utils/system.h"
 #include "../utils/timer.h"
 
@@ -81,6 +82,8 @@ StepEncodingFactory::StepEncodingFactory(const options::Options &opts, StepPrese
         opt.commuteOrder = opts.get<int>("commute_order");
         opt.reportOrder = opts.get<bool>("report_order");
         opt.groupRelax = opts.get<int>("group_relax");
+        opt.groupExists = opts.get<bool>("group_exists");
+        labelGroupFinder = opts.get<shared_ptr<label_group_finder::LabelGroupFinder>>("label_groups");
         opt.clauses.style = opts.get<int>("sigma_style");
         opt.useEmptyRows = opts.get<bool>("use_empty_rows");
         opt.useEmptyCols = opts.get<bool>("use_empty_cols");
@@ -463,12 +466,25 @@ void StepEncodingFactory::initialize_segments(StepData &sd) {
     d->groupMatrix = opt.groupMatrix;
     d->groupCompact = opt.groupCompact;
     d->groupPureAmo = opt.groupPureAmo;
+    d->groupExists = opt.groupExists;
     d->clauses = opt.clauses;
     d->fullLayers = opt.fullLayers;
     d->groupOf.assign(fts->get_num_labels(), 0);
     if (!opt.competingGroups) {
         for (size_t k = 0; k < d->order.size(); k++)
             d->groupOf[d->order[k]] = k / max(opt.groupSize, 1);
+    }
+    // label_groups: the groups (one micro-step each) and their order come from the group finder
+    if (labelGroupFinder) {
+        vector<vector<int>> groups = labelGroupFinder->find_groups(*fts);
+        if (!groups.empty()) {
+            d->order.clear();
+            for (size_t g = 0; g < groups.size(); g++)
+                for (int l : groups[g]) {
+                    d->order.push_back(l);
+                    d->groupOf[l] = g;
+                }
+        }
     }
     d->factors.resize(fts->get_size());
     size_t changedVars = 0, labelsInFactors = 0, nondet = 0;
@@ -932,6 +948,14 @@ static shared_ptr<SATEncodingFactory> _parse_sigma(options::OptionParser &parser
                            "self-loops at its real source; 2 only a feeding pair that the goal chains "
                            "use (label_order's chain pairs) separates blocks", "0");
     parser.add_option<int>("group_max", "competing_groups: at most this many labels per group", "16");
+    parser.add_option<shared_ptr<label_group_finder::LabelGroupFinder>>("label_groups",
+                           "the micro-step groups and their order (label_groups_fixed, label_groups_exists); "
+                           "label_groups_none(): the grouping options above apply", "label_groups_none()");
+    parser.add_option<bool>("group_exists",
+                            "segments of several labels: exists-step inside (every fired label applicable at "
+                            "the start, at most one mover per factor, the others self-loop at the start or the "
+                            "end; serialisable for exists-safe groups, see label_group_finder.h) instead of "
+                            "forall-step", "false");
     parser.add_option<bool>("group_compact",
                             "groups: compact forall encoding (one-hot end state, effect and frame clauses, "
                             "pairwise exclusion only for labels sharing a real transition)", "false");

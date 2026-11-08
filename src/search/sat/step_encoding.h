@@ -15,6 +15,10 @@ namespace label_order_finder {
 class LabelOrderFinder;
 }
 
+namespace label_group_finder {
+class LabelGroupFinder;
+}
+
 namespace options {
 class Options;
 class OptionParser;
@@ -177,6 +181,7 @@ struct SigmaData {
     bool groupMatrix = true;
     bool groupCompact = false;
     bool groupPureAmo = true;
+    bool groupExists = false;       // multi-label segments: exists-step inside (encode_group)
     std::vector<std::vector<int>> factorBlock;          // factor_groups: per factor, block id per label entry
     std::vector<int> groupOf;                         // label -> micro-step group
     bool oneMove = false;
@@ -231,6 +236,7 @@ struct StepOptions {
 	int commuteOrder = 0;
 	bool reportOrder = false;
 	int groupRelax = 0;
+	bool groupExists = false;
 	SigmaClauses clauses;
 	// layers
 	bool nextStateFromLayers = false;   // t+1 state variables are the last layer (micro_steps_sat)
@@ -329,6 +335,11 @@ class StepEncoding : public CommonEncoding {
 	void layer_one_hot(int ts, const std::vector<int> &next, const std::vector<int> &changed);
 	bool below_threshold(size_t ones, size_t numStates) const;
 	void segments_encode_transition(const std::vector<std::vector<int>> & previousStateVars, const std::vector<std::vector<int>> & nextStateVars, int fromTime);
+	void encode_group_exists_compact(int ts, const std::vector<SigmaLabelData> &labels, size_t begin, size_t end,
+	                                 const std::vector<int> &layer, const std::vector<int> &labelVars,
+	                                 std::vector<int> &cur, int fromTime, std::vector<SigmaUpdate> &updates);
+	std::map<std::pair<int, int>, int> existsMover;     // (factor, group start) -> mover (compact groups)
+	void serialise_exists_groups(std::vector<int> &selectedLabels, const std::vector<int> &currentLastState, int labelTimestep);
 	std::vector<std::vector<int>> segments_extract_intermediate_states(std::vector<int> & selectedLabels, std::vector<int> & currentLastState, std::vector<int> & nextState, int labelTimestep);
 
 protected:
@@ -350,6 +361,7 @@ public:
 class StepEncodingFactory : public SATEncodingFactory {
 	StepOptions opt;
 	std::shared_ptr<label_order_finder::LabelOrderFinder> labelOrderFinder;
+	std::shared_ptr<label_group_finder::LabelGroupFinder> labelGroupFinder;   // sigma_sat
 	std::unique_ptr<static_constraints::Options> staticOptions;   // sigma_sat only
 	std::shared_ptr<const static_constraints::StaticConstraints> staticConstraints;
 	std::shared_ptr<const StepData> data;

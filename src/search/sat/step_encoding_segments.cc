@@ -10,6 +10,7 @@
 
 #include "../task_representation/fts_task.h"
 #include "../task_representation/transition_system.h"
+#include "../utils/system.h"
 
 #include <algorithm>
 #include <iostream>
@@ -145,6 +146,10 @@ vector<int> StepEncoding::encode_factor_segments(int ts, vector<int> cur,
             encode_single_projection(ts, labels[i], layer, labelVars, cur, fromTime, updates[ts], oneMoveClauses);
         } else if (j == i + 1) {
             encode_single(ts, labels[i], layer, labelVars, cur, fromTime, updates[ts], oneMoveClauses);
+        } else if (sigma.groupExists && sigma.groupCompact) {
+            encode_group_exists_compact(ts, labels, i, j, layer, labelVars, cur, fromTime, updates[ts]);
+        } else if (sigma.groupExists) {
+            encode_group(ts, labels, i, j, layer, labelVars, cur, fromTime, updates[ts], oneMoveClauses);
         } else if (sigma.groupCompact) {
             encode_group_compact(ts, labels, i, j, layer, labelVars, cur, fromTime, updates[ts], oneMoveClauses);
         } else if (sigma.groupMatrix) {
@@ -414,8 +419,8 @@ void StepEncoding::encode_group(int ts, const vector<SigmaLabelData> &labels, si
             if (binary_search(ys.begin(), ys.end(), x))
                 selfLoops.insert(x);
         if (ld.changed.empty()) {
-            // only self-loops: also at the end state
-            if (!changed.empty()) {
+            // only self-loops: also at the end state (forall; exists: it runs before the mover)
+            if (!changed.empty() && !sigma.groupExists) {
                 vector<int> post;
                 for (int x : selfLoops)
                     post.push_back(next[x]);
@@ -428,27 +433,50 @@ void StepEncoding::encode_group(int ts, const vector<SigmaLabelData> &labels, si
                                     to_string(fromTime)));
         movers.push_back(mv);
         sat->implies(mv, l);
-        // a firing label without a self-loop at the start or the end state is the mover
-        for (int x : ld.applicable)
-            if (!selfLoops.count(x))
-                sat->andImpliesOr(vector<int>{l, cur[x]}, vector<int>{mv});
-        for (int y : changed)
-            if (!selfLoops.count(y))
-                sat->andImpliesOr(vector<int>{l, next[y]}, vector<int>{mv});
-        // the mover follows its transitions
+        if (sigma.groupExists) {
+            // exists: a firing label that self-loops neither at the start nor at the end state is
+            // the mover (end states other than the changed ones only arise as "no move")
+            for (int x : ld.applicable) {
+                if (selfLoops.count(x)) continue;
+                for (int y : changed)
+                    if (!selfLoops.count(y))
+                        sat->andImpliesOr(vector<int>{l, cur[x], next[y]}, vector<int>{mv});
+                if (!changedSet.count(x))
+                    sat->andImpliesOr(vector<int>{l, cur[x]}, vector<int>{mv});
+            }
+        } else {
+            // a firing label without a self-loop at the start or the end state is the mover
+            for (int x : ld.applicable)
+                if (!selfLoops.count(x))
+                    sat->andImpliesOr(vector<int>{l, cur[x]}, vector<int>{mv});
+            for (int y : changed)
+                if (!selfLoops.count(y))
+                    sat->andImpliesOr(vector<int>{l, next[y]}, vector<int>{mv});
+        }
+        // the mover follows its transitions (exists: a real one -- a label that only self-loops is
+        // no mover, which removes the choice of a non-moving mover)
+        const bool real = sigma.groupExists;
         for (const auto &[x, ys] : ld.targets) {
             vector<int> eff;
             for (int y : ys)
-                eff.push_back(next[y]);
+                if (!real || y != x)
+                    eff.push_back(next[y]);
             sat->andImpliesOr(vector<int>{mv, cur[x]}, eff);
             for (size_t a = 0; a < ys.size(); a++)
                 for (size_t b = a + 1; b < ys.size(); b++)
                     sat->andImpliesOr(vector<int>{mv, cur[x], next[ys[a]], next[ys[b]]}, vector<int>{});
         }
+        if (real) {
+            // not applicable: no move from there
+            set<int> app(ld.applicable.begin(), ld.applicable.end());
+            for (int x : changed)
+                if (!app.count(x))
+                    sat->andImpliesOr(vector<int>{mv, cur[x]}, vector<int>{});
+        }
         for (int y : changed) {
             vector<int> from;
             for (const auto &[x, ys] : ld.targets)
-                if (binary_search(ys.begin(), ys.end(), y))
+                if (binary_search(ys.begin(), ys.end(), y) && (!real || x != y))
                     from.push_back(cur[x]);
             sat->andImpliesOr(vector<int>{mv, next[y]}, from);
         }
@@ -665,10 +693,194 @@ void StepEncoding::encode_group_matrix(int ts, const vector<SigmaLabelData> &lab
     cur = move(next);
 }
 
+
+/*
+  Compact exists-step group (group_exists with group_compact): start layer p, end layer n
+  (exactly one end state). A fired label l at a start state x where it does not self-loop either
+  moves the factor (n is one of its real targets from x) or runs after the mover, self-looping at
+  the end: l & p_x -> OR n_{T_real(l,x) + SL(l)}. A label that self-loops at x runs before the
+  mover and needs no clause (its precondition is checked at the start). A change x -> y needs a
+  fired label with the real transition (x, y); a fired label that self-loops neither at x nor at y
+  while x -> y happens must be the mover, so at most one such label per (x, y); labels without any
+  self-loop in the factor always move, so at most one of them fires. Which label is the mover is
+  decided in plan extraction (serialise_exists_groups), consistently with the serialisation.
+*/
+void StepEncoding::encode_group_exists_compact(int ts, const vector<SigmaLabelData> &labels, size_t begin, size_t end,
+                                               const vector<int> &layer, const vector<int> &labelVars,
+                                               vector<int> &cur, int fromTime, vector<SigmaUpdate> &updates) {
+    (void) ts; (void) fromTime;   // debug variable names only
+    set<int> changedSet;
+    for (size_t k = begin; k < end; k++)
+        changedSet.insert(labels[k].changed.begin(), labels[k].changed.end());
+    vector<int> changed(changedSet.begin(), changedSet.end());
+    vector<int> next = layer;
+    vector<pair<int, int>> vars;
+    for (int s : changed)
+        vars.emplace_back(s, next[s]);
+    map<pair<int, int>, vector<int>> realBy, forced;    // (x, y) -> label variables
+    map<int, vector<int>> leaving;                      // x -> labels with a real transition out of x
+    set<int> pureMovers;
+    for (size_t k = begin; k < end; k++) {
+        const SigmaLabelData &ld = labels[k];
+        const int l = labelVars[ld.label];
+        updates.push_back(SigmaUpdate{ld.label, vars, -2, (int) begin});
+        if (ld.changed.empty())
+            continue;
+        set<int> selfLoops;
+        for (const auto &[x, ys] : ld.targets)
+            if (binary_search(ys.begin(), ys.end(), x))
+                selfLoops.insert(x);
+        if (selfLoops.empty())
+            pureMovers.insert(l);
+        for (const auto &[x, ys] : ld.targets) {
+            for (int y : ys) {
+                if (y == x) continue;
+                realBy[{x, y}].push_back(l);
+                leaving[x].push_back(l);
+                if (!selfLoops.count(x) && !selfLoops.count(y))
+                    forced[{x, y}].push_back(l);
+            }
+            if (selfLoops.count(x)) continue;
+            vector<int> role;
+            for (int y : ys) role.push_back(next[y]);
+            for (int t : selfLoops) role.push_back(next[t]);
+            sat->andImpliesOr(vector<int>{l, cur[x]}, role);
+        }
+    }
+    // exactly one end state
+    sat->atLeastOne(next);
+    amoLadder(next);
+    // leaving a changed state needs a label with a real transition out of it, entering y from x
+    // one with the real transition (x, y)
+    for (int x : changed) {
+        vector<int> out = leaving[x];
+        sort(out.begin(), out.end()); out.erase(unique(out.begin(), out.end()), out.end());
+        sat->andImpliesOr(vector<int>{cur[x], -next[x]}, out);
+    }
+    for (const auto &[x, out] : leaving) {
+        (void) out;
+        for (int y : changed) {
+            if (y == x) continue;
+            auto it = realBy.find({x, y});
+            vector<int> by;
+            if (it != realBy.end()) { by = it->second; sort(by.begin(), by.end()); by.erase(unique(by.begin(), by.end()), by.end()); }
+            sat->andImpliesOr(vector<int>{cur[x], next[y]}, by);
+        }
+    }
+    for (auto &[xy, ls] : forced)
+        for (size_t a = 0; a < ls.size(); a++)
+            for (size_t b = a + 1; b < ls.size(); b++)
+                if (ls[a] != ls[b])
+                    sat->andImpliesOr(vector<int>{ls[a], ls[b], cur[xy.first], next[xy.second]}, vector<int>{});
+    amoLadder(vector<int>(pureMovers.begin(), pureMovers.end()));
+    cur = move(next);
+}
+
+/*
+  group_exists: the fired labels of an exists-step group have no fixed order. Per factor, a
+  segment of the group has a start and an end state and (if it changes) a mover; a fired non-mover
+  that self-loops at the start but not at the end runs before the mover, one that self-loops at
+  the end but not at the start after it. The groups are exists-safe, so these precedences are
+  acyclic; the fired labels of every group are reordered topologically (ties in label order).
+*/
+void StepEncoding::serialise_exists_groups(vector<int> &selectedLabels, const vector<int> &currentLastState,
+                                           int labelTimestep) {
+    const auto &updates = allTimesUpdates.at(labelTimestep);
+    existsMover.clear();
+    set<int> fired(selectedLabels.begin(), selectedLabels.end());
+    map<int, set<int>> before;   // label -> labels that must run before it
+    for (int ts = 0; ts < fts->get_size(); ts++) {
+        map<int, const SigmaLabelData *> byLabel;
+        for (const SigmaLabelData &ld : sigma.factors[ts]) byLabel[ld.label] = &ld;
+        auto selfLoop = [&](int label, int state) {
+            const SigmaLabelData &ld = *byLabel.at(label);
+            for (const auto &[x, ys] : ld.targets)
+                if (x == state) return binary_search(ys.begin(), ys.end(), state);
+            return false;
+        };
+        int state = currentLastState[ts];
+        for (size_t k = 0; k < updates[ts].size();) {
+            // one segment: a single label (mover 0) or the updates of a group (same group start)
+            size_t e = k + 1;
+            if (updates[ts][k].mover != 0)
+                while (e < updates[ts].size() && updates[ts][e].mover != 0 && updates[ts][e].group == updates[ts][k].group)
+                    e++;
+            const int start = state;
+            int end = start;
+            for (const auto &[x, var] : updates[ts][k].vars)
+                if (ipasir_val(sat->solver, var) > 0) { end = x; break; }
+            if (updates[ts][k].mover != 0 && updates[ts][k].mover != -1 && end != start) {
+                int mover = -1;
+                if (updates[ts][k].mover == -2) {
+                    // compact: a fired label with the real transition (start, end) that self-loops
+                    // at neither (it must move), else the first one with the transition
+                    auto realMove = [&](int label) {
+                        const SigmaLabelData &ld = *byLabel.at(label);
+                        for (const auto &[x, ys] : ld.targets)
+                            if (x == start) return binary_search(ys.begin(), ys.end(), end);
+                        return false;
+                    };
+                    for (size_t j = k; j < e; j++) {
+                        const int a = updates[ts][j].label;
+                        if (!fired.count(a) || !realMove(a)) continue;
+                        if (mover < 0) mover = a;
+                        if (!selfLoop(a, start) && !selfLoop(a, end)) { mover = a; break; }
+                    }
+                    existsMover[{ts, updates[ts][k].group}] = mover;
+                } else {
+                    for (size_t j = k; j < e; j++)
+                        if (ipasir_val(sat->solver, updates[ts][j].mover) > 0) mover = updates[ts][j].label;
+                }
+                assert(mover >= 0);
+                // the group's labels relevant here: all of the factor's labels in that group
+                const int g = sigma.groupOf[mover];
+                for (const SigmaLabelData &ld : sigma.factors[ts]) {
+                    const int a = ld.label;
+                    if (a == mover || sigma.groupOf[a] != g || !fired.count(a)) continue;
+                    const bool atStart = selfLoop(a, start), atEnd = selfLoop(a, end);
+                    if (atStart && !atEnd) before[mover].insert(a);
+                    else if (!atStart && atEnd) before[a].insert(mover);
+                }
+            }
+            state = end;
+            k = e;
+        }
+    }
+    // topological order inside every group (the labels arrive sorted by the label order)
+    vector<int> result;
+    for (size_t i = 0; i < selectedLabels.size();) {
+        size_t j = i;
+        while (j < selectedLabels.size() && sigma.groupOf[selectedLabels[j]] == sigma.groupOf[selectedLabels[i]]) j++;
+        vector<int> group(selectedLabels.begin() + i, selectedLabels.begin() + j);
+        set<int> done;
+        while (done.size() < group.size()) {
+            bool progress = false;
+            for (int a : group) {
+                if (done.count(a)) continue;
+                bool ready = true;
+                for (int b : before[a]) if (!done.count(b)) ready = false;
+                if (!ready) continue;
+                result.push_back(a);
+                done.insert(a);
+                progress = true;
+                break;
+            }
+            if (!progress) {
+                cerr << "exists group without a serialisation" << endl;
+                utils::exit_with(utils::ExitCode::CRITICAL_ERROR);
+            }
+        }
+        i = j;
+    }
+    selectedLabels = result;
+}
+
 vector<vector<int>> StepEncoding::segments_extract_intermediate_states(vector<int> &selectedLabels,
                                                              vector<int> &currentLastState,
                                                              vector<int> & /*nextState*/,
                                                              int labelTimestep) {
+    if (sigma.groupExists)
+        serialise_exists_groups(selectedLabels, currentLastState, labelTimestep);
     // selectedLabels are in label order; per factor, a label that changes the state (its own
     // micro-step, or the mover of its group) sets it to the changed state whose variable is
     // true, or keeps it if none is (a self-loop at an unchanged state)
@@ -686,6 +898,18 @@ vector<vector<int>> StepEncoding::segments_extract_intermediate_states(vector<in
             if (it == byLabel[ts].end())
                 continue;
             const SigmaUpdate &u = *it->second;
+            if (u.mover == -2) {
+                // compact exists group: only the mover chosen by serialise_exists_groups moves
+                auto it = existsMover.find({ts, u.group});
+                if (it == existsMover.end() || it->second != u.label)
+                    continue;
+                for (const auto &[s, var] : u.vars)
+                    if (ipasir_val(sat->solver, var) > 0) {
+                        state[ts] = s;
+                        break;
+                    }
+                continue;
+            }
             if (u.mover == -1) {
                 // matrix group: the first firing label with the real transition (start, end) moves
                 if (movedGroup[ts] == u.group)
