@@ -1,3 +1,6 @@
+#include <map>
+#include <iostream>
+#include <cstdlib>
 #include "ipasir.h"
 #include "kissat.h"
 #include <stdio.h>
@@ -31,6 +34,12 @@ extern "C" {
 IPASIR_API const char * ipasir_signature (){
 	return kissat_signature();
 }
+
+// FTS_FORMULA_HASH set: an order-sensitive hash of every literal added to a solver, printed at
+// each ipasir_solve (FORMULAHASH line) -- for checking that two builds emit identical formulas
+static bool formulaHashEnabled = getenv("FTS_FORMULA_HASH") != nullptr;
+struct FormulaHash { unsigned long long hash = 1469598103934665603ULL; long long literals = 0, clauses = 0; };
+static std::map<void *, FormulaHash> formulaHashes;
 
 /**
  * Construct a new solver and return a pointer to it.
@@ -75,6 +84,7 @@ IPASIR_API void * ipasir_init (){
  * State after: undefined
  */
 IPASIR_API void ipasir_release (void * solver){
+	formulaHashes.erase(solver);
 	return kissat_release((kissat*)solver);
 }
 
@@ -96,8 +106,14 @@ IPASIR_API void ipasir_release (void * solver){
 // literals added over all solvers (FTS_FACTOR_SIZE statistics), defined in sat_encoder.cc
 extern long long fts_ipasir_literals;
 
+
 IPASIR_API void ipasir_add (void * solver, int lit_or_zero){
 	if (lit_or_zero != 0) ++fts_ipasir_literals;
+	if (formulaHashEnabled) {
+		FormulaHash & h = formulaHashes[solver];
+		h.hash = (h.hash ^ (unsigned long long)(unsigned int)lit_or_zero) * 1099511628211ULL;
+		if (lit_or_zero) h.literals++; else h.clauses++;
+	}
 #ifndef NDEBUG
 	curclause.push_back(lit_or_zero);
 	if (lit_or_zero > maxVar) maxVar = lit_or_zero;
@@ -139,6 +155,10 @@ IPASIR_API void ipasir_assume (__attribute__ ((unused))void * solver, __attribut
  * State after: INPUT or SAT or UNSAT
  */
 IPASIR_API int ipasir_solve (void * solver){
+	if (formulaHashEnabled) {
+		const FormulaHash & h = formulaHashes[solver];
+		std::cout << "FORMULAHASH clauses " << h.clauses << " literals " << h.literals << " hash " << h.hash << std::endl;
+	}
 #ifndef NDEBUG
 	dmacsfile.open(dmacsfilepath);
 	dmacsfile << "p cnf " << maxVar + 1 << " " << formula.size() << std::endl;
