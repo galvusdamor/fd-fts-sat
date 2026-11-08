@@ -1,221 +1,26 @@
-#include <chrono>
-#include <thread>
-#include <ctime>
-#include <atomic>
+/*
+  label_sat: one segment per factor holding every label of the step (see step_encoding.h). The
+  code is label_based_encoding.cc's; it encodes all factors at once, in label_sat's order
+  (exists chains, transition semantics of every factor, parallelism constraints), so that
+  label_sat's formulas stay identical.
+*/
 #include <algorithm>
 #include <map>
 
-#include "label_based_encoding.h"
+#include "step_encoding.h"
 
 #include "fts_matrix.h"
 #include "../utils/logging.h"
 #include "../utils/timer.h"
 #include "../utils/system.h"
 #include "ipasir.h"
-#include "length_strategy.h"
 #include "sat_encoder.h"
 #include "../task_utils/label_order_finder.h"
-
-#include "../options/option_parser.h"
-#include "../options/options.h"
-#include "../options/plugin.h"
-
 
 using namespace std;
 using namespace task_representation;
 
-
-
 namespace sat_search {
-LabelBasedEncodingFactory::LabelBasedEncodingFactory(const options::Options &opts): SATEncodingFactory(opts.get<bool>("force_at_least_one_action")),
-	useLabelGroups(opts.get<bool>("use_label_group")),
-	useSelfloopOptimisation(opts.get<bool>("use_self_loop_optimisation")),
-	useEmptyRows(opts.get<bool>("use_empty_rows")),
-	useEmptyCols(opts.get<bool>("use_empty_cols")),
-	useEmptyPillars(opts.get<bool>("use_empty_pillars")),
-	useOnesInLastDimension(opts.get<bool>("use_ones_in_last_dimension")),
-	usePositiveOneForEmpty(opts.get<bool>("use_positive_one")),
-	oneEncodingThreshold(size_t(opts.get<int>("one_encoding_threshold"))),
-	oneEncodingThresholdPercent(opts.get<int>("one_encoding_threshold_percent")),
-	encoding(encoding_type(opts.get_enum("encoding"))),
-	chainsInterleaved(opts.get<bool>("chains_interleaved")),
-	existsStep(opts.get<bool>("exists_step")),
-	existsLax(opts.get<bool>("exists_lax")),
-	existsPersist(opts.get<bool>("exists_effects_persist")),
-	existsOnlyChains(opts.get<bool>("exists_only_chains")),
-	existsPureEvents(opts.get<bool>("exists_pure_events")),
-	labelOrderFinder(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("label_order"))
-	 {
-	statisticsPrinted = false;
-	if (encoding != SEQUENTIAL && useSelfloopOptimisation == false){
-		cerr << "Parallel label-based encodings may only be used together with the self-loop optimisation" << endl;
-		assert(false);
-	}
-	if (existsStep && (encoding != CHAINS_PARALLEL || useLabelGroups)){
-		cerr << "exists_step needs encoding=CHAINS_PARALLEL and use_label_group=false" << endl;
-		utils::exit_with(utils::ExitCode::INPUT_ERROR);
-	}
-}
-
-
-
-static shared_ptr<SATEncodingFactory> _parse_label_based_sat_factory(options::OptionParser &parser) {
-	vector<string> base_encoding;
-	vector<string> base_encoding_doc;
-	base_encoding.push_back("SEQUENTIAL");
-	base_encoding_doc.push_back("sequential encoding");
-	base_encoding.push_back("SELF_LOOP_PARALLEL");
-	base_encoding_doc.push_back("self loop parallelism");
-	base_encoding.push_back("CHAINS_PARALLEL");
-	base_encoding_doc.push_back( "chains parallelism");
-	parser.add_enum_option("encoding",
-	                       base_encoding,
-	                       "base encoding to be used",
-	                       "SEQUENTIAL",
-	                       base_encoding_doc);
-
-	parser.add_option<bool>(
-    	"use_label_group",
-    	"use label group optimisation",
-    	"false");
-
-	parser.add_option<bool>(
-    	"use_self_loop_optimisation",
-    	"use optimisation for self loops",
-    	"false");
-
-	parser.add_option<bool>(
-    	"use_empty_rows",
-    	"use separate encoding for empty rows",
-    	"false");
-
-	parser.add_option<bool>(
-    	"use_empty_cols",
-    	"use separate encoding for empty cols",
-    	"false");
-
-	parser.add_option<bool>(
-    	"use_empty_pillars",
-    	"use separate encoding for empty pillars",
-    	"false");
-
-	parser.add_option<bool>(
-    	"use_ones_in_last_dimension",
-    	"if in the last dimension implication (source + label -> target), there is only one possible target use the positive edge for encoding instead of the negative edge",
-    	"true");
-
-	parser.add_option<bool>(
-    	"use_positive_one",
-    	"when encoding empty row/col/pillars, use special encoding if there is only one 1 (then positive encoding instead of negative)",
-    	"false");
-
-	parser.add_option<bool>(
-    	"force_at_least_one_action",
-    	"force that every time step contains at least one action",
-    	"false");
-
-	parser.add_option<bool>(
-    	"chains_interleaved",
-    	"CHAINS_PARALLEL: allocate the chain helper variables per (factor, state) together with their "
-    	"clauses (the variant from May 2026) instead of all forward, then all backward helpers first; "
-    	"same clauses, different variable numbering",
-    	"false");
-
-	parser.add_option<bool>(
-    	"exists_step",
-    	"strict exists-step semantics in the label order label_order (see label_based_encoding.h); "
-    	"needs CHAINS_PARALLEL, whose forall chains it replaces",
-    	"false");
-
-	parser.add_option<bool>(
-    	"exists_lax",
-    	"exists_step: lax semantics (a label after the mover need not be applicable at the start "
-    	"state, only self-loop at the end state)",
-    	"false");
-
-	parser.add_option<bool>(
-    	"exists_effects_persist",
-    	"exists_step: a label with a real transition in a factor ends the step in one of its targets "
-    	"there (as in FDR, where an action's effect holds at the end of an exists step); keeps the "
-    	"label -> target clauses of the forall encoding",
-    	"false");
-
-	parser.add_option<bool>(
-    	"exists_pure_events",
-    	"exists_step: for a label without any self-loop in a factor (it fires there only as the "
-    	"mover) the chain event is label & next_t -> I_t instead of one event per source state",
-    	"false");
-
-	parser.add_option<bool>(
-    	"exists_only_chains",
-    	"diagnostic: replace the forall chains by the exists chains but keep every other forall "
-    	"clause unweakened (forall-like semantics on the exists machinery; exists_lax ignored)",
-    	"false");
-
-	parser.add_option<shared_ptr<label_order_finder::LabelOrderFinder>>(
-    	"label_order",
-    	"exists_step: the label order of the step semantics",
-    	"label_order_linear()");
-
-	parser.add_option<int>(
-    	"one_encoding_threshold",
-    	"if ones in src/target/label is less or equal to this number, use positive encoding instead of negative one",
-    	"1");
-
-	parser.add_option<int>(
-    	"one_encoding_threshold_percent",
-    	"if percentage of ones in src/target/label is less or equal to this number, use positive encoding instead of negative one",
-    	"0");
-
-    options::Options opts = parser.parse();
-    if (parser.dry_run())
-        return nullptr;
-    else
-        return make_shared<LabelBasedEncodingFactory>(opts);
-}
-
-static options::PluginShared<SATEncodingFactory> _plugin_label_based_sat_factory("label_sat", _parse_label_based_sat_factory);
-
-
-
-LabelBasedEncoding::LabelBasedEncoding(
-	std::shared_ptr<sat_capsule> capsule,
-	const std::shared_ptr<FTSTask> & _fts,
-	bool _statisticsPrinted,
-	bool _useLabelGroups,
-	bool _useSelfloopOptimisation,
-	bool _useEmptyRows,
-	bool _useEmptyCols,
-	bool _useEmptyPillars,
-	bool _useOnesInLastDimension,
-	bool _usePositiveOneForEmpty,
-	bool forceAtLeastOneAction,
-	size_t _oneEncodingThreshold,
-	int _oneEncodingThresholdPercent,
-	const encoding_type & _encoding,
-	bool _chainsInterleaved,
-	const std::vector<shared_ptr<FTSMatrix>> & fts_matrix,
-	std::shared_ptr<const LabelExistsData> _existsData,
-	bool _existsLax, bool _existsPersist, bool _existsOnlyChains, bool _existsPureEvents): CommonEncoding(capsule,_fts, forceAtLeastOneAction, _useLabelGroups, _useSelfloopOptimisation),
-	statisticsPrinted(_statisticsPrinted),
-	useEmptyRows(_useEmptyRows),
-	useEmptyCols(_useEmptyCols),
-	useEmptyPillars(_useEmptyPillars),
-	useOnesInLastDimension(_useOnesInLastDimension),
-	usePositiveOneForEmpty(_usePositiveOneForEmpty),
-	oneEncodingThreshold(_oneEncodingThreshold),
-	oneEncodingThresholdPercent(_oneEncodingThresholdPercent),
-	encoding(_encoding),
-	chainsInterleaved(_chainsInterleaved),
-	fts_matrices(fts_matrix),
-	existsData(_existsData),
-	existsLax(_existsData && _existsLax && !_existsOnlyChains),
-	existsWeaken(_existsData && !_existsOnlyChains),
-	existsPersist(_existsData && _existsPersist),
-	existsPureEvents(_existsPureEvents)
-{
-}
-
 bool LabelExistsFactor::hasSelfLoop(int label, int state) const {
 	auto it = index.find(label);
 	if (it == index.end()) return true; // irrelevant: a self-loop everywhere
@@ -229,7 +34,7 @@ bool LabelExistsFactor::hasAnySelfLoop(int label) const {
 	return !selfLoops[it->second].empty();
 }
 
-static shared_ptr<const LabelExistsData> compute_exists_data(const FTSTask & fts, const vector<int> & order){
+shared_ptr<const LabelExistsData> compute_exists_data(const FTSTask & fts, const vector<int> & order){
 	auto data = make_shared<LabelExistsData>();
 	data->pos.assign(fts.get_num_labels(), fts.get_num_labels());
 	for (size_t i = 0; i < order.size(); i++) data->pos[order[i]] = i;
@@ -293,37 +98,11 @@ static shared_ptr<const LabelExistsData> compute_exists_data(const FTSTask & fts
 	return data;
 }
 
-void LabelBasedEncodingFactory::initialize() {
-	utils::Timer sat_init_timer;
-	cout << "Initialising" << fts << endl;
-	cout << "My FTS task has " << fts->get_size() << " systems and " << fts->get_num_labels() << " labels." << endl;
-
-    for (const auto & ts : fts->get_transition_systems()) {
-        fts_matrices.push_back(make_shared<FTSMatrix>(*ts));
-    }
-    if (existsStep)
-        existsData = compute_exists_data(*fts, labelOrderFinder->find_order(*fts));
-
-    cout << "SAT init time: " << sat_init_timer << endl;
-}
-
-
-
-unique_ptr<SATEncoding> LabelBasedEncodingFactory::createEncodingInstance(std::shared_ptr<sat_capsule> capsule){
-	bool oldStatisticsPrinted = statisticsPrinted;
-	statisticsPrinted = true;
-	return make_unique<LabelBasedEncoding>(capsule,fts,oldStatisticsPrinted,useLabelGroups,useSelfloopOptimisation,
-			useEmptyRows,useEmptyCols,useEmptyPillars,useOnesInLastDimension,usePositiveOneForEmpty,forceAtLeastOneAction,
-			oneEncodingThreshold,oneEncodingThresholdPercent,
-			encoding,chainsInterleaved,fts_matrices,existsData,existsLax,existsPersist,existsOnlyChains,existsPureEvents);
-}
-
-
-void LabelBasedEncoding::encode_sequential(const vector<int> & labelVars){
+void StepEncoding::encode_sequential(const vector<int> & labelVars){
 	sat->atMostOne(labelVars);
 }
 
-void LabelBasedEncoding::encode_self_loop_parallel(const vector<int> & labelVars){
+void StepEncoding::encode_self_loop_parallel(const vector<int> & labelVars){
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		const TransitionSystem & tss = fts->get_ts(ts);
  		vector<int> non_parallelisable_labels;
@@ -345,7 +124,7 @@ void LabelBasedEncoding::encode_self_loop_parallel(const vector<int> & labelVars
   that numbering (2026-10-27: forall-step Algorithm C 1392 instead of 1431, mostly memory-outs on
   airport and hiking). Default: grouped; chains_interleaved=true selects the other one.
 */
-void LabelBasedEncoding::encode_chains_parallel_grouped(const vector<int> & labelVars, const vector<vector<int>> & nextStateVars){
+void StepEncoding::encode_chains_parallel_grouped(const vector<int> & labelVars, const vector<vector<int>> & nextStateVars){
 	map<int, map<int, vector<int>>> topHelperVars = generateHelperVars();
 	map<int, map<int, vector<int>>> bottomHelperVars = generateHelperVars();
 
@@ -377,7 +156,7 @@ void LabelBasedEncoding::encode_chains_parallel_grouped(const vector<int> & labe
 }
 
 
-void LabelBasedEncoding::encode_chains_parallel_interleaved(const vector<int> & labelVars, const vector<vector<int>> & nextStateVars){
+void StepEncoding::encode_chains_parallel_interleaved(const vector<int> & labelVars, const vector<vector<int>> & nextStateVars){
 	for(int ts = 0 ; ts < fts->get_size() ; ts++){
 		const TransitionSystem & tss = fts->get_ts(ts);
 		for(int states = 0 ; states < fts->get_ts(ts).get_size() ; states++){
@@ -409,17 +188,17 @@ void LabelBasedEncoding::encode_chains_parallel_interleaved(const vector<int> & 
 	}
 }
 
-bool LabelBasedEncoding::is_below_threshold(int ts, size_t ones_to_consider){
-	if (ones_to_consider <= oneEncodingThreshold) return true;
+bool StepEncoding::is_below_threshold(int ts, size_t ones_to_consider){
+	if (ones_to_consider <= opt.oneEncodingThreshold) return true;
 	
 	// use integer math here.
 	const int numStates = fts->get_ts(ts).get_size();
-	if (int(ones_to_consider) * 100 <= numStates * oneEncodingThresholdPercent) return true;
+	if (int(ones_to_consider) * 100 <= numStates * opt.oneEncodingThresholdPercent) return true;
 	return false;	
 }
 
 
-void LabelBasedEncoding::encode_transition_semantics(const vector<vector<int>> & previousStateVars,
+void StepEncoding::encode_transition_semantics(const vector<vector<int>> & previousStateVars,
 	const vector<vector<vector<int>>> & labelGroupVars, const int someLabelExecutedVar, const vector<vector<int>> & nextStateVars){
 
 	// for statistics
@@ -502,7 +281,7 @@ void LabelBasedEncoding::encode_transition_semantics(const vector<vector<int>> &
 			}
 
 			// create a variable that is true if and only if we executed one label has is not always a self-loop
-			if (usePositiveOneForEmpty){
+			if (opt.usePositiveOneForEmpty){
 				executedNonSelfLoopLabel = sat->new_variable();
 				DEBUG(sat->registerVariable(executedNonSelfLoopLabel,"executedNonSelfLoopLabel@" + to_string(ts)));
 				sat->impliesOr(executedNonSelfLoopLabel,labelGroupsWithActualTransitions);
@@ -531,8 +310,8 @@ void LabelBasedEncoding::encode_transition_semantics(const vector<vector<int>> &
 		// 2. Step: encode optimised parts of the encoding
 		//
 		// 2.a: Rows. If we ignore targets, which source/label pairs can we encode compactly?
-		if (useEmptyRows){
-			if (usePositiveOneForEmpty){
+		if (opt.useEmptyRows){
+			if (opt.usePositiveOneForEmpty){
 				// try to cover ones in the label -> source direction
 				for(int lg = 0 ; lg < numLabelGroups ; lg++) {
 					// representative label of this group
@@ -580,7 +359,7 @@ void LabelBasedEncoding::encode_transition_semantics(const vector<vector<int>> &
 						if (forceAtLeastOneAction == false || useSelfloopOptimisation == true)
 							allOnes.push_back(executedNoActualTransition);
 
-						if (encoding == SEQUENTIAL || encoding == SELF_LOOP_PARALLEL)
+						if (opt.encoding == SEQUENTIAL || opt.encoding == SELF_LOOP_PARALLEL)
 							for (int lg : fts_matrix->get_impossible_labels_for_source(src)) label_covered_sources[lg].insert(src);
 						// if encoding == CHAINS_PARALLEL, the parallelism restriction does not force at most one non-always-self-loop label 
 						// to be executed. Thus the disjunction over the actual transitions does not
@@ -616,8 +395,8 @@ void LabelBasedEncoding::encode_transition_semantics(const vector<vector<int>> &
 
 
 		// 2.b: Cols. If we ignore sources, which target/label pairs can we encode compactly?
-		if (useEmptyCols){
-			if (usePositiveOneForEmpty){
+		if (opt.useEmptyCols){
+			if (opt.usePositiveOneForEmpty){
 				// try to cover ones in the label -> target direction
 				for(int lg = 0 ; lg < numLabelGroups ; lg++) {
 					// representative label of this group
@@ -663,7 +442,7 @@ void LabelBasedEncoding::encode_transition_semantics(const vector<vector<int>> &
 						if (forceAtLeastOneAction == false || useSelfloopOptimisation == true)
 							allOnes.push_back(executedNoActualTransition);
 				
-						if (encoding == SEQUENTIAL || encoding == SELF_LOOP_PARALLEL)
+						if (opt.encoding == SEQUENTIAL || opt.encoding == SELF_LOOP_PARALLEL)
 							for (int lg : fts_matrix->get_impossible_labels_for_target(target)) label_covered_targets[lg].insert(target);
 					
 						sat->impliesOr(nextStateVars[ts][target], allOnes);
@@ -691,8 +470,8 @@ void LabelBasedEncoding::encode_transition_semantics(const vector<vector<int>> &
 		}
 
 		// 2.c: Pillars. If we ignore the labels, can we encode source target transitions compactly
-		if (useEmptyPillars){ 
-			if (usePositiveOneForEmpty){
+		if (opt.useEmptyPillars){ 
+			if (opt.usePositiveOneForEmpty){
 				for(int src = 0 ; src < numStates ; src++){
 					// if the state has a self-loop, we accept one more possible successor.
 					int self_loop_deduction = 0;
@@ -767,7 +546,7 @@ void LabelBasedEncoding::encode_transition_semantics(const vector<vector<int>> &
 
 				// decision: if label+source can yield only one state encode positively
 				// TODO: maybe also do this if there is more than one possible target, but few compared to the non-possible targets
-				if(useOnesInLastDimension && fts_matrix->get_targets_for_source_and_label(lg,src).size() == 1) {
+				if(opt.useOnesInLastDimension && fts_matrix->get_targets_for_source_and_label(lg,src).size() == 1) {
 					int target = *fts_matrix->get_targets_for_source_and_label(lg,src).begin();
 
 					// for this label group, all other targets are impossible	
@@ -824,7 +603,7 @@ void LabelBasedEncoding::encode_transition_semantics(const vector<vector<int>> &
   clauses lg & prev_src -> -next_t for the targets t that lg cannot reach from src, weakened
   where the label may run as a self-loop before or after the mover.
 */
-void LabelBasedEncoding::encode_exists_residual(int ts, int lg, int src,
+void StepEncoding::encode_exists_residual(int ts, int lg, int src,
 	const vector<vector<int>> & previousStateVars, const vector<vector<vector<int>>> & labelGroupVars,
 	const vector<vector<int>> & nextStateVars, const set<int> & coveredByLabel, const set<int> & coveredBySource){
 	const auto & fts_matrix = fts_matrices[ts];
@@ -864,7 +643,7 @@ void LabelBasedEncoding::encode_exists_residual(int ts, int lg, int src,
 }
 
 
-void LabelBasedEncoding::encode_frame_axioms(const vector<vector<int>> & previousStateVars, const vector<vector<int>> & nextStateVars, int fromTime){
+void StepEncoding::forall_encode_frame_axioms(const vector<vector<int>> & previousStateVars, const vector<vector<int>> & nextStateVars, int fromTime){
 	// if use self-loop optimisation frame axioms are unnecessary, as we already have the executedTransitionIsSelfLoop variable
 	if (forceAtLeastOneAction) return;
 	if (useSelfloopOptimisation) return;
@@ -889,7 +668,7 @@ void LabelBasedEncoding::encode_frame_axioms(const vector<vector<int>> & previou
 }
 
 
-void LabelBasedEncoding::generateAdditionalVariables(int fromTime/*, int toTime*/){
+void StepEncoding::forall_generate_additional_variables(int fromTime/*, int toTime*/){
 	// label group vars: one variable if we useSelfloopOptimisation, otherwise all variables for all labels of each group
 	allTimesLabelGroupVars[fromTime] = generateLabelGroupVars(allTimesLabelVars[fromTime]);
 
@@ -902,7 +681,7 @@ void LabelBasedEncoding::generateAdditionalVariables(int fromTime/*, int toTime*
 }
 
 
-void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousStateVars, const vector<vector<int>> & nextStateVars, int fromTime/*, int toTime*/){
+void StepEncoding::forall_encode_transition(const vector<vector<int>> & previousStateVars, const vector<vector<int>> & nextStateVars, int fromTime/*, int toTime*/){
 	int someLabelExecutedVar = someLabelExecutedPerTime[fromTime];
 	const vector<vector<vector<int>>> & labelGroupVars = allTimesLabelGroupVars[fromTime];
 	if (existsData){
@@ -912,15 +691,15 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
 	encode_transition_semantics(previousStateVars,labelGroupVars,someLabelExecutedVar,nextStateVars);
 
 	// 4. Step encode the restrictions on which actions are allowed in parallel as per the encoding
-	if(encoding == SEQUENTIAL)
+	if(opt.encoding == SEQUENTIAL)
 		encode_sequential(allTimesLabelVars[fromTime]);
-	else if(encoding == SELF_LOOP_PARALLEL)
+	else if(opt.encoding == SELF_LOOP_PARALLEL)
 		encode_self_loop_parallel(allTimesLabelVars[fromTime]);
-	else if(encoding == CHAINS_PARALLEL && existsData){
+	else if(opt.encoding == CHAINS_PARALLEL && existsData){
 		// exists_step: the forall chains are replaced by the exists chains
 	}
-	else if(encoding == CHAINS_PARALLEL){
-		if (chainsInterleaved)
+	else if(opt.encoding == CHAINS_PARALLEL){
+		if (opt.chainsInterleaved)
 			encode_chains_parallel_interleaved(allTimesLabelVars[fromTime], nextStateVars);
 		else
 			encode_chains_parallel_grouped(allTimesLabelVars[fromTime], nextStateVars);
@@ -939,7 +718,7 @@ void LabelBasedEncoding::encode_transition(const vector<vector<int>> & previousS
   sources = {}) gets the alternative "label runs after a move into one of its self-loop states":
   returns sources plus I_t[before label] for every self-loop state t of label other than skip.
 */
-vector<int> LabelBasedEncoding::existsAfterMove(int ts, int label, const vector<int> & sources, int skip) const {
+vector<int> StepEncoding::existsAfterMove(int ts, int label, const vector<int> & sources, int skip) const {
 	vector<int> clause = sources;
 	const LabelExistsFactor & f = existsData->factors[ts];
 	auto it = f.index.find(label);
@@ -952,14 +731,14 @@ vector<int> LabelBasedEncoding::existsAfterMove(int ts, int label, const vector<
 	return clause;
 }
 
-int LabelBasedEncoding::existsBefore(int ts, int t, int label) const {
+int StepEncoding::existsBefore(int ts, int t, int label) const {
 	const vector<int> & P = existsData->factors[ts].adderPos[t];
 	size_t k = lower_bound(P.begin(), P.end(), existsData->pos[label]) - P.begin();
 	if (k == 0) return 0;
 	return existsChains[ts][t][k - 1];
 }
 
-void LabelBasedEncoding::encode_exists_chains(const vector<vector<int>> & previousStateVars,
+void StepEncoding::encode_exists_chains(const vector<vector<int>> & previousStateVars,
 	const vector<int> & labelVars, const vector<vector<int>> & nextStateVars){
 	existsChains.assign(fts->get_size(), {});
 	for (int ts = 0; ts < fts->get_size(); ts++){
@@ -1019,7 +798,7 @@ void LabelBasedEncoding::encode_exists_chains(const vector<vector<int>> & previo
 
 
 
-std::vector<std::vector<int>> LabelBasedEncoding::extractIntermediateStates(std::vector<int> & selectedLabels, std::vector<int> & currentLastState, std::vector<int> & nextState, int labelTimestep){
+std::vector<std::vector<int>> StepEncoding::forall_extract_intermediate_states(std::vector<int> & selectedLabels, std::vector<int> & currentLastState, std::vector<int> & nextState, int labelTimestep){
 	vector<vector<int>> intermediateStates;
 	if (existsData){
 		// labels are in label order; per factor the mover is the adder at which the chain of
@@ -1061,123 +840,6 @@ std::vector<std::vector<int>> LabelBasedEncoding::extractIntermediateStates(std:
 	}
 
 	return intermediateStates;
-}
-
-// run plan extraction
-std::tuple<PlanState,std::vector<PlanState>,std::vector<int>,std::set<int>> LabelBasedEncoding::extractSolution(int initTime,
-	std::vector<std::pair<int,int>> time_step_order){
-	vector<vector<int>> statesPerTimestep;
-	// extract the initial state
-	vector<int> stateReconstructor;
-	for(size_t ts = 0 ; ts < allTimesStateVars[initTime].size() ; ts++){
-		for(size_t state = 0 ; state < allTimesStateVars[initTime][ts].size() ; state++){
-			if(ipasir_val(sat->solver, allTimesStateVars[initTime][ts][state]) > 0){
-				stateReconstructor.push_back(state);
-				break;
-			}
-		}
-	}
-	statesPerTimestep.push_back(stateReconstructor);
-	stateReconstructor.clear();
-	set<int> timesteps_with_labels;	
-	
-	vector<vector<int>> labelsPerTimestep;
-
-	// iterate over the time-steps in order given by the main algorithm (it might have used strange numbering)
-	for(auto [labelTimestep,stateAfterTimestep] : time_step_order){
-		cout << "Time " << labelTimestep << endl;
-		vector<int> selectedLabels;
-		for(size_t label = 0 ; label < allTimesLabelVars[labelTimestep].size() ; label++){
-			if(ipasir_val(sat->solver, allTimesLabelVars[labelTimestep][label]) <= 0){
-				continue;
-			}else{
-				selectedLabels.push_back(label);
-				timesteps_with_labels.insert(labelTimestep);
-				cout << "Label : " << label << endl;
-				if (selectedLabels.size() == 1)
-					for(int ts = 0 ; ts < fts->get_size() ; ts++){
-						for(size_t state = 0 ; state < allTimesStateVars[stateAfterTimestep][ts].size() ; state++){
-							if(ipasir_val(sat->solver, allTimesStateVars[stateAfterTimestep][ts][state]) > 0){
-								stateReconstructor.push_back(state);
-								break;
-							}
-						}
-					}
-			}
-		}
-
-		if (existsData)
-			sort(selectedLabels.begin(), selectedLabels.end(), [&](int a, int b){
-				return existsData->pos[a] < existsData->pos[b];});
-
-		// intermediate states
-		// code in this if is dependent on encode. Rest is common to all encodings
-		if(selectedLabels.size() > 1){
-			vector<vector<int>> intermediateStates = extractIntermediateStates(selectedLabels, statesPerTimestep.back(), stateReconstructor, labelTimestep);
-			for(vector<int> & state : intermediateStates)
-				statesPerTimestep.push_back(state);
-		}
-
-		if (selectedLabels.size() > 0){
-			vector<int> notRepeated(stateReconstructor.begin(), stateReconstructor.begin() + fts->get_size());
-			statesPerTimestep.push_back(notRepeated);
-			stateReconstructor.clear();
-			notRepeated.clear();
-
-			labelsPerTimestep.push_back(selectedLabels);
-		}
-	}
-
-
-	vector<int> GS = statesPerTimestep.back();
-	PlanState goalState = PlanState(std::move(GS));
-	vector<PlanState> states;
-	for(size_t s = 0 ; s < statesPerTimestep.size() ; s++){
-		states.push_back(PlanState(std::move(statesPerTimestep[s])));
-	}
-
-	vector<int> labels;
-	for(const auto & labels_in_t : labelsPerTimestep){
-		for(int l : labels_in_t){
-			labels.push_back(l);
-		}
-	}
-
-	cout << "Total states: " << states.size() << endl;
-	cout << "Total labels: " << labels.size() << endl;
-	cout << "Total timesteps with label: " << timesteps_with_labels.size() << endl;
-
-
-	// manual checking of FTS plan
-	for (size_t i = 0; i < labels.size(); i++){
-		for(int ts = 0 ; ts < fts->get_size() ; ts++){
-			int from = states[i][ts];
-			int to = states[i+1][ts];
-		
-			const TransitionSystem & tss = fts->get_ts(ts);
-			auto transitions = tss.get_transitions_with_label(labels[i]);
-			bool good = false;
-            for (const Transition &t: transitions) {
-				if (t.src == from && t.target == to) good = true; 
-			}
-
-			if (!good){
-				cout << "Execution of FTS plan failed at label nr. " << i << " being " << labels[i] << endl;
-				cout << "Formula wanted to transition in ts " << ts << " from " << from << " to " << to << " but this is impossible" << endl;
-				cout << "Possible transitions are: " << endl;
-            	for (const Transition &t: transitions)
-					cout << "\t" << t.src << " -> " << t.target << endl;
-				assert(false);
-			} else {
-				//cout << "Execution of FTS label nr. " << i << " being " << labels[i] << endl;
-				//cout << "Transition in ts " << ts << " from " << from << " to " << to << endl;
-			}
-		}
-	}
-
-
-
-	return make_tuple(goalState,states,labels,timesteps_with_labels);	
 }
 
 };

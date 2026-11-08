@@ -4,7 +4,7 @@
 #include <atomic>
 #include <algorithm>
 
-#include "label_based_encoding.h"
+#include "common_encoding.h"
 
 #include "fts_matrix.h"
 #include "../utils/logging.h"

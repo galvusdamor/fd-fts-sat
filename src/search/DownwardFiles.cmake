@@ -574,12 +574,12 @@ fast_downward_plugin(
         sat/state_encoding
         sat/label_encoding
         sat/common_encoding
-        sat/label_based_encoding
+        sat/step_encoding
+        sat/step_encoding_forall
+        sat/step_encoding_segments
         sat/transitions_encoding
         sat/full_transitions_encoding
         sat/exists_encoding
-        sat/sigma_encoding
-        sat/micro_steps_encoding
         sat/split_transitions_encoding
         sat/bdd_encoding
 		sat/length_strategy
