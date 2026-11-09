@@ -183,6 +183,7 @@ struct SigmaData {
     bool groupPureAmo = true;
     bool groupExists = false;       // multi-label segments: exists-step inside (encode_group)
     std::vector<std::vector<int>> factorBlock;          // factor_groups: per factor, block id per label entry
+    std::vector<std::vector<char>> blockExists;       // per factor and block: an exists group (hybrid)
     std::vector<int> groupOf;                         // label -> micro-step group
     bool oneMove = false;
     bool strict = false;

@@ -474,18 +474,6 @@ void StepEncodingFactory::initialize_segments(StepData &sd) {
         for (size_t k = 0; k < d->order.size(); k++)
             d->groupOf[d->order[k]] = k / max(opt.groupSize, 1);
     }
-    // label_groups: the groups (one micro-step each) and their order come from the group finder
-    if (labelGroupFinder) {
-        vector<vector<int>> groups = labelGroupFinder->find_groups(*fts);
-        if (!groups.empty()) {
-            d->order.clear();
-            for (size_t g = 0; g < groups.size(); g++)
-                for (int l : groups[g]) {
-                    d->order.push_back(l);
-                    d->groupOf[l] = g;
-                }
-        }
-    }
     d->factors.resize(fts->get_size());
     size_t changedVars = 0, labelsInFactors = 0, nondet = 0;
     for (int ts = 0; ts < fts->get_size(); ts++) {
@@ -523,23 +511,47 @@ void StepEncodingFactory::initialize_segments(StepData &sd) {
     }
     if (opt.commuteOrder)
         commute_labels(*d);
+    // label_groups: the micro-step groups, consecutive in the (final) label order
+    vector<char> inGroup(fts->get_num_labels(), 0);
+    if (labelGroupFinder) {
+        vector<vector<int>> groups = labelGroupFinder->group_order(*fts, d->order);
+        if (!groups.empty()) {
+            d->order.clear();
+            for (size_t g = 0; g < groups.size(); g++)
+                for (int l : groups[g]) {
+                    d->order.push_back(l);
+                    d->groupOf[l] = g;
+                    inGroup[l] = groups[g].size() > 1;
+                }
+            vector<int> newPos(fts->get_num_labels());
+            for (size_t k = 0; k < d->order.size(); k++) newPos[d->order[k]] = k;
+            for (auto &labels : d->factors)
+                stable_sort(labels.begin(), labels.end(), [&](const SigmaLabelData &a, const SigmaLabelData &b) {
+                    return newPos[a.label] < newPos[b.label]; });
+        }
+    }
     if (opt.factorGroups) {
         // per factor, along the factor's labels: a block of labels without self-loops there that do
         // not chain (no label starts where another of the block ends); such labels can never fire
         // one after another in a step, so a forall-step block loses no parallelism
         d->factorBlock.resize(fts->get_size());
-        size_t blocks = 0, entries = 0;
+        d->blockExists.resize(fts->get_size());
+        size_t blocks = 0, entries = 0, existsBlocks = 0;
         const set<pair<int, int>> hints(labelOrderFinder_chain_pairs().begin(), labelOrderFinder_chain_pairs().end());
         for (int ts = 0; ts < fts->get_size(); ts++) {
             const vector<SigmaLabelData> &ls = d->factors[ts];
             vector<int> &blk = d->factorBlock[ts];
             blk.assign(ls.size(), 0);
             int b = -1, size = 0;
+            int blockGroup = -1;      // hybrid: the exists group of the current block, -1: forall block
             set<int> bSrc, bTgt, bSl;
             vector<size_t> members;   // group_relax=2: entries of the current block
             bool open = false;
             for (size_t k = 0; k < ls.size(); k++) {
                 const SigmaLabelData &ld = ls[k];
+                // hybrid (label_groups): the labels of a multi-label group form one exists block in
+                // every factor; the other labels form exact forall blocks, never mixed with them
+                const int group = inGroup[ld.label] ? d->groupOf[ld.label] : -1;
                 set<int> src, tgt;
                 bool selfLoop = false;
                 for (const auto &[x, ys] : ld.targets)
@@ -579,9 +591,16 @@ void StepEncodingFactory::initialize_segments(StepData &sd) {
                     }
                     if (!join) open = mover;
                 }
+                if (group >= 0)
+                    join = size > 0 && blockGroup == group;
+                else if (blockGroup >= 0)
+                    join = false;
                 if (!join) {
                     b++; size = 0; bSrc.clear(); bTgt.clear(); bSl.clear(); members.clear();
                     blocks++;
+                    blockGroup = group;
+                    d->blockExists[ts].push_back(group >= 0);
+                    existsBlocks += group >= 0;
                 }
                 blk[k] = b;
                 size++;
@@ -593,7 +612,9 @@ void StepEncodingFactory::initialize_segments(StepData &sd) {
                 entries++;
             }
         }
-        cout << "SIGMAGROUPS factor_blocks " << blocks << " label_factor_entries " << entries << endl;
+        cout << "SIGMAGROUPS factor_blocks " << blocks << " label_factor_entries " << entries;
+        if (labelGroupFinder) cout << " exists_blocks " << existsBlocks;
+        cout << endl;
     } else if (opt.groupOrder) {
         compute_group_order(*d);
     } else if (opt.competingGroups) {

@@ -410,7 +410,7 @@ class LabelGroupsExists : public LabelGroupFinder {
     int maxSize, maxExactSize, exactConflicts;
     bool reportCycles;
     long cycleBudget;
-    bool allowReverse;
+    bool allowReverse, usefulOnly;
     int reported = 0;
 public:
     LabelGroupsExists(const options::Options &opts)
@@ -418,14 +418,18 @@ public:
           keepOrder(opts.get<bool>("keep_order")), exact(opts.get<bool>("exact")),
           maxSize(opts.get<int>("max_size")), maxExactSize(opts.get<int>("max_exact_size")),
           exactConflicts(opts.get<int>("exact_conflicts")), reportCycles(opts.get<bool>("report_cycles")),
-          cycleBudget(opts.get<int>("cycle_budget")), allowReverse(opts.get<bool>("allow_reverse")) {}
+          cycleBudget(opts.get<int>("cycle_budget")), allowReverse(opts.get<bool>("allow_reverse")),
+          usefulOnly(opts.get<bool>("useful_only")) {}
     vector<vector<int>> find_groups(const FTSTask &fts) override {
+        return group_order(fts, order->find_order(fts));
+    }
+    vector<vector<int>> group_order(const FTSTask &fts, const vector<int> &labelOrder) override {
         utils::Timer timer;
         ExistsGroupChecker checker(fts, exactConflicts);
         vector<vector<int>> groups;
         vector<int> cur;
         long orderRejects = 0, reverseRejects = 0, staticRejects = 0, exactAccepts = 0, exactRejects = 0;
-        for (int b : order->find_order(fts)) {
+        for (int b : labelOrder) {
             bool join = !cur.empty() && (maxSize <= 0 || (int) cur.size() < maxSize);
             if (join && keepOrder)
                 for (int a : cur)
@@ -472,6 +476,30 @@ public:
             cur.push_back(b);
         }
         if (!cur.empty()) groups.push_back(cur);
+        if (usefulOnly) {
+            // keep a group only for the span of labels that may have to run against the order (a
+            // later label before an earlier one, both able to fire together): executions the label
+            // order cannot serialise; every other label becomes its own group
+            vector<vector<int>> kept;
+            for (const auto &g : groups) {
+                int lo = g.size(), hi = -1;
+                for (size_t i = 0; i < g.size(); i++)
+                    for (size_t j = i + 1; j < g.size(); j++)
+                        if (checker.static_edges(g[i], g[j]).second) {
+                            lo = min(lo, (int) i);
+                            hi = max(hi, (int) j);
+                        }
+                for (int i = 0; i < (int) g.size(); i++) {
+                    if (i == lo) {
+                        kept.emplace_back(g.begin() + lo, g.begin() + hi + 1);
+                        i = hi;
+                    } else {
+                        kept.push_back({g[i]});
+                    }
+                }
+            }
+            groups = kept;
+        }
         size_t largest = 0, inMulti = 0;
         for (const auto &g : groups) {
             largest = max(largest, g.size());
@@ -526,6 +554,9 @@ static shared_ptr<LabelGroupFinder> _parse_exists(OptionParser &parser) {
                             "allow groups in which a label may have to run before an earlier one of the "
                             "order (executions the label order cannot serialise); false: the label order "
                             "serialises every group, so the semantics is the label order's", "true");
+    parser.add_option<bool>("useful_only",
+                            "keep only the part of a group spanning labels that may have to run against the "
+                            "order; all other labels become their own groups", "false");
     parser.add_option<int>("cycle_budget",
                            "steps of the static cycle search (one mover per factor) before the exact check "
                            "decides", "100000");

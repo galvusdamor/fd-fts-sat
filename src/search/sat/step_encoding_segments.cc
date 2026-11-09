@@ -146,6 +146,12 @@ vector<int> StepEncoding::encode_factor_segments(int ts, vector<int> cur,
             encode_single_projection(ts, labels[i], layer, labelVars, cur, fromTime, updates[ts], oneMoveClauses);
         } else if (j == i + 1) {
             encode_single(ts, labels[i], layer, labelVars, cur, fromTime, updates[ts], oneMoveClauses);
+        } else if (!sigma.blockExists.empty() && sigma.blockExists[ts][sigma.factorBlock[ts][i]]) {
+            // hybrid: an exists group's block in this factor
+            encode_group_exists_compact(ts, labels, i, j, layer, labelVars, cur, fromTime, updates[ts]);
+        } else if (!sigma.blockExists.empty() && sigma.groupCompact) {
+            // hybrid: an exact forall block
+            encode_group_compact(ts, labels, i, j, layer, labelVars, cur, fromTime, updates[ts], oneMoveClauses);
         } else if (sigma.groupExists && sigma.groupCompact) {
             encode_group_exists_compact(ts, labels, i, j, layer, labelVars, cur, fromTime, updates[ts]);
         } else if (sigma.groupExists) {

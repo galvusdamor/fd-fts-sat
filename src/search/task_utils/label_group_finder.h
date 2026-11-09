@@ -35,6 +35,13 @@ class LabelGroupFinder {
 public:
     virtual ~LabelGroupFinder() = default;
     virtual std::vector<std::vector<int>> find_groups(const task_representation::FTSTask &fts) = 0;
+    // groups of consecutive labels of a given order (an encoder's own, final label order);
+    // default: the finder's own order
+    virtual std::vector<std::vector<int>> group_order(const task_representation::FTSTask &fts,
+                                                      const std::vector<int> &order) {
+        (void) order;
+        return find_groups(fts);
+    }
 };
 
 class ExistsGroupChecker {
