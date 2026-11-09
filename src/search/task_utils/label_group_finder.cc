@@ -11,9 +11,11 @@
 #include "../sat/kissat.h"
 
 #include <algorithm>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <set>
+#include <tuple>
 
 using namespace std;
 using namespace task_representation;
@@ -53,8 +55,36 @@ ExistsGroupChecker::ExistsGroupChecker(const FTSTask &fts, int exactConflicts)
   after b if b moves s -> t and a is applicable at s without a self-loop there but self-loops at
   t. (Symmetrically with a as the mover.)
 */
+/*
+  Two labels fire together only if, in every factor both are relevant to, they can share a start
+  state s with at most one of them moving: one self-loops at s, or one moves s -> t and the other
+  self-loops at t (exists groups: all fired labels applicable at the start, one mover per factor).
+*/
+bool ExistsGroupChecker::co_applicable(int a, int b) const {
+    const vector<Entry> &A = entries[a], &B = entries[b];
+    size_t i = 0, j = 0;
+    while (i < A.size() && j < B.size()) {
+        if (A[i].ts < B[j].ts) { i++; continue; }
+        if (B[j].ts < A[i].ts) { j++; continue; }
+        const Entry &x = A[i], &y = B[j];
+        bool possible = false;
+        for (int st : x.app) {
+            if (!has(y.app, st)) continue;
+            if (has(x.sl, st) || has(y.sl, st)) { possible = true; break; }
+            for (auto [u, t] : x.real) if (u == st && has(y.sl, t)) possible = true;
+            for (auto [u, t] : y.real) if (u == st && has(x.sl, t)) possible = true;
+            if (possible) break;
+        }
+        if (!possible) return false;
+        i++; j++;
+    }
+    return true;
+}
+
 pair<bool, bool> ExistsGroupChecker::static_edges(int a, int b) const {
     bool ab = false, ba = false;
+    if (!co_applicable(a, b))
+        return {false, false};
     const vector<Entry> &A = entries[a], &B = entries[b];
     size_t i = 0, j = 0;
     while (i < A.size() && j < B.size()) {
@@ -72,6 +102,70 @@ pair<bool, bool> ExistsGroupChecker::static_edges(int a, int b) const {
         i++; j++;
     }
     return {ab, ba};
+}
+
+// (factor, 0: a before mover b / 1: a mover, b after it, s, t) witnessing an edge a -> b
+vector<tuple<int, int, int, int>> ExistsGroupChecker::edge_witnesses(int a, int b) const {
+    vector<tuple<int, int, int, int>> w;
+    const vector<Entry> &A = entries[a], &B = entries[b];
+    size_t i = 0, j = 0;
+    while (i < A.size() && j < B.size()) {
+        if (A[i].ts < B[j].ts) { i++; continue; }
+        if (B[j].ts < A[i].ts) { j++; continue; }
+        const Entry &x = A[i], &y = B[j];
+        for (auto [s, t] : y.real)
+            if (has(x.sl, s) && !has(x.sl, t)) { w.emplace_back(x.ts, 0, s, t); break; }
+        for (auto [s, t] : x.real)
+            if (has(y.app, s) && !has(y.sl, s) && has(y.sl, t)) { w.emplace_back(x.ts, 1, s, t); break; }
+        i++; j++;
+    }
+    return w;
+}
+
+/*
+  Is the last label of the group on a cycle of possible precedences? If the group without it is
+  exists-safe, every realisable cycle of the group passes through it, so "no" means safe. An edge
+  a -> b is witnessed by a factor and that factor's mover (b if a runs before the mover, a if b
+  runs after it); a factor has one mover, so a realisable cycle uses every factor with a single
+  mover. The search keeps the movers chosen so far and stops after `budget` steps (unknown).
+  Returns 0 (no cycle), 1 (cycle), 2 (unknown).
+*/
+int ExistsGroupChecker::cycle_through_last(const vector<int> &group, long budget) const {
+    const int n = group.size(), last = n - 1;
+    // witnesses: succ[i] = (j, factor, mover index)
+    vector<vector<tuple<int, int, int>>> succ(n);
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++) {
+            if (i == j || !co_applicable(group[i], group[j])) continue;
+            for (auto [ts, kind, s, t] : edge_witnesses(group[i], group[j])) {
+                (void) s; (void) t;
+                succ[i].emplace_back(j, ts, kind == 0 ? j : i);
+            }
+        }
+    map<int, int> mover;   // factor -> mover (group index)
+    vector<char> onPath(n, 0);
+    long steps = 0;
+    bool unknown = false;
+    function<bool(int)> dfs = [&](int v) {
+        for (auto [w, ts, m] : succ[v]) {
+            if (++steps > budget) { unknown = true; return false; }
+            auto it = mover.find(ts);
+            if (it != mover.end() && it->second != m) continue;
+            if (w == last) return true;
+            if (onPath[w]) continue;
+            const bool added = it == mover.end();
+            if (added) mover[ts] = m;
+            onPath[w] = 1;
+            if (dfs(w)) return true;
+            onPath[w] = 0;
+            if (added) mover.erase(ts);
+            if (unknown) return false;
+        }
+        return false;
+    };
+    onPath[last] = 1;
+    if (dfs(last)) return 1;
+    return unknown ? 2 : 0;
 }
 
 bool ExistsGroupChecker::statically_safe(const vector<int> &group) const {
@@ -131,7 +225,7 @@ bool ExistsGroupChecker::keeps_order_executions(int a, int b) const {
   after the mover a). A non-empty set of fired labels in which every label has a predecessor in
   the set contains a cycle, and vice versa.
 */
-bool ExistsGroupChecker::exactly_safe(const vector<int> &group) {
+bool ExistsGroupChecker::exactly_safe(const vector<int> &group, bool lastOnCycle) {
     exactCalls++;
     int numVars = 0;
     auto var = [&]() { return ++numVars; };
@@ -158,6 +252,8 @@ bool ExistsGroupChecker::exactly_safe(const vector<int> &group) {
     vector<int> f(n), c(n);
     for (int i = 0; i < n; i++) { f[i] = var(); c[i] = var(); clause({-c[i], f[i]}); }
     clause(c);   // a non-empty cycle set
+    if (lastOnCycle)
+        clause({c[n - 1]});
     // factors with at least two group labels
     map<int, vector<pair<int, const Entry *>>> byFactor;   // ts -> (group index, entry)
     for (int i = 0; i < n; i++)
@@ -312,33 +408,57 @@ class LabelGroupsExists : public LabelGroupFinder {
     shared_ptr<label_order_finder::LabelOrderFinder> order;
     bool keepOrder, exact;
     int maxSize, maxExactSize, exactConflicts;
+    bool reportCycles;
+    long cycleBudget;
+    bool allowReverse;
+    int reported = 0;
 public:
     LabelGroupsExists(const options::Options &opts)
         : order(opts.get<shared_ptr<label_order_finder::LabelOrderFinder>>("order")),
           keepOrder(opts.get<bool>("keep_order")), exact(opts.get<bool>("exact")),
           maxSize(opts.get<int>("max_size")), maxExactSize(opts.get<int>("max_exact_size")),
-          exactConflicts(opts.get<int>("exact_conflicts")) {}
+          exactConflicts(opts.get<int>("exact_conflicts")), reportCycles(opts.get<bool>("report_cycles")),
+          cycleBudget(opts.get<int>("cycle_budget")), allowReverse(opts.get<bool>("allow_reverse")) {}
     vector<vector<int>> find_groups(const FTSTask &fts) override {
         utils::Timer timer;
         ExistsGroupChecker checker(fts, exactConflicts);
         vector<vector<int>> groups;
         vector<int> cur;
-        bool curStaticSafe = true;
-        long orderRejects = 0, staticRejects = 0, exactAccepts = 0, exactRejects = 0;
+        long orderRejects = 0, reverseRejects = 0, staticRejects = 0, exactAccepts = 0, exactRejects = 0;
         for (int b : order->find_order(fts)) {
             bool join = !cur.empty() && (maxSize <= 0 || (int) cur.size() < maxSize);
             if (join && keepOrder)
                 for (int a : cur)
                     if (!checker.keeps_order_executions(a, b)) { join = false; orderRejects++; break; }
+            // allow_reverse=false: b never has to run before an earlier label of the group, so the
+            // label order always serialises the group (its semantics is the label order's)
+            if (join && !allowReverse)
+                for (int a : cur)
+                    if (checker.static_edges(a, b).second) { join = false; reverseRejects++; break; }
             if (join) {
                 vector<int> cand = cur;
                 cand.push_back(b);
-                bool safe = curStaticSafe && checker.statically_safe(cand);
+                // the current group is exists-safe: only cycles through b matter
+                const int cycle = checker.cycle_through_last(cand, cycleBudget);
+                bool safe = cycle == 0;
                 if (safe) {
-                    // stays statically safe
+                    // no possible cycle through b
                 } else if (exact && (int) cand.size() <= maxExactSize) {
-                    safe = checker.exactly_safe(cand);
-                    if (safe) { exactAccepts++; curStaticSafe = false; }
+                    safe = checker.exactly_safe(cand, true);
+                    if (safe && reportCycles && reported < 5) {
+                        reported++;
+                        cout << "STATICCYCLE group";
+                        for (int l : cand) cout << " " << l;
+                        cout << endl;
+                        for (size_t i = 0; i < cand.size(); i++)
+                            for (size_t j = 0; j < cand.size(); j++)
+                                if (i != j) {
+                                    for (auto [ts, kind, s, t] : checker.edge_witnesses(cand[i], cand[j]))
+                                        cout << "  edge " << cand[i] << " -> " << cand[j] << " factor " << ts
+                                             << (kind ? " after-mover " : " before-mover ") << s << "->" << t << endl;
+                                }
+                    }
+                    if (safe) exactAccepts++;
                     else exactRejects++;
                 } else {
                     staticRejects++;
@@ -348,7 +468,6 @@ public:
             if (!join) {
                 if (!cur.empty()) groups.push_back(cur);
                 cur.clear();
-                curStaticSafe = true;
             }
             cur.push_back(b);
         }
@@ -360,7 +479,8 @@ public:
         }
         cout << "LABELGROUPS groups " << groups.size() << " labels " << fts.get_num_labels()
              << " largest " << largest << " labels_in_multi " << inMulti
-             << " order_rejects " << orderRejects << " static_rejects " << staticRejects
+             << " order_rejects " << orderRejects << " reverse_rejects " << reverseRejects
+             << " static_rejects " << staticRejects
              << " exact_calls " << checker.exactCalls << " exact_accepts " << exactAccepts
              << " exact_rejects " << exactRejects << " exact_unknown " << checker.exactUnknown
              << " time " << timer() << endl;
@@ -402,6 +522,14 @@ static shared_ptr<LabelGroupFinder> _parse_exists(OptionParser &parser) {
     parser.add_option<int>("max_size", "at most this many labels per group (0: no limit)", "64");
     parser.add_option<int>("max_exact_size", "exact checks only for groups up to this size", "32");
     parser.add_option<int>("exact_conflicts", "conflict limit of an exact check (unknown = not safe)", "10000");
+    parser.add_option<bool>("allow_reverse",
+                            "allow groups in which a label may have to run before an earlier one of the "
+                            "order (executions the label order cannot serialise); false: the label order "
+                            "serialises every group, so the semantics is the label order's", "true");
+    parser.add_option<int>("cycle_budget",
+                           "steps of the static cycle search (one mover per factor) before the exact check "
+                           "decides", "100000");
+    parser.add_option<bool>("report_cycles", "diagnostic: print the first static cycles the exact check accepts", "false");
     options::Options opts = parser.parse();
     if (parser.dry_run()) return nullptr;
     return make_shared<LabelGroupsExists>(opts);

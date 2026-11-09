@@ -2,6 +2,7 @@
 #define TASK_UTILS_LABEL_GROUP_FINDER_H
 
 #include <memory>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -52,8 +53,14 @@ public:
     std::pair<bool, bool> static_edges(int a, int b) const;
     // no cycle of possible precedences: every fired subset in every state is serialisable
     bool statically_safe(const std::vector<int> &group) const;
+    std::vector<std::tuple<int, int, int, int>> edge_witnesses(int a, int b) const;
     // the exact check (SAT); false also if the conflict limit is hit
-    bool exactly_safe(const std::vector<int> &group);
+    bool exactly_safe(const std::vector<int> &group, bool lastOnCycle = false);
+    // some state is a start state of both in every shared factor
+    bool co_applicable(int a, int b) const;
+    // the last label lies on a cycle of possible precedences (if the group without it is
+    // exists-safe, only such cycles can be realised)
+    int cycle_through_last(const std::vector<int> &group, long budget) const;
     // keeps the semantics of the label order: a label b after a (in the order) in one group loses
     // no execution of the intermediate-state encoding -- whenever a's real move into t lets b
     // fire at t, b self-loops at t, has no real transition from t and is applicable at a's source

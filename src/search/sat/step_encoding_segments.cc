@@ -720,6 +720,28 @@ void StepEncoding::encode_group_exists_compact(int ts, const vector<SigmaLabelDa
     map<pair<int, int>, vector<int>> realBy, forced;    // (x, y) -> label variables
     map<int, vector<int>> leaving;                      // x -> labels with a real transition out of x
     set<int> pureMovers;
+    // exists freedom per label: can it run before a mover without self-looping at the end
+    // (before), or after a mover without self-looping at the start (after)? Without it, the label's
+    // clauses are those of a label that self-loops at both ends whenever it does not move.
+    vector<set<int>> sl(end), app(end);
+    vector<vector<pair<int, int>>> real(end);
+    for (size_t k = begin; k < end; k++)
+        for (const auto &[x, ys] : labels[k].targets) {
+            app[k].insert(x);
+            for (int y : ys) {
+                if (y == x) sl[k].insert(x);
+                else real[k].emplace_back(x, y);
+            }
+        }
+    vector<char> before(end, 0), after(end, 0);
+    for (size_t k = begin; k < end; k++)
+        for (size_t m = begin; m < end; m++) {
+            if (m == k) continue;
+            for (auto [s0, t] : real[m]) {
+                if (sl[k].count(s0) && !sl[k].count(t)) before[k] = 1;
+                if (app[k].count(s0) && !sl[k].count(s0) && sl[k].count(t)) after[k] = 1;
+            }
+        }
     for (size_t k = begin; k < end; k++) {
         const SigmaLabelData &ld = labels[k];
         const int l = labelVars[ld.label];
@@ -740,10 +762,18 @@ void StepEncoding::encode_group_exists_compact(int ts, const vector<SigmaLabelDa
                 if (!selfLoops.count(x) && !selfLoops.count(y))
                     forced[{x, y}].push_back(l);
             }
-            if (selfLoops.count(x)) continue;
             vector<int> role;
-            for (int y : ys) role.push_back(next[y]);
-            for (int t : selfLoops) role.push_back(next[t]);
+            if (selfLoops.count(x)) {
+                // runs before the mover; without before-freedom it also self-loops at the end
+                if (before[k]) continue;
+                for (int y : ys) if (y != x) role.push_back(next[y]);
+                for (int t : selfLoops) role.push_back(next[t]);
+            } else {
+                // moves, or (with after-freedom) runs after the mover, self-looping at the end
+                for (int y : ys) role.push_back(next[y]);
+                if (after[k])
+                    for (int t : selfLoops) role.push_back(next[t]);
+            }
             sat->andImpliesOr(vector<int>{l, cur[x]}, role);
         }
     }
