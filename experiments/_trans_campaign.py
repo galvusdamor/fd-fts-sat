@@ -485,3 +485,43 @@ PAIRS_A_ALT_ORDERS = [
 RUN_A_ALT_TAV = ["A_1__fulltrans_transeff_slf_alt-shr"]
 FETCH_A_ALT_TAV = {"A_1__fulltrans_transeff_slf_fix-shr": "4fd06976f404c9538b8cae28d0991421db549226"}
 PAIRS_A_ALT_TAV = [("A_1__fulltrans_transeff_slf_fix-shr", "A_1__fulltrans_transeff_slf_alt-shr")]
+# sigma_sat (intermediate-state encoding) in the unified StepEncoding (branch unified-encoding),
+# January setting (-shr, no h2, 3500m). Deterministic goal-chains v2 order: the MaxSAT of the order
+# is limited by solver calls instead of wall-clock time (exact_time_limit=-1), so the order does
+# not depend on the machine load. Algorithm A: the two improvements over plain sigma in a 2x2 --
+# the left/right shift of the label order along the feeds graph (commute_order=3, horizons never
+# grow) and the exact per-factor forall blocks (factor_groups, identical horizons, compact block
+# clauses). Algorithm C: plain sigma and both improvements with 2 parallel lengths (local
+# simulation and runs: 2 calls keep the coverage of 4 and search faster; 1 call loses tasks).
+GC2D = B.GC2.replace("exact_time_limit=1", "exact_time_limit=-1,exact_conflicts=20000,exact_max_calls=10")
+_SIGMA_BLOCKS = "factor_groups=true,factor_groups_exact=true,group_compact=true,group_max=1000,"
+SIGMA_VARIANTS = {"sigma_gc2d": "", "sigma_gc2d_shift": "commute_order=3,",
+                  "sigma_gc2d_blocks": _SIGMA_BLOCKS, "sigma_gc2d_blocks_shift": "commute_order=3," + _SIGMA_BLOCKS}
+for _name, _opts in SIGMA_VARIANTS.items():
+    CONFIGS[f"A_1__{_name}-shr"] = (f"sigma_sat({_opts}label_order={GC2D})", "-shr", None)
+for _name in ["sigma_gc2d", "sigma_gc2d_blocks_shift"]:
+    CONFIGS[f"C_2__{_name}-shr"] = (f"sigma_sat({SIGMA_VARIANTS[_name]}label_order={GC2D})", "-shr", None)
+RUN_SIGMA = [f"A_1__{n}-shr" for n in SIGMA_VARIANTS] + ["C_2__sigma_gc2d-shr", "C_2__sigma_gc2d_blocks_shift-shr"]
+SEARCH_C_SIGMA = (SEARCH_C.replace("max_parallel_calls=4", "max_parallel_calls=2").replace("MEMORY_MB", "3500"))
+SEARCHES_SIGMA = {c: SEARCH_C_SIGMA for c in RUN_SIGMA if c.startswith("C_2__")}
+# forall-step (label_sat chains) and TAV in the same setting, fetched
+FETCH_SIGMA = [
+    ("data/2026-10-29-ipc-forall-A1-eval",
+     {"A_1__chains_slf____rcpol_fix-shr": "4fd06976f404c9538b8cae28d0991421db549226"}),
+    ("data/2026-10-28-ipc-fulltrans-slf-fix-A1-eval",
+     {"A_1__fulltrans_transeff_slf_fix-shr": "4fd06976f404c9538b8cae28d0991421db549226"}),
+    ("data/2026-10-27-ipc-algorithm-c-january-fix-eval",
+     {"CMit_chains_slf____rcpol_janfix-shr": "03ba4e54767aa473b6220f28d6be7221c9c3015e",
+      "C_1__fulltrans_transeff_jan_m2000-shr": "f90f966c4ba59dc1d8a44ecb62e2a154a19f18ea"}),
+]
+PAIRS_SIGMA = [
+    ("A_1__chains_slf____rcpol_fix-shr", "A_1__sigma_gc2d-shr"),               # forall -> sigma (A)
+    ("A_1__fulltrans_transeff_slf_fix-shr", "A_1__sigma_gc2d-shr"),            # TAV -> sigma (A)
+    ("A_1__sigma_gc2d-shr", "A_1__sigma_gc2d_shift-shr"),                      # + shift
+    ("A_1__sigma_gc2d-shr", "A_1__sigma_gc2d_blocks-shr"),                     # + blocks
+    ("A_1__sigma_gc2d-shr", "A_1__sigma_gc2d_blocks_shift-shr"),               # + both
+    ("A_1__sigma_gc2d_blocks_shift-shr", "C_2__sigma_gc2d_blocks_shift-shr"),  # A -> C
+    ("CMit_chains_slf____rcpol_janfix-shr", "C_2__sigma_gc2d_blocks_shift-shr"),  # forall C -> best
+    ("C_1__fulltrans_transeff_jan_m2000-shr", "C_2__sigma_gc2d_blocks_shift-shr"),  # TAV C -> best
+    ("C_2__sigma_gc2d-shr", "C_2__sigma_gc2d_blocks_shift-shr"),
+]
