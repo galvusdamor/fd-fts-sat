@@ -525,3 +525,33 @@ PAIRS_SIGMA = [
     ("C_1__fulltrans_transeff_jan_m2000-shr", "C_2__sigma_gc2d_blocks_shift-shr"),  # TAV C -> best
     ("C_2__sigma_gc2d-shr", "C_2__sigma_gc2d_blocks_shift-shr"),
 ]
+# sigma_sat, algorithm C (2 calls), reference run 2026-11-10: the best configuration (per-factor
+# blocks + shift, deterministic goal-chains v2) with h2 preprocessing on -shr and on merging +
+# tau_baking + label_union, and plain sigma with the input order (label_order_linear) on -shr.
+CONFIGS["C_2__sigma_gc2d_blocks_shift_h2pre-shr"] = (CONFIGS["C_2__sigma_gc2d_blocks_shift-shr"][0], "-shr", "pre")
+CONFIGS["C_2__sigma_gc2d_blocks_shift_h2pre-mtauun"] = (CONFIGS["C_2__sigma_gc2d_blocks_shift-shr"][0], "-mtauun", "pre")
+CONFIGS["C_2__sigma_lin-shr"] = ("sigma_sat(label_order=label_order_linear())", "-shr", None)
+RUN_SIGMA_C_REF = ["C_2__sigma_gc2d_blocks_shift_h2pre-shr", "C_2__sigma_gc2d_blocks_shift_h2pre-mtauun",
+                   "C_2__sigma_lin-shr"]
+SEARCHES_SIGMA_C_REF = {c: SEARCH_C_SIGMA for c in RUN_SIGMA_C_REF}
+FETCH_SIGMA_C_REF = [
+    # sigma (-shr, no h2) and, merged there, forall-step (January schedule) and TAV
+    ("data/2026-11-10-ipc-sigma-A1-C2-eval",
+     {"C_2__sigma_gc2d-shr": "d7575373ff6ef6bdacfd012f533214b53f289a08",
+      "C_2__sigma_gc2d_blocks_shift-shr": "d7575373ff6ef6bdacfd012f533214b53f289a08",
+      "CMit_chains_slf____rcpol_janfix-shr": "03ba4e54767aa473b6220f28d6be7221c9c3015e",
+      "C_1__fulltrans_transeff_jan_m2000-shr": "f90f966c4ba59dc1d8a44ecb62e2a154a19f18ea"}),
+    # the hybrid BDD encoding and forall-step with h2 preprocessing (1669 MiB, 24 runs per node)
+    ("data/2026-10-26-ipc-algorithm-c-eval",
+     {"C_1__hyb_gc2_h2pre-mtau": "f90f966c4ba59dc1d8a44ecb62e2a154a19f18ea",
+      "C_1__hyb_gc2_h2pre-mtauun": "f90f966c4ba59dc1d8a44ecb62e2a154a19f18ea",
+      "C_1__chains_slf____rcpol-shr": "f90f966c4ba59dc1d8a44ecb62e2a154a19f18ea"}),
+]
+PAIRS_SIGMA_C_REF = [
+    ("C_2__sigma_gc2d_blocks_shift-shr", "C_2__sigma_gc2d_blocks_shift_h2pre-shr"),      # + h2
+    ("C_2__sigma_gc2d_blocks_shift_h2pre-shr", "C_2__sigma_gc2d_blocks_shift_h2pre-mtauun"),  # + transformations
+    ("C_2__sigma_lin-shr", "C_2__sigma_gc2d-shr"),                                         # input order -> gc2d
+    ("C_2__sigma_lin-shr", "C_2__sigma_gc2d_blocks_shift-shr"),
+    ("CMit_chains_slf____rcpol_janfix-shr", "C_2__sigma_gc2d_blocks_shift_h2pre-mtauun"),
+    ("C_1__hyb_gc2_h2pre-mtauun", "C_2__sigma_gc2d_blocks_shift_h2pre-mtauun"),            # hybrid -> sigma, same transf.
+]
