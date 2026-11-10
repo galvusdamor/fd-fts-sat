@@ -7,6 +7,10 @@ on it (as the alias seq-agl-fts-ff), writing the plan as label ids of the transf
 
   OUT/shr/<domain>__<task>.fts.gz    the FTS (format: experiments/fts_dumps/README of the dumps)
   OUT/ff/<domain>__<task>.txt        the FF plan, one label id per line (missing: not solved)
+  OUT/labelmap/<domain>__<task>.txt.gz  atomic label (= SAS operator) -> transformed label, and
+                                     the operator names (FTS_DUMP_LABEL_MAP of the -shr step): maps
+                                     operator plans (sas_plan) of any planner to label plans
+  OUT/sasplan/<domain>__<task>.txt   the FF plan as operators (after plan reconstruction)
   OUT/logs/<domain>__<task>.log      planner output
 
 Usage: dump_and_ff.py TASKS OUT [--build release64-unified-5] [--jobs 1] [--time-limit 300]
@@ -43,14 +47,20 @@ def run(problem, a):
            problem, "--internal-fts-plan-file", "ff_plan.txt",
            "--transform", f"seq(transformations=[{SHR},dump_fts(filename=fts.txt)])"] + SEARCH
     t0 = time.time()
+    env = dict(os.environ, FTS_DUMP_LABEL_MAP=f"{work}/label_map.txt")
     with open(f"{work}/log", "w") as f:
-        rc = subprocess.call(cmd, stdout=f, stderr=subprocess.STDOUT, cwd=work)
+        rc = subprocess.call(cmd, stdout=f, stderr=subprocess.STDOUT, cwd=work, env=env)
+    if os.path.exists(f"{work}/label_map.txt"):
+        with open(f"{work}/label_map.txt", "rb") as src, gzip.open(f"{a.out}/labelmap/{name}.txt.gz", "wb") as dst:
+            shutil.copyfileobj(src, dst)
     if os.path.exists(f"{work}/fts.txt"):
         with open(f"{work}/fts.txt", "rb") as src, gzip.open(dump + ".part", "wb") as dst:
             shutil.copyfileobj(src, dst)
         os.replace(dump + ".part", dump)
     if os.path.exists(f"{work}/ff_plan.txt"):
         shutil.copy(f"{work}/ff_plan.txt", f"{a.out}/ff/{name}.txt")
+    if os.path.exists(f"{work}/sas_plan"):
+        shutil.copy(f"{work}/sas_plan", f"{a.out}/sasplan/{name}.txt")
     shutil.copy(f"{work}/log", log + ".part")
     os.replace(log + ".part", log)
     shutil.rmtree(work)
@@ -66,7 +76,7 @@ def main():
     ap.add_argument("--time-limit", type=int, default=300)
     ap.add_argument("--memory-limit", default="3500m")
     a = ap.parse_args()
-    for d in ["shr", "ff", "logs", "work"]:
+    for d in ["shr", "ff", "labelmap", "sasplan", "logs", "work"]:
         os.makedirs(f"{a.out}/{d}", exist_ok=True)
     problems = [l.strip() for l in open(a.tasks) if l.strip()]
     with ThreadPoolExecutor(a.jobs) as ex:
