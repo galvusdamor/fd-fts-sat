@@ -573,3 +573,29 @@ PAIRS_C_JANSPEED = [
     ("CMit_chains_slf____rcpol_janfix-shr", "CMit_chains_slf____rcpol_janspeed-shr"),   # + speedup
     ("CMit_chains_slf____rcpol_janspeed-shr", "C_2__sigma_gc2d_blocks_shift-shr"),     # forall -> sigma
 ]
+# forall-step (label_sat chains) with the January schedule and h2 preprocessing at d7575373f (label
+# reduction speedup): on -shr and on merging + tau_baking + label_union.
+CONFIGS["CMit_chains_slf____rcpol_janspeed_h2pre-shr"] = (B.CHAINS, "-shr", "pre")
+CONFIGS["CMit_chains_slf____rcpol_janspeed_h2pre-mtauun"] = (B.CHAINS, "-mtauun", "pre")
+RUN_C_JANSPEED_H2 = ["CMit_chains_slf____rcpol_janspeed_h2pre-shr", "CMit_chains_slf____rcpol_janspeed_h2pre-mtauun"]
+SEARCHES_C_JANSPEED_H2 = {c: SEARCH_C_JANUARY for c in RUN_C_JANSPEED_H2}
+FETCH_C_JANSPEED_H2 = [
+    # sigma with h2 (same revision, algorithm C with 2 calls)
+    ("data/2026-11-10-ipc-sigma-C2-h2-eval",
+     {"C_2__sigma_gc2d_blocks_shift_h2pre-shr": "d7575373ff6ef6bdacfd012f533214b53f289a08",
+      "C_2__sigma_gc2d_blocks_shift_h2pre-mtauun": "d7575373ff6ef6bdacfd012f533214b53f289a08"}),
+    # forall-step with h2 from the first algorithm C run (f90f966c4: no speedup, no label_sat fixes,
+    # tuned schedule, 1669 MiB) -- for orientation
+    ("data/2026-10-26-ipc-algorithm-c-eval",
+     {"C_1__chains_slf____rcpol-shr": "f90f966c4ba59dc1d8a44ecb62e2a154a19f18ea"}),
+    # forall-step without h2, same revision; last, as its eval exists only once
+    # 2026-11-11-ipc-forall-C-jan-speedup has run
+    ("data/2026-11-11-ipc-forall-C-jan-speedup-eval",
+     {"CMit_chains_slf____rcpol_janspeed-shr": "d7575373ff6ef6bdacfd012f533214b53f289a08"}),
+]
+PAIRS_C_JANSPEED_H2 = [
+    ("CMit_chains_slf____rcpol_janspeed-shr", "CMit_chains_slf____rcpol_janspeed_h2pre-shr"),      # + h2
+    ("CMit_chains_slf____rcpol_janspeed_h2pre-shr", "CMit_chains_slf____rcpol_janspeed_h2pre-mtauun"),  # + transf.
+    ("CMit_chains_slf____rcpol_janspeed_h2pre-shr", "C_2__sigma_gc2d_blocks_shift_h2pre-shr"),     # forall -> sigma
+    ("CMit_chains_slf____rcpol_janspeed_h2pre-mtauun", "C_2__sigma_gc2d_blocks_shift_h2pre-mtauun"),
+]
