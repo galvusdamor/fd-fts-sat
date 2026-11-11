@@ -555,3 +555,21 @@ PAIRS_SIGMA_C_REF = [
     ("CMit_chains_slf____rcpol_janfix-shr", "C_2__sigma_gc2d_blocks_shift_h2pre-mtauun"),
     ("C_1__hyb_gc2_h2pre-mtauun", "C_2__sigma_gc2d_blocks_shift_h2pre-mtauun"),            # hybrid -> sigma, same transf.
 ]
+# forall-step (label_sat chains) with the January schedule at the revision of the sigma runs
+# (d7575373f): the January fix (both label_sat fixes) plus the exact label reduction speedup,
+# label_sat's formulas bit-identical to before (StepEncoding). Compared against the January fix
+# without the speedup and the sigma runs.
+CONFIGS["CMit_chains_slf____rcpol_janspeed-shr"] = (B.CHAINS, "-shr", None)
+RUN_C_JANSPEED = ["CMit_chains_slf____rcpol_janspeed-shr"]
+SEARCHES_C_JANSPEED = {"CMit_chains_slf____rcpol_janspeed-shr": SEARCH_C_JANUARY}
+FETCH_C_JANSPEED = [
+    ("data/2026-10-27-ipc-algorithm-c-january-fix-eval",
+     {"CMit_chains_slf____rcpol_janfix-shr": "03ba4e54767aa473b6220f28d6be7221c9c3015e"}),
+    ("data/2026-11-10-ipc-sigma-A1-C2-eval",
+     {"C_2__sigma_gc2d-shr": "d7575373ff6ef6bdacfd012f533214b53f289a08",
+      "C_2__sigma_gc2d_blocks_shift-shr": "d7575373ff6ef6bdacfd012f533214b53f289a08"}),
+]
+PAIRS_C_JANSPEED = [
+    ("CMit_chains_slf____rcpol_janfix-shr", "CMit_chains_slf____rcpol_janspeed-shr"),   # + speedup
+    ("CMit_chains_slf____rcpol_janspeed-shr", "C_2__sigma_gc2d_blocks_shift-shr"),     # forall -> sigma
+]
